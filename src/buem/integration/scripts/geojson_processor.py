@@ -192,10 +192,12 @@ class GeoJsonProcessor:
         # Convert to model config
         cfg = CfgBuilding(merged_attrs).to_cfg_dict()
         
-        # Run thermal model
+        # Run thermal model with parallel thermal calculations and chunked processing for maximum performance
         use_milp = bool(buem.get("use_milp", False))
+        parallel_thermal = bool(buem.get("parallel_thermal", True))  # Default to True for better performance
+        use_chunked_processing = bool(buem.get("use_chunked_processing", True))  # Enable chunked processing for multi-core optimization
         start = time.time()
-        res = run_model(cfg, plot=False, use_milp=use_milp)
+        res = run_model(cfg, plot=False, use_milp=use_milp, parallel_thermal=parallel_thermal, use_chunked_processing=use_chunked_processing)
         elapsed = time.time() - start
         
         # Extract results with validation
@@ -223,7 +225,9 @@ class GeoJsonProcessor:
         # Add model metadata
         profile["model_metadata"] = {
             "model_version": "BUEM-v2.0",
-            "solver_used": "MILP" if use_milp else "Linear",
+            "solver_used": "MILP" if use_milp else "Parameterization",
+            "parallel_thermal": parallel_thermal,
+            "use_chunked_processing": use_chunked_processing,
             "processing_time_s": round(elapsed, 3),
             "weather_year": int(getattr(cfg.get("weather", pd.DataFrame()).index, "year", [2018])[0]) if hasattr(cfg.get("weather", pd.DataFrame()).index, "year") else 2018,
             "validation_warnings": [w.message for w in validation_result.get_warnings()]

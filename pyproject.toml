@@ -28,6 +28,8 @@ dependencies = [
     "pulp",
     "marshmallow>=4.0.0",
     "marshmallow-dataclass>=8.0.0",
+    "psutil",
+    "joblib",
 ]
 
 [project.optional-dependencies]

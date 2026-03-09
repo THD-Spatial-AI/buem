@@ -1,0 +1,213 @@
+{
+  "type": "FeatureCollection",
+  "timeStamp": "2024-02-24T12:00:00Z",
+  "numberMatched": 1,
+  "numberReturned": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "id": "building_003_large_commercial",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [5.3, 52.3]
+      },
+      "properties": {
+        "start_time": "2018-01-01T00:00:00Z",
+        "end_time": "2018-12-31T23:00:00Z",
+        "resolution": 60,
+        "resolution_unit": "minutes",
+        "buem": {
+          "building_attributes": {
+            "latitude": 52.3,
+            "longitude": 5.3,
+            "A_ref": 500.0,
+            "h_room": 3.5,
+            "components": {
+              "Walls": {
+                "U": 0.9,
+                "b_transmission": 1.0,
+                "elements": [
+                  {
+                    "id": "Wall_North",
+                    "area": 70.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_Northeast",
+                    "area": 35.0,
+                    "azimuth": 45.0,
+                    "tilt": 90.0,
+                    "U": 0.8
+                  },
+                  {
+                    "id": "Wall_East",
+                    "area": 80.0,
+                    "azimuth": 90.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_Southeast",
+                    "area": 35.0,
+                    "azimuth": 135.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_South",
+                    "area": 70.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_Southwest",
+                    "area": 35.0,
+                    "azimuth": 225.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_West",
+                    "area": 80.0,
+                    "azimuth": 270.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_Northwest",
+                    "area": 35.0,
+                    "azimuth": 315.0,
+                    "tilt": 90.0
+                  }
+                ]
+              },
+              "Roof": {
+                "U": 0.6,
+                "elements": [
+                  {
+                    "id": "Roof_Main",
+                    "area": 450.0,
+                    "azimuth": 180.0,
+                    "tilt": 5.0
+                  },
+                  {
+                    "id": "Roof_Skylight_Area",
+                    "area": 50.0,
+                    "azimuth": 180.0,
+                    "tilt": 5.0,
+                    "U": 2.5
+                  }
+                ]
+              },
+              "Floor": {
+                "U": 0.8,
+                "elements": [
+                  {
+                    "id": "Floor_Ground",
+                    "area": 500.0,
+                    "azimuth": 0.0,
+                    "tilt": 0.0
+                  }
+                ]
+              },
+              "Windows": {
+                "U": 1.8,
+                "g_gl": 0.4,
+                "elements": [
+                  {
+                    "id": "Window_North_1",
+                    "area": 18.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  },
+                  {
+                    "id": "Window_North_2",
+                    "area": 18.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  },
+                  {
+                    "id": "Window_South_1",
+                    "area": 25.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_South"
+                  },
+                  {
+                    "id": "Window_South_2",
+                    "area": 25.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_South"
+                  },
+                  {
+                    "id": "Window_East_1",
+                    "area": 20.0,
+                    "azimuth": 90.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_East"
+                  },
+                  {
+                    "id": "Window_East_2",
+                    "area": 20.0,
+                    "azimuth": 90.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_East"
+                  },
+                  {
+                    "id": "Window_West",
+                    "area": 22.0,
+                    "azimuth": 270.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_West"
+                  }
+                ]
+              },
+              "Doors": {
+                "U": 2.5,
+                "elements": [
+                  {
+                    "id": "Door_Main_Entrance",
+                    "area": 4.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  },
+                  {
+                    "id": "Door_Loading_Dock",
+                    "area": 8.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_South"
+                  },
+                  {
+                    "id": "Door_Emergency_East",
+                    "area": 2.5,
+                    "azimuth": 90.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_East"
+                  },
+                  {
+                    "id": "Door_Emergency_West",
+                    "area": 2.5,
+                    "azimuth": 270.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_West"
+                  }
+                ]
+              },
+              "Ventilation": {
+                "elements": [
+                  {
+                    "id": "Vent_HVAC_System",
+                    "air_changes": 1.2
+                  }
+                ]
+              }
+            }
+          },
+          "use_milp": false
+        }
+      }
+    }
+  ]
+}

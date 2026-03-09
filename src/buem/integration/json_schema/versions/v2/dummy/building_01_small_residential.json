@@ -1,0 +1,132 @@
+{
+  "type": "FeatureCollection",
+  "timeStamp": "2024-02-24T12:00:00Z",
+  "numberMatched": 1,
+  "numberReturned": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "id": "building_001_small_residential",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [5.1, 52.1]
+      },
+      "properties": {
+        "start_time": "2018-01-01T00:00:00Z",
+        "end_time": "2018-12-31T23:00:00Z",
+        "resolution": 60,
+        "resolution_unit": "minutes",
+        "buem": {
+          "building_attributes": {
+            "latitude": 52.1,
+            "longitude": 5.1,
+            "A_ref": 80.0,
+            "h_room": 2.4,
+            "components": {
+              "Walls": {
+                "U": 1.8,
+                "b_transmission": 1.0,
+                "elements": [
+                  {
+                    "id": "Wall_North",
+                    "area": 20.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_East",
+                    "area": 16.0,
+                    "azimuth": 90.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_South",
+                    "area": 20.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_West",
+                    "area": 16.0,
+                    "azimuth": 270.0,
+                    "tilt": 90.0
+                  }
+                ]
+              },
+              "Roof": {
+                "U": 1.0,
+                "elements": [
+                  {
+                    "id": "Roof_Main",
+                    "area": 80.0,
+                    "azimuth": 180.0,
+                    "tilt": 45.0
+                  }
+                ]
+              },
+              "Floor": {
+                "U": 1.4,
+                "elements": [
+                  {
+                    "id": "Floor_Ground",
+                    "area": 80.0,
+                    "azimuth": 0.0,
+                    "tilt": 0.0
+                  }
+                ]
+              },
+              "Windows": {
+                "U": 3.0,
+                "g_gl": 0.65,
+                "elements": [
+                  {
+                    "id": "Window_North",
+                    "area": 4.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  },
+                  {
+                    "id": "Window_South",
+                    "area": 6.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_South"
+                  },
+                  {
+                    "id": "Window_East",
+                    "area": 3.0,
+                    "azimuth": 90.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_East"
+                  }
+                ]
+              },
+              "Doors": {
+                "U": 3.5,
+                "elements": [
+                  {
+                    "id": "Door_Main",
+                    "area": 2.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  }
+                ]
+              },
+              "Ventilation": {
+                "elements": [
+                  {
+                    "id": "Vent_Natural",
+                    "air_changes": 0.3
+                  }
+                ]
+              }
+            }
+          },
+          "use_milp": false
+        }
+      }
+    }
+  ]
+}

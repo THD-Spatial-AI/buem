@@ -1,0 +1,179 @@
+{
+  "type": "FeatureCollection",
+  "timeStamp": "2024-02-24T12:00:00Z",
+  "numberMatched": 1,
+  "numberReturned": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "id": "building_004_industrial",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [5.4, 52.4]
+      },
+      "properties": {
+        "start_time": "2018-01-01T00:00:00Z",
+        "end_time": "2018-12-31T23:00:00Z",
+        "resolution": 60,
+        "resolution_unit": "minutes",
+        "buem": {
+          "building_attributes": {
+            "latitude": 52.4,
+            "longitude": 5.4,
+            "A_ref": 800.0,
+            "h_room": 6.0,
+            "components": {
+              "Walls": {
+                "U": 2.0,
+                "b_transmission": 1.0,
+                "elements": [
+                  {
+                    "id": "Wall_North",
+                    "area": 120.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_East",
+                    "area": 160.0,
+                    "azimuth": 90.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_South",
+                    "area": 120.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0
+                  },
+                  {
+                    "id": "Wall_West",
+                    "area": 160.0,
+                    "azimuth": 270.0,
+                    "tilt": 90.0
+                  }
+                ]
+              },
+              "Roof": {
+                "U": 1.5,
+                "elements": [
+                  {
+                    "id": "Roof_Main",
+                    "area": 700.0,
+                    "azimuth": 180.0,
+                    "tilt": 15.0
+                  },
+                  {
+                    "id": "Roof_Sawtooth_North",
+                    "area": 50.0,
+                    "azimuth": 0.0,
+                    "tilt": 60.0
+                  },
+                  {
+                    "id": "Roof_Sawtooth_South",
+                    "area": 50.0,
+                    "azimuth": 180.0,
+                    "tilt": 60.0
+                  }
+                ]
+              },
+              "Floor": {
+                "U": 1.8,
+                "elements": [
+                  {
+                    "id": "Floor_Concrete_Slab",
+                    "area": 800.0,
+                    "azimuth": 0.0,
+                    "tilt": 0.0
+                  }
+                ]
+              },
+              "Windows": {
+                "U": 3.5,
+                "g_gl": 0.7,
+                "elements": [
+                  {
+                    "id": "Window_North_Clerestory_1",
+                    "area": 15.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  },
+                  {
+                    "id": "Window_North_Clerestory_2",
+                    "area": 15.0,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  },
+                  {
+                    "id": "Window_South_Strip",
+                    "area": 40.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_South"
+                  },
+                  {
+                    "id": "Skylight_1",
+                    "area": 20.0,
+                    "azimuth": 180.0,
+                    "tilt": 15.0,
+                    "surface": "Roof_Main"
+                  },
+                  {
+                    "id": "Skylight_2",
+                    "area": 20.0,
+                    "azimuth": 180.0,
+                    "tilt": 15.0,
+                    "surface": "Roof_Main"
+                  }
+                ]
+              },
+              "Doors": {
+                "U": 4.0,
+                "elements": [
+                  {
+                    "id": "Door_Personnel_North",
+                    "area": 2.5,
+                    "azimuth": 0.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_North"
+                  },
+                  {
+                    "id": "Door_Loading_Bay_1",
+                    "area": 16.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_South"
+                  },
+                  {
+                    "id": "Door_Loading_Bay_2",
+                    "area": 16.0,
+                    "azimuth": 180.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_South"
+                  },
+                  {
+                    "id": "Door_Emergency_East",
+                    "area": 2.5,
+                    "azimuth": 90.0,
+                    "tilt": 90.0,
+                    "surface": "Wall_East"
+                  }
+                ]
+              },
+              "Ventilation": {
+                "elements": [
+                  {
+                    "id": "Vent_Natural_High_Bay",
+                    "air_changes": 2.0
+                  }
+                ]
+              }
+            }
+          },
+          "use_milp": false
+        }
+      }
+    }
+  ]
+}

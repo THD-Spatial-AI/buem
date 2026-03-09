@@ -33,6 +33,9 @@ requirements:
     - pip
     - marshmallow >=4.0.0
     - marshmallow-dataclass >=8.0.0
+    # Multiprocessing and performance dependencies
+    - psutil
+    - joblib
 
 about:
   summary: "Building thermal simulation module (ISO 52016-1 5R1C)"

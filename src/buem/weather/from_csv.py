@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import pandas as pd
+import numpy as np
 
 class CsvWeatherData:
     def __init__(self, csv_relative_path=None, cache_path=None):
@@ -50,6 +51,59 @@ class CsvWeatherData:
             return self.df.resample('D').mean()
         else:
             raise ValueError("Unknown method")
+
+    def reconstruct_dni_from_ghi(self, latitude: float, longitude: float) -> pd.DataFrame:
+        """Reconstruct physically-consistent DNI and DHI from GHI using pvlib DISC model.
+
+        COSMO-REA6 (and most NWP models) store DNI computed as
+        ``(GHI - DHI) / cos(zenith)``.  Near the horizon cos(zenith) -> 0, so
+        the stored DNI diverges wildly (>4000 W/m2 observed).
+
+        pvlib's DISC decomposition model estimates DNI directly from GHI without
+        this singularity, giving physically bounded values (0..~1000 W/m2 for NL).
+        DHI is then back-computed as ``DHI = GHI - DNI * cos(zenith)``.
+
+        The GHI column is **not modified** — only DNI and DHI are replaced.
+
+        Parameters
+        ----------
+        latitude, longitude : float
+            Site coordinates in decimal degrees (positive North / East).
+
+        Returns
+        -------
+        pd.DataFrame
+            Copy of self.df with DNI and DHI columns replaced by DISC-derived values.
+        """
+        import pvlib
+
+        if self.df is None:
+            raise ValueError("Data not loaded. Call _load_and_prepare first.")
+        if "GHI" not in self.df.columns:
+            raise ValueError("GHI column required for DNI reconstruction.")
+
+        solpos = pvlib.solarposition.get_solarposition(
+            self.df.index, latitude, longitude
+        )
+        dni_extra = pvlib.irradiance.get_extra_radiation(self.df.index.dayofyear)
+
+        # DISC: empirical decomposition of GHI into DNI (Iqbal 1983, pvlib implementation)
+        disc_result = pvlib.irradiance.disc(
+            ghi=self.df["GHI"],
+            solar_zenith=solpos["apparent_zenith"],
+            datetime_or_doy=self.df.index,
+        )
+        # Hard physical upper-bound: DNI cannot exceed extraterrestrial irradiance
+        dni_disc = disc_result["dni"].clip(lower=0, upper=dni_extra).fillna(0)
+
+        # Back-compute DHI = GHI - DNI * cos(zenith), bounded to [0, GHI]
+        cos_z = np.cos(np.radians(solpos["apparent_zenith"].clip(upper=90))).clip(lower=0)
+        dhi_derived = (self.df["GHI"] - dni_disc * cos_z).clip(lower=0, upper=self.df["GHI"]).fillna(0)
+
+        df_out = self.df.copy()
+        df_out["DNI"] = dni_disc
+        df_out["DHI"] = dhi_derived
+        return df_out
 
 if __name__=="__main__":
     import time

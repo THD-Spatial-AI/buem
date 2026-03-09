@@ -17,6 +17,9 @@ dependencies:
 #   - gunicorn
   - coincbc
   - pulp
+  # Multiprocessing and performance dependencies
+  - psutil
+  - joblib
   # Documentation dependencies
   - sphinx>=4.5.0
   - sphinx_rtd_theme>=1.0.0

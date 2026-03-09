@@ -4,6 +4,10 @@ import numpy as np
 import os
 from typing import Any, Dict, Optional
 
+# Import required modules for proper electricity profile calculation
+from buem.occupancy.occupancy_profile import OccupancyProfile
+from buem.occupancy.electricity_consumption import ElectricityConsumptionProfile
+
 from buem.weather.from_csv import CsvWeatherData
 from .attribute_types import AttributeCategory, AttrType, AttributeSpec
 
@@ -20,21 +24,38 @@ if not os.path.exists(WEATHER_CSV):
         "COSMO_Year__ix_390_650.csv (e.g. mount ./data/weather and set env var accordingly)."
     )
 
-loader = CsvWeatherData(WEATHER_CSV) #Loenen weather data
-df_weather = loader.extract_weather_columns()
+loader = CsvWeatherData(WEATHER_CSV)  # Loenen (52.07 N, 5.07 E) weather data
+loader.extract_weather_columns()
+
+# Reconstruct DNI and DHI from GHI using pvlib DISC decomposition.
+# COSMO-REA6 stores DNI = (GHI-DHI)/cos(zenith), which diverges near the horizon
+# (observed max: 4951 W/m2, physically impossible).  DISC gives bounded 0..~1000 W/m2.
+df_weather = loader.reconstruct_dni_from_ghi(latitude=52.07, longitude=5.07)
 df_weather.index = df_weather.index.tz_convert(None)
 
-# Dummy time index and profiles for testing
-# n_hours = 8760
 main_index = df_weather.index
 n_hours = len(main_index)
 temp_profile = df_weather["T"]
 ghi_profile = df_weather["GHI"]
-dni_profile = df_weather["DNI"]
-dhi_profile = df_weather["DHI"]
+dni_profile = df_weather["DNI"]   # DISC-reconstructed, physically bounded
+dhi_profile = df_weather["DHI"]   # back-computed from GHI - DNI*cos(zenith)
 
-# Build attribute specs using the same defaults used in legacy cfg dict.
-# This centralizes attribute metadata so cfg_building can infer how to parse/serialize.
+# Generate realistic electricity load profile using occupancy-based calculation
+occ_profile = OccupancyProfile(
+    num_persons=4,
+    year=2018,
+    seed=42  # For reproducibility
+)
+occ_profile.generate()
+
+elec_profile = ElectricityConsumptionProfile(
+    occupancy_profile=occ_profile,
+    seed=42
+)
+elec_df = elec_profile.generate()
+realistic_elec_load = elec_df["total_power_kwh"]  # This is in kWh per hour
+
+# Build attribute specs using realistic electricity load
 ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "weather": AttributeSpec(
         name="weather",
@@ -57,8 +78,8 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "nightReduction": AttributeSpec("nightReduction", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="Deprecated"),
     "capControl": AttributeSpec("capControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="Deprecated"),
     "elecLoad": AttributeSpec("elecLoad", AttributeCategory.FIXED, AttrType.SERIES,
-                              default=pd.Series([0.5] * n_hours, index=main_index),
-                              doc="Electric internal load profile (pd.Series)"),
+                              default=realistic_elec_load,  # Use occupancy-based calculation
+                              doc="Electric internal load profile from occupancy simulation (pd.Series)"),
     "Q_ig": AttributeSpec("Q_ig", AttributeCategory.FIXED, AttrType.SERIES,
                          default=pd.Series([0.1] * n_hours, index=main_index),
                          doc="Internal gains profile (pd.Series)"),
@@ -76,40 +97,49 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
         AttributeCategory.OTHER,
         AttrType.OBJECT,
         default={
+            # Geometry represents a realistic Dutch single-family house (SFH), ~100 m2 floor area.
+            # Reference: TABULA NL.N.SFH.01.Gen proportions scaled to 100 m2.
+            # Wall areas are NET opaque (gross wall minus window and door openings).
+            # Wall_1 (south, az=180) carries most solar gain; Wall_2 (north+east+west
+            # combined, modelled north-facing az=0) has near-zero solar contribution
+            # but accounts for the full N/E/W envelope conductance.
+            # pvlib tilt convention: 0=horizontal-up, 90=vertical, 180=horizontal-down.
             "Walls": {
                 "U": 1.61,
                 "b_transmission": 1.0,
                 "elements": [
-                    {"id": "Wall_1", "area": 1226.9, "azimuth": 0.0, "tilt": 00.0},
-                     {"id": "Wall_2", "area": 2000, "azimuth": 90.0, "tilt": 00.0},
+                    {"id": "Wall_1", "area": 40.0, "azimuth": 180.0, "tilt": 90.0},  # South facade (net): ~7m x 5m - wins - door
+                    {"id": "Wall_2", "area": 75.0, "azimuth":   0.0, "tilt": 90.0},  # N+E+W combined (net), north-facing = minimal solar
                 ],
             },
             "Roof": {
                 "U": 1.54,
                 "elements": [
-                    {"id": "Roof_1", "area": 497.7, "azimuth": 135.0, "tilt": 30.0},
+                    {"id": "Roof_1", "area": 60.0, "azimuth": 180.0, "tilt": 30.0},  # Pitched roof: 50 m2 footprint / cos(30)
                 ],
             },
-            "Floor": {"U": 1.72, "elements": [{"id": "Floor_1", "area": 469.0, "azimuth": 180.0, "tilt": 90.0}]},
+            "Floor": {"U": 1.72, "elements": [{"id": "Floor_1", "area": 50.0, "azimuth": 0.0, "tilt": 180.0}]},  # Ground floor footprint; tilt 180=downward, no solar
             "Windows": {
                 "U": 5.2,
                 "g_gl": 0.5,
                 "elements": [
-                    {"id": "Win_1", "area": 78.4, "surface": "Wall_1", "azimuth": 0.0, "tilt": 0.0},
-                    {"id": "Win_2", "area": 347.2, "surface": "Wall_2", "azimuth": 90.0, "tilt": 0.0},
+                    {"id": "Win_1", "area": 9.0, "surface": "Wall_1", "azimuth": 180.0, "tilt": 90.0},  # South windows (~9% of A_ref)
+                    {"id": "Win_2", "area": 5.0, "surface": "Wall_2", "azimuth": 270.0, "tilt": 90.0},  # West/other windows
                 ],
             },
             "Doors": {
                 "U": 3.5,
                 "elements": [
-                    {"id": "Door_1", "area": 58.8, "surface": "Wall_1", "azimuth": 0.0, "tilt": 90.0}
+                    {"id": "Door_1", "area": 4.0, "surface": "Wall_1", "azimuth": 180.0, "tilt": 90.0}
                 ]
             },
-            "Ventilation": {"elements": [{"id": "Vent_1", "air_changes": 0.5}]},
+            # Natural ventilation: H_ve is calculated from n_air_infiltration + n_air_use in cfg
+            # (both below).  The Ventilation element is a placeholder; air_changes is informational.
+            "Ventilation": {"elements": [{"id": "Vent_1", "area": 0.0, "air_changes": 0.5}]},
         },
         doc="Structured component tree. Component-level 'U' applies to all elements; elements list carries per-surface geometry and area."
     ),
-    "A_ref": AttributeSpec("A_ref", AttributeCategory.FIXED, AttrType.FLOAT, 2064),
+    "A_ref": AttributeSpec("A_ref", AttributeCategory.FIXED, AttrType.FLOAT, 100.0),  # Realistic reference floor area
     "h_room": AttributeSpec("h_room", AttributeCategory.FIXED, AttrType.FLOAT, 2.5),
     "n_air_infiltration": AttributeSpec("n_air_infiltration", AttributeCategory.FIXED, AttrType.FLOAT, 0.5),
     "n_air_use": AttributeSpec("n_air_use", AttributeCategory.FIXED, AttrType.FLOAT, 0.5),
@@ -117,6 +147,8 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "onlyEnergyInvest": AttributeSpec("onlyEnergyInvest", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "g_gl_n_Window": AttributeSpec("g_gl_n_Window", AttributeCategory.FIXED, AttrType.FLOAT, 0.5),
     "thermalClass": AttributeSpec("thermalClass", AttributeCategory.FIXED, AttrType.STR, "medium"),
+    "c_m": AttributeSpec("c_m", AttributeCategory.FIXED, AttrType.FLOAT, 175.0,
+        doc="Specific thermal capacity of building mass [kJ/m²K]. ISO 13790 medium class midpoint: (137.5+212.5)/2=175."),
     "comfortT_lb": AttributeSpec("comfortT_lb", AttributeCategory.FIXED, AttrType.FLOAT, 21.0),
     "comfortT_ub": AttributeSpec("comfortT_ub", AttributeCategory.FIXED, AttrType.FLOAT, 24.0),
     "roofs": AttributeSpec("roofs", AttributeCategory.FIXED, AttrType.LIST, [{'roofTilt': 45.0, 'roofOrientation': 135.0, 'roofArea': 30.0}], doc="List of roof dicts"),
@@ -125,8 +157,8 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "A_Window_South": AttributeSpec("A_Window_South", AttributeCategory.FIXED, AttrType.FLOAT, 5.0),
     "A_Window_West": AttributeSpec("A_Window_West", AttributeCategory.FIXED, AttrType.FLOAT, 5.0),
     "A_Window_Horizontal": AttributeSpec("A_Window_Horizontal", AttributeCategory.FIXED, AttrType.FLOAT, 5.0),
-    "F_sh_vert": AttributeSpec("F_sh_vert", AttributeCategory.FIXED, AttrType.FLOAT, 1.0),
-    "F_sh_hor": AttributeSpec("F_sh_hor", AttributeCategory.FIXED, AttrType.FLOAT, 1.0),
+    "F_sh_vert": AttributeSpec("F_sh_vert", AttributeCategory.FIXED, AttrType.FLOAT, 0.75),  # Realistic shading for Netherlands
+    "F_sh_hor": AttributeSpec("F_sh_hor", AttributeCategory.FIXED, AttrType.FLOAT, 0.80),  # Realistic shading for Netherlands
     "F_f": AttributeSpec("F_f", AttributeCategory.FIXED, AttrType.FLOAT, 0.2),
     "F_w": AttributeSpec("F_w", AttributeCategory.FIXED, AttrType.FLOAT, 1.0),
     "ventControl": AttributeSpec("ventControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
