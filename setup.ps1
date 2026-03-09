@@ -52,8 +52,8 @@ function Show-Help {
     Write-Host "Usage:  .\setup.ps1 <command> [options]" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Environment Setup:" -ForegroundColor Green
-    Write-Host "  install          Install BUEM in editable mode (pip install -e .)"
-    Write-Host "  install-dev      Install BUEM with dev extras (pytest, black, etc.)"
+    Write-Host "  install          Install BUEM into the conda environment (conda develop src)"
+    Write-Host "  install-dev      Install BUEM + dev extras (pytest, black, flake8, mypy)"
     Write-Host "  validate         Verify installation and environment paths"
     Write-Host ""
     Write-Host "Model Commands:" -ForegroundColor Green
@@ -67,9 +67,23 @@ function Show-Help {
     Write-Host "  api --port 8080  Start on a custom port"
     Write-Host ""
     Write-Host "Multi-Building:" -ForegroundColor Green
-    Write-Host "  multibuilding                   Run with 4 buildings (default)"
-    Write-Host "  multibuilding --buildings 20    Run with 20 buildings"
-    Write-Host "  multibuilding --sequential      Sequential (no parallelism)"
+    Write-Host "  multibuilding                               Run complete demo (auto-optimised)"
+    Write-Host "  multibuilding --test parallel               Parallel processing only"
+    Write-Host "  multibuilding --test sequential             Sequential processing only"
+    Write-Host "  multibuilding --test comparison             Parallel vs sequential comparison"
+    Write-Host "  multibuilding --test benchmark              Comprehensive benchmark suite"
+    Write-Host "  multibuilding --test optimize               Auto-find optimal configuration"
+    Write-Host "  multibuilding --test thermal                Test thermal calculation strategies"
+    Write-Host "  multibuilding --buildings 20                Process 20 buildings"
+    Write-Host "  multibuilding --workers N                   N worker processes (1 to CPU count)"
+    Write-Host "  multibuilding --cores N                     Limit to N CPU cores"
+    Write-Host "  multibuilding --thermal-workers N           N thermal workers per building (1-4)"
+    Write-Host "  multibuilding --thermal-strategy parallel   Parallel thermal calculations"
+    Write-Host "  multibuilding --sequential                  Force sequential (no parallelism)"
+    Write-Host "  multibuilding --validate-system             Show system capabilities and valid ranges"
+    Write-Host "  multibuilding --quiet                       Reduce logging verbosity"
+    Write-Host "  Note: invalid --workers / --thermal-workers values are reported as errors"
+    Write-Host "  Example: .\setup.ps1 multibuilding --test parallel --workers 8 --thermal-workers 2" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "Docker Workflows:" -ForegroundColor Green
     Write-Host "  docker-build     Build the Docker image"
@@ -98,13 +112,17 @@ function Show-Help {
 }
 
 function Invoke-Install {
-    Write-Host "Installing BUEM in editable mode..." -ForegroundColor Blue
-    pip install -e .
+    Write-Host "Installing BUEM into the conda environment..." -ForegroundColor Blue
+    Write-Host "  Running: conda develop src" -ForegroundColor DarkGray
+    conda develop src
+    Write-Host "BUEM installed. Verify with:  .\setup.ps1 validate" -ForegroundColor Green
 }
 
 function Invoke-InstallDev {
-    Write-Host "Installing BUEM with dev extras..." -ForegroundColor Blue
-    pip install -e ".[dev]"
+    Write-Host "Installing BUEM + dev extras into the conda environment..." -ForegroundColor Blue
+    conda develop src
+    conda install --name $CondaEnv --yes pytest pytest-cov black flake8 mypy
+    Write-Host "Dev extras installed." -ForegroundColor Green
 }
 
 function Invoke-Validate {

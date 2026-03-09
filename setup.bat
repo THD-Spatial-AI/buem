@@ -53,8 +53,8 @@ echo.
 echo Usage: setup.bat ^<command^> [options]
 echo.
 echo Environment Setup:
-echo   install          Install BUEM in editable mode (pip install -e .)
-echo   install-dev      Install BUEM with dev extras (pytest, black, etc.)
+echo   install          Install BUEM into the conda environment (conda develop src)
+echo   install-dev      Install BUEM + dev extras (pytest, black, flake8, mypy)
 echo   validate         Verify installation and environment paths
 echo.
 echo Model Commands:
@@ -68,9 +68,23 @@ echo   api --dev        Start Flask dev server (development only)
 echo   api --port 8080  Start on a custom port
 echo.
 echo Multi-Building:
-echo   multibuilding                   Run with 4 buildings (default)
-echo   multibuilding --buildings 20    Run with 20 buildings
-echo   multibuilding --sequential      Sequential (no parallelism)
+echo   multibuilding                               Run complete demo (auto-optimised)
+echo   multibuilding --test parallel               Parallel processing only
+echo   multibuilding --test sequential             Sequential processing only
+echo   multibuilding --test comparison             Parallel vs sequential comparison
+echo   multibuilding --test benchmark              Comprehensive benchmark suite
+echo   multibuilding --test optimize               Auto-find optimal configuration
+echo   multibuilding --test thermal                Test thermal calculation strategies
+echo   multibuilding --buildings 20                Process 20 buildings
+echo   multibuilding --workers N                   N worker processes (1 to CPU count)
+echo   multibuilding --cores N                     Limit to N CPU cores
+echo   multibuilding --thermal-workers N           N thermal workers per building (1-4)
+echo   multibuilding --thermal-strategy parallel   Parallel thermal calculations
+echo   multibuilding --sequential                  Force sequential (no parallelism)
+echo   multibuilding --validate-system             Show system capabilities and valid ranges
+echo   multibuilding --quiet                       Reduce logging verbosity
+echo   Note: invalid --workers / --thermal-workers values are reported as errors
+echo   Example: setup.bat multibuilding --test parallel --workers 8 --thermal-workers 2
 echo.
 echo Docker Workflows:
 echo   docker-build     Build the Docker image
@@ -110,13 +124,15 @@ goto :end
 
 :: ── Commands ──────────────────────────────────────────────────────────────────
 :cmd_install
-echo Installing BUEM in editable mode...
-pip install -e .
+echo Installing BUEM into the conda environment...
+conda develop src
+echo BUEM installed. Verify with:  setup.bat validate
 goto :end
 
 :cmd_install_dev
-echo Installing BUEM with dev extras...
-pip install -e ".[dev]"
+echo Installing BUEM + dev extras into the conda environment...
+conda develop src
+conda install --name %BUEM_CONDA_ENV% --yes pytest pytest-cov black flake8 mypy
 goto :end
 
 :cmd_validate

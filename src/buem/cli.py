@@ -57,7 +57,27 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── multibuilding ─────────────────────────────────────────────────────────
     mb_p = sub.add_parser(
-        "multibuilding", help="Run parallel multi-building processing"
+        "multibuilding",
+        help="Run parallel multi-building processing",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Run the BUEM multi-building processing pipeline.\n"
+            "All numeric parameters are validated against your system's CPU and memory.\n\n"
+            "Examples:\n"
+            "  buem multibuilding                              # auto-optimised complete demo\n"
+            "  buem multibuilding --test parallel              # parallel mode only\n"
+            "  buem multibuilding --test parallel --workers 8  # 8 worker processes\n"
+            "  buem multibuilding --test parallel --cores 8 --workers 4 --thermal-workers 2\n"
+            "  buem multibuilding --test optimize              # auto-find optimal config\n"
+            "  buem multibuilding --validate-system            # show system capabilities"
+        ),
+    )
+    mb_p.add_argument(
+        "--test",
+        choices=["parallel", "sequential", "comparison", "benchmark",
+                 "complete", "optimize", "thermal"],
+        default="complete",
+        help="Test mode to run (default: complete demo)",
     )
     mb_p.add_argument(
         "--buildings",
@@ -66,15 +86,46 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Number of buildings to process (default: 4)",
     )
     mb_p.add_argument(
+        "--cores",
+        type=int,
+        default=None,
+        help="CPU cores to use; overrides --workers (default: auto)",
+    )
+    mb_p.add_argument(
         "--workers",
         type=int,
         default=None,
-        help="Worker processes (default: auto-detect from CPU count)",
+        help="Worker processes for building parallelism (default: auto)",
+    )
+    mb_p.add_argument(
+        "--thermal-workers",
+        type=int,
+        default=None,
+        dest="thermal_workers",
+        help="Worker processes for thermal calculations per building, 1-4 (default: auto)",
+    )
+    mb_p.add_argument(
+        "--thermal-strategy",
+        choices=["sequential", "parallel"],
+        default="parallel",
+        dest="thermal_strategy",
+        help="Thermal calculation strategy (default: parallel)",
     )
     mb_p.add_argument(
         "--sequential",
         action="store_true",
-        help="Force sequential processing (disables parallelism)",
+        help="Force sequential building processing (equivalent to --test sequential)",
+    )
+    mb_p.add_argument(
+        "--validate-system",
+        action="store_true",
+        dest="validate_system",
+        help="Print system capabilities and recommended parameter ranges, then exit",
+    )
+    mb_p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Reduce logging verbosity",
     )
 
     return p
@@ -136,16 +187,74 @@ def main() -> None:
 
     # ── multibuilding ─────────────────────────────────────────────────────────
     elif args.command == "multibuilding":
+        import multiprocessing as _mp
+
+        # ── validate numeric inputs against real hardware ──────────────────
+        max_cores = _mp.cpu_count()
+        errors: list[str] = []
+
+        if args.workers is not None:
+            if args.workers < 1:
+                errors.append(f"--workers must be >= 1 (got {args.workers})")
+            elif args.workers > max_cores:
+                errors.append(
+                    f"--workers {args.workers} exceeds available logical cores "
+                    f"({max_cores}); use a value between 1 and {max_cores}"
+                )
+
+        if args.cores is not None:
+            if args.cores < 1:
+                errors.append(f"--cores must be >= 1 (got {args.cores})")
+            elif args.cores > max_cores:
+                errors.append(
+                    f"--cores {args.cores} exceeds available logical cores "
+                    f"({max_cores}); use a value between 1 and {max_cores}"
+                )
+
+        if args.thermal_workers is not None:
+            if args.thermal_workers < 1:
+                errors.append(f"--thermal-workers must be >= 1 (got {args.thermal_workers})")
+            elif args.thermal_workers > 4:
+                errors.append(
+                    f"--thermal-workers {args.thermal_workers} exceeds the recommended "
+                    f"maximum of 4 for thermal calculations; use a value between 1 and 4"
+                )
+
+        if args.buildings < 1:
+            errors.append(f"--buildings must be >= 1 (got {args.buildings})")
+
+        if errors:
+            for e in errors:
+                print(f"error: {e}", file=sys.stderr)
+            print(
+                f"\nSystem has {max_cores} logical CPU cores. "
+                "Run 'buem multibuilding --validate-system' for recommended ranges.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+        # ── build argv for run_multibuilding_demo's own argparse ───────────
         import sys as _sys
-        # Forward --buildings and --workers as sys.argv so run_multibuilding_demo
-        # argparse picks them up.
-        _argv = []
+        _argv: list[str] = []
+
+        _test = "sequential" if args.sequential else args.test
+        _argv += ["--test", _test]
+
         if args.buildings:
             _argv += ["--buildings", str(args.buildings)]
-        if args.workers:
+        if args.cores is not None:
+            _argv += ["--cores", str(args.cores)]
+        if args.workers is not None:
             _argv += ["--workers", str(args.workers)]
-        if args.sequential:
-            _argv += ["--mode", "sequential"]
+        if args.thermal_workers is not None:
+            _argv += ["--thermal-workers", str(args.thermal_workers)]
+        if args.thermal_strategy:
+            _argv += ["--thermal-strategy", args.thermal_strategy]
+        if args.validate_system:
+            _argv += ["--validate-system"]
+        if args.quiet:
+            _argv += ["--quiet"]
+
         _sys.argv = [_sys.argv[0]] + _argv
 
         from buem.parallelization.run_multibuilding_demo import main as mb_main
