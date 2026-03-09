@@ -1,15 +1,15 @@
 from flask import Flask, jsonify
-from dotenv import load_dotenv
+from buem.env import load_env
 from pathlib import Path
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 
 from buem.apis.model_api import bp as model_bp
-from buem.apis.files_api import bp as files_bp 
+from buem.apis.files_api import bp as files_bp
 
-# load environment variables from .env file
-load_dotenv()
+# load .env and apply defaults (no-op if already done)
+load_env()
 
 # prefer env var; fallback to project-local path for Windows
 DEFAULT_LOG = Path(__file__).resolve().parents[2] / "logs" / "buem_api.log"

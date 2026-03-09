@@ -1,0 +1,216 @@
+# BUEM PowerShell Management Script
+# ─────────────────────────────────────────────────────────────────────────────
+# Usage:  .\setup.ps1 <command> [options]
+#
+# This script requires NO hardcoded paths.  It uses:
+#   - $PSScriptRoot  – the directory containing this file (project root)
+#   - The 'buem' console-script installed by:  pip install -e .
+#   - conda run -n <env>  as a fallback when 'buem' is not yet on PATH
+#   - docker compose  for container-based workflows
+#
+# To make 'buem' available directly, activate the conda environment first:
+#   conda activate buem_env
+#   pip install -e .
+# ─────────────────────────────────────────────────────────────────────────────
+
+param(
+    [Parameter(Position = 0)]
+    [string]$Command = "help",
+
+    [Parameter(ValueFromRemainingArguments)]
+    [string[]]$Rest
+)
+
+Set-Location $PSScriptRoot
+
+# ── Conda environment name ────────────────────────────────────────────────────
+# Override via: $env:BUEM_CONDA_ENV = "my_env"  or  set it in .env
+$CondaEnv = if ($env:BUEM_CONDA_ENV) { $env:BUEM_CONDA_ENV } else { "buem_env" }
+
+# ── Helper: run a 'buem' subcommand ──────────────────────────────────────────
+# If 'buem' is on PATH (conda env active + pip install -e . done), use it.
+# Otherwise fall back to 'conda run -n <env> buem'.
+function Invoke-Buem {
+    param([string[]]$BuemArgs)
+
+    if (Get-Command "buem" -ErrorAction SilentlyContinue) {
+        buem @BuemArgs
+    }
+    else {
+        Write-Host "  'buem' not found on PATH – falling back to: conda run -n $CondaEnv" `
+            -ForegroundColor DarkYellow
+        conda run -n $CondaEnv --no-capture-output buem @BuemArgs
+    }
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+function Show-Help {
+    Write-Host "BUEM PowerShell Commands" -ForegroundColor Cyan
+    Write-Host "========================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Usage:  .\setup.ps1 <command> [options]" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Environment Setup:" -ForegroundColor Green
+    Write-Host "  install          Install BUEM in editable mode (pip install -e .)"
+    Write-Host "  install-dev      Install BUEM with dev extras (pytest, black, etc.)"
+    Write-Host "  validate         Verify installation and environment paths"
+    Write-Host ""
+    Write-Host "Model Commands:" -ForegroundColor Green
+    Write-Host "  run              Run the thermal model for a single building"
+    Write-Host "  run --plot       Run with result plots"
+    Write-Host "  run --milp       Run using the MILP solver (experimental)"
+    Write-Host ""
+    Write-Host "API Server:" -ForegroundColor Green
+    Write-Host "  api              Start Gunicorn API server (production)"
+    Write-Host "  api --dev        Start Flask dev server (development only)"
+    Write-Host "  api --port 8080  Start on a custom port"
+    Write-Host ""
+    Write-Host "Multi-Building:" -ForegroundColor Green
+    Write-Host "  multibuilding                   Run with 4 buildings (default)"
+    Write-Host "  multibuilding --buildings 20    Run with 20 buildings"
+    Write-Host "  multibuilding --sequential      Sequential (no parallelism)"
+    Write-Host ""
+    Write-Host "Docker Workflows:" -ForegroundColor Green
+    Write-Host "  docker-build     Build the Docker image"
+    Write-Host "  docker-up        Start containers (detached)"
+    Write-Host "  docker-down      Stop and remove containers"
+    Write-Host "  docker-logs      Follow container logs"
+    Write-Host "  docker-status    Show container status"
+    Write-Host "  docker-shell     Open a shell inside the running container"
+    Write-Host ""
+    Write-Host "Tests:" -ForegroundColor Green
+    Write-Host "  test             Run the test suite (pytest tests/)"
+    Write-Host "  test-coverage    Run tests with coverage report"
+    Write-Host ""
+    Write-Host "Cleanup:" -ForegroundColor Green
+    Write-Host "  clean            Stop containers and remove build artefacts"
+    Write-Host "  clean-all        Remove containers, volumes, and Docker image"
+    Write-Host ""
+    Write-Host "Examples:" -ForegroundColor Yellow
+    Write-Host "  .\setup.ps1 install"
+    Write-Host "  .\setup.ps1 run --plot"
+    Write-Host "  .\setup.ps1 api"
+    Write-Host "  .\setup.ps1 docker-up"
+    Write-Host ""
+    Write-Host "Conda environment: $CondaEnv  (override: `$env:BUEM_CONDA_ENV)" `
+        -ForegroundColor DarkGray
+}
+
+function Invoke-Install {
+    Write-Host "Installing BUEM in editable mode..." -ForegroundColor Blue
+    pip install -e .
+}
+
+function Invoke-InstallDev {
+    Write-Host "Installing BUEM with dev extras..." -ForegroundColor Blue
+    pip install -e ".[dev]"
+}
+
+function Invoke-Validate {
+    Invoke-Buem @("validate")
+}
+
+function Invoke-Run {
+    Invoke-Buem @(@("run") + $Rest)
+}
+
+function Invoke-Api {
+    Invoke-Buem @(@("api") + $Rest)
+}
+
+function Invoke-Multibuilding {
+    Invoke-Buem @(@("multibuilding") + $Rest)
+}
+
+function Invoke-DockerBuild {
+    Write-Host "Building Docker image..." -ForegroundColor Blue
+    docker compose build
+}
+
+function Invoke-DockerUp {
+    Write-Host "Starting containers..." -ForegroundColor Blue
+    docker compose up -d
+    Write-Host "API available at http://localhost:5000" -ForegroundColor Green
+}
+
+function Invoke-DockerDown {
+    Write-Host "Stopping containers..." -ForegroundColor Blue
+    docker compose down
+}
+
+function Invoke-DockerLogs {
+    docker compose logs -f
+}
+
+function Invoke-DockerStatus {
+    docker compose ps
+}
+
+function Invoke-DockerShell {
+    Write-Host "Opening shell in buem-api container..." -ForegroundColor Blue
+    docker exec -it buem-api bash
+}
+
+function Invoke-Test {
+    Write-Host "Running test suite..." -ForegroundColor Blue
+    if (Get-Command "pytest" -ErrorAction SilentlyContinue) {
+        pytest tests/ -v
+    }
+    else {
+        conda run -n $CondaEnv --no-capture-output pytest tests/ -v
+    }
+}
+
+function Invoke-TestCoverage {
+    Write-Host "Running tests with coverage..." -ForegroundColor Blue
+    if (Get-Command "pytest" -ErrorAction SilentlyContinue) {
+        pytest tests/ -v --cov=buem --cov-report=term-missing
+    }
+    else {
+        conda run -n $CondaEnv --no-capture-output pytest tests/ -v `
+            --cov=buem --cov-report=term-missing
+    }
+}
+
+function Invoke-Clean {
+    Write-Host "Cleaning build artefacts and stopping containers..." -ForegroundColor Blue
+    docker compose down 2>$null
+    Remove-Item -Recurse -Force "src\buem.egg-info" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force "src\buem\__pycache__" -ErrorAction SilentlyContinue
+    Get-ChildItem -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "Clean complete." -ForegroundColor Green
+}
+
+function Invoke-CleanAll {
+    Write-Host "Removing containers, volumes, and Docker image..." -ForegroundColor Blue
+    docker compose down -v --rmi all 2>$null
+    Invoke-Clean
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+switch ($Command.ToLower()) {
+    "help"          { Show-Help }
+    "install"       { Invoke-Install }
+    "install-dev"   { Invoke-InstallDev }
+    "validate"      { Invoke-Validate }
+    "run"           { Invoke-Run }
+    "api"           { Invoke-Api }
+    "multibuilding" { Invoke-Multibuilding }
+    "docker-build"  { Invoke-DockerBuild }
+    "docker-up"     { Invoke-DockerUp }
+    "docker-down"   { Invoke-DockerDown }
+    "docker-logs"   { Invoke-DockerLogs }
+    "docker-status" { Invoke-DockerStatus }
+    "docker-shell"  { Invoke-DockerShell }
+    "test"          { Invoke-Test }
+    "test-coverage" { Invoke-TestCoverage }
+    "clean"         { Invoke-Clean }
+    "clean-all"     { Invoke-CleanAll }
+    default {
+        Write-Host "Unknown command: $Command" -ForegroundColor Red
+        Write-Host ""
+        Show-Help
+        exit 1
+    }
+}

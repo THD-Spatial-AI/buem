@@ -12,6 +12,22 @@ authors = [
 readme = "README.md"
 license = {text = "MIT License"}
 requires-python = ">=3.11"
+keywords = [
+    "building",
+    "energy-model",
+    "energy-communities",
+    "parameterization",
+    "open-source",
+    "heating-cooling",
+    "python",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: GIS",
+]
 dependencies = [
     "matplotlib",
     "numpy",
@@ -24,7 +40,6 @@ dependencies = [
     "flask",
     "python-dotenv",
     "gunicorn",
-    "coincbc",
     "pulp",
     "marshmallow>=4.0.0",
     "marshmallow-dataclass>=8.0.0",
@@ -51,25 +66,15 @@ dev = [
     "mypy",
 ]
 
-keywords = [
-    "building",
-    "energy-model",
-    "energy-communities",
-    "parameterization",
-    "open-source",
-    "heating-cooling",
-    "python",
-]
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering :: GIS"
-]
-
 [project.scripts]
-buem = "buem.main:main"
+buem = "buem.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+buem = [
+    "data/**/*",
+    "softwares/**/*",
+    "integration/json_schema/**/*",
+]
