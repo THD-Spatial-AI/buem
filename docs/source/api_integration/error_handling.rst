@@ -1,205 +1,63 @@
 Error Handling
 ==============
 
-BuEM provides comprehensive error handling to help diagnose and resolve integration issues.
-
-Error Response Format
----------------------
-
-All API errors follow a consistent JSON structure:
+All API errors return a consistent JSON envelope:
 
 .. code-block:: json
 
-    {
-      "error": {
-        "code": "ERROR_TYPE",
-        "message": "Human readable error description",
-        "details": [...],
-        "request_id": "uuid",
-        "timestamp": "2026-02-23T10:30:00Z"
-      }
-    }
+   {
+     "error": {
+       "code": "ERROR_TYPE",
+       "message": "Human-readable description",
+       "details": ["..."]
+     }
+   }
 
 HTTP Status Codes
 -----------------
 
-**Client Errors (4xx)**
-
 .. list-table::
    :header-rows: 1
-   :widths: 20 80
+   :widths: 10 90
 
-   * - Status Code
-     - Description
-   * - ``400 Bad Request``
-     - Invalid JSON format, malformed GeoJSON structure
-   * - ``422 Unprocessable Entity``  
-     - Valid JSON but invalid building attributes or validation failed
-   * - ``404 Not Found``
-     - Requested file or endpoint does not exist
-   * - ``405 Method Not Allowed``
-     - HTTP method not supported for endpoint
-   * - ``413 Payload Too Large``
-     - Request exceeds maximum size limits
-
-**Server Errors (5xx)**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 80
-
-   * - Status Code
-     - Description
-   * - ``500 Internal Server Error``
-     - Model execution error, unexpected server failure
-   * - ``503 Service Unavailable``  
-     - Server temporarily unavailable or overloaded
-   * - ``507 Insufficient Storage``
-     - Cannot save timeseries data due to disk space
+   * - Code
+     - Meaning
+   * - 400
+     - Invalid JSON or malformed GeoJSON
+   * - 404
+     - File or endpoint not found
+   * - 422
+     - Valid JSON but building attributes fail validation
+   * - 500
+     - Model execution error or unexpected failure
 
 Error Categories
 ----------------
 
-**VALIDATION_ERROR**
+``VALIDATION_ERROR``
+  Missing or out-of-range building attributes
+  (e.g. negative U-value, missing ``components``).
 
-Building attributes fail validation rules.
+``GEOJSON_ERROR``
+  Structural problems with the GeoJSON payload
+  (e.g. missing ``type``, ``features`` not an array).
 
-.. code-block:: json
+``MODEL_ERROR``
+  Thermal solver failure
+  (e.g. LP infeasible, weather file missing).
 
-    {
-      "error": {
-        "code": "VALIDATION_ERROR",
-        "message": "Building attribute validation failed",
-        "details": [
-          "components.Walls.U must be a positive number",
-          "latitude must be between -90 and 90",
-          "components.Windows.elements[0].area exceeds parent wall area"
-        ]
-      }
-    }
+``FILE_ERROR``
+  Requested timeseries file not found on disk.
 
-**GEOJSON_ERROR**
+Debugging Checklist
+-------------------
 
-Invalid GeoJSON structure.
-
-.. code-block:: json
-
-    {
-      "error": {
-        "code": "GEOJSON_ERROR", 
-        "message": "Invalid GeoJSON format",
-        "details": [
-          "Missing required field: type",
-          "features must be an array"
-        ]
-      }
-    }
-
-**MODEL_ERROR**
-
-Thermal model execution failure.
-
-.. code-block:: json
-
-    {
-      "error": {
-        "code": "MODEL_ERROR",
-        "message": "Thermal model execution failed", 
-        "details": [
-          "Convergence failure in thermal solver",
-          "Building ID: B001"
-        ]
-      }
-    }
-
-**FILE_ERROR**
-
-File operations failure.
-
-.. code-block:: json
-
-    {
-      "error": {
-        "code": "FILE_ERROR",
-        "message": "Cannot access requested file",
-        "details": [
-          "File not found: buem_ts_missing123.json.gz",
-          "File may have expired or been cleaned up"
-        ]
-      }
-    }
-
-Common Error Scenarios
-----------------------
-
-**Missing Required Attributes**
-
-.. code-block:: json
-
-    {
-      "error": {
-        "code": "VALIDATION_ERROR",
-        "message": "Required attributes missing",
-        "details": [
-          "properties.buem.building_attributes is required",
-          "components.Walls is required"
-        ]
-      }
-    }
-
-**Invalid Numeric Values**
-
-.. code-block:: json
-
-    {
-      "error": {
-        "code": "VALIDATION_ERROR", 
-        "message": "Invalid numeric values",
-        "details": [
-          "A_ref must be positive (got: -100)",
-          "U values cannot be zero or negative"
-        ]
-      }
-    }
-
-**Weather Data Issues**
-
-.. code-block:: json
-
-    {
-      "error": {
-        "code": "MODEL_ERROR",
-        "message": "Weather data unavailable",
-        "details": [
-          "Weather CSV not found at configured path",
-          "Check BUEM_WEATHER_DIR environment variable"
-        ]
-      }
-    }
-
-Debugging Tips
---------------
-
-**Request Validation**
-
-1. Validate JSON syntax with a JSON linter
-2. Check GeoJSON structure with online validators
-3. Verify all required building attributes are present
-4. Ensure numeric values are within valid ranges
-
-**Model Execution Issues**
-
-1. Check thermal properties are physically reasonable
-2. Verify total window area doesn't exceed wall area  
-3. Ensure air changes and U-values are positive
-4. Review coordinate system (lat/lon) for location
-
-**File Download Problems**
-
-1. Download files immediately after API response
-2. Check available disk space on server
-3. Verify file permissions for results directory
-4. Files may have retention policies and expire
+1. Validate JSON syntax and GeoJSON structure before sending.
+2. Ensure all component U-values are positive and areas > 0.
+3. Check that total window area does not exceed its parent wall area.
+4. Verify ``BUEM_WEATHER_DIR`` is set and the CSV file exists.
+5. Review container logs: ``docker logs buem-api``.
+6. Verify file permissions for results directory.
 
 Error Recovery Strategies
 -------------------------

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://buem.energy/schemas/v3/request",
   "title": "BUEM GeoJSON Request Schema v3",
-  "description": "Request schema for the BUEM building energy model. Attributes are separated into four concerns: building (thematic), envelope (geometry), thermal (performance), solver (execution). All measurable quantities carry an explicit unit field. Dimensionless ratios use unit: '-'. SI units are assumed when unit is omitted.",
+  "description": "Request schema for the BUEM building energy model. Each feature represents one building. The buem object contains two concerns: building (complete physical description — classification, geometry, and thermal performance) and solver (execution settings). All measurable quantities carry an explicit unit field. SI units are assumed when unit is omitted. Dimensionless ratios use unit: '-'.",
   "type": "object",
   "required": ["type", "features"],
   "properties": {
@@ -17,9 +17,9 @@
     },
     "features": {
       "type": "array",
-      "items": { "$ref": "#/$defs/feature" },
       "minItems": 1,
-      "description": "Array of building features to process"
+      "items": { "$ref": "#/$defs/feature" },
+      "description": "One entry per building to simulate"
     }
   },
 
@@ -29,12 +29,9 @@
       "type": "object",
       "required": ["type", "id", "geometry", "properties"],
       "properties": {
-        "type": { "const": "Feature" },
-        "id": {
-          "type": "string",
-          "description": "Unique building identifier"
-        },
-        "geometry": { "$ref": "#/$defs/geometry" },
+        "type":       { "const": "Feature" },
+        "id":         { "type": "string", "description": "Unique building identifier" },
+        "geometry":   { "$ref": "#/$defs/geometry" },
         "properties": { "$ref": "#/$defs/properties" }
       }
     },
@@ -49,7 +46,7 @@
           "items": { "type": "number" },
           "minItems": 2,
           "maxItems": 3,
-          "description": "Geographic coordinates [longitude, latitude, elevation?] — authoritative location, used for weather station lookup"
+          "description": "[longitude, latitude, elevation?] — authoritative building location, used for weather station lookup"
         }
       }
     },
@@ -58,49 +55,32 @@
       "type": "object",
       "required": ["start_time", "end_time", "buem"],
       "properties": {
-        "start_time": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Simulation start time"
-        },
-        "end_time": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Simulation end time"
-        },
-        "resolution": {
-          "type": "string",
-          "default": "60",
-          "description": "Time resolution value"
-        },
-        "resolution_unit": {
-          "type": "string",
-          "default": "minutes",
-          "description": "Time resolution unit"
-        },
-        "buem": { "$ref": "#/$defs/buem" }
+        "start_time":      { "type": "string", "format": "date-time", "description": "Simulation start time" },
+        "end_time":        { "type": "string", "format": "date-time", "description": "Simulation end time" },
+        "resolution":      { "type": "string", "default": "60",       "description": "Time resolution value" },
+        "resolution_unit": { "type": "string", "default": "minutes",  "description": "Time resolution unit" },
+        "buem":            { "$ref": "#/$defs/buem" }
       }
     },
 
     "buem": {
       "type": "object",
-      "required": ["building", "envelope"],
-      "description": "BUEM model input — split into building, envelope, thermal, and solver concerns",
+      "required": ["building"],
+      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings.",
       "properties": {
         "building": { "$ref": "#/$defs/building" },
-        "envelope":  { "$ref": "#/$defs/envelope" },
-        "thermal":   { "$ref": "#/$defs/thermal" },
-        "solver":    { "$ref": "#/$defs/solver" }
+        "solver":   { "$ref": "#/$defs/solver" }
       }
     },
 
     "building": {
       "type": "object",
-      "description": "Thematic and classification parameters describing what the building is",
+      "required": ["envelope"],
+      "description": "Complete physical description of the building. Classification fields (type, country, etc.) sit at this level. Geometry and per-element thermal properties are in envelope. Building-wide thermal parameters are in thermal.",
       "properties": {
         "A_ref": {
           "allOf": [{ "$ref": "#/$defs/area_qty" }],
-          "description": "Reference floor area — derived from envelope element areas if omitted",
+          "description": "Reference floor area. Derived from floor element areas if omitted.",
           "default": { "value": 0, "unit": "m2" }
         },
         "h_room": {
@@ -115,7 +95,7 @@
         },
         "building_type": {
           "type": "string",
-          "description": "Building type code (e.g. SFH, MFH, AB, TH)"
+          "description": "Building type code (e.g. SFH single-family, MFH multi-family, AB apartment block, TH terraced house)"
         },
         "construction_period": {
           "type": "string",
@@ -128,31 +108,33 @@
         "attic_condition": {
           "type": "string",
           "enum": ["-", "N", "P", "C", "NI", "PI"],
-          "description": "Attic conditioning status: - not applicable, N not conditioned, P partially, C conditioned, NI not insulated, PI partially insulated"
+          "description": "Attic conditioning status: - not applicable, N not conditioned, P partially conditioned, C conditioned, NI not insulated, PI partially insulated"
         },
         "cellar_condition": {
           "type": "string",
           "enum": ["-", "N", "P", "C", "NI", "PI"],
-          "description": "Cellar conditioning status"
+          "description": "Cellar conditioning status — same codes as attic_condition"
         },
         "neighbour_status": {
           "type": "string",
           "enum": ["B_Alone", "B_N1", "B_N2"],
           "description": "Attached neighbours: B_Alone detached, B_N1 one shared wall, B_N2 two shared walls"
-        }
+        },
+        "envelope": { "$ref": "#/$defs/envelope" },
+        "thermal":  { "$ref": "#/$defs/thermal" }
       }
     },
 
     "envelope": {
       "type": "object",
       "required": ["elements"],
-      "description": "Geometric description of all building envelope elements. Number of elements per type is unconstrained — a building may have any number of walls, roofs, windows, doors, and ventilation systems. Thermal properties for each element are defined separately in thermal.element_properties, linked by id.",
+      "description": "All building surfaces. Each element carries both its geometry (area, orientation, tilt) and its thermal properties (U-value, solar gain coefficient, etc.) in a single entry. No separate thermal properties list is needed.",
       "properties": {
         "elements": {
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/envelope_element" },
-          "description": "List of all envelope elements. Each element has a user-defined id that must be unique within the feature."
+          "description": "List of all building surfaces. The id must be unique within the feature."
         }
       }
     },
@@ -160,21 +142,21 @@
     "envelope_element": {
       "type": "object",
       "required": ["id", "type"],
-      "description": "A single building envelope element. All measurable attributes use { value, unit } form. For opaque and transparent elements area, azimuth, and tilt are required. Ventilation elements have no surface geometry.",
+      "description": "A single building surface. Geometry and thermal properties are defined together. For ventilation elements, no surface geometry is needed — only air_changes.",
       "properties": {
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "User-defined unique element identifier — referenced by thermal.element_properties"
+          "description": "User-defined unique identifier for this surface element"
         },
         "type": {
           "type": "string",
           "enum": ["wall", "roof", "floor", "window", "door", "ventilation"],
-          "description": "Element type"
+          "description": "Surface type"
         },
         "area": {
           "allOf": [{ "$ref": "#/$defs/area_qty" }],
-          "description": "Element surface area"
+          "description": "Surface area"
         },
         "azimuth": {
           "allOf": [{ "$ref": "#/$defs/angle_qty" }],
@@ -185,11 +167,35 @@
             { "$ref": "#/$defs/angle_qty" },
             { "properties": { "value": { "minimum": 0, "maximum": 90 } } }
           ],
-          "description": "Tilt from horizontal (0=horizontal/roof, 90=vertical/wall)"
+          "description": "Tilt from horizontal (0=horizontal roof, 90=vertical wall)"
         },
-        "surface": {
+        "parent_id": {
           "type": "string",
-          "description": "Id of the parent wall element — required for windows and doors"
+          "description": "Id of the envelope element this surface is embedded in. Required for windows and doors. A window is embedded in a wall (or roof for a skylight); a door is embedded in a wall."
+        },
+        "U": {
+          "allOf": [{ "$ref": "#/$defs/u_value_qty" }],
+          "description": "Thermal transmittance (U-value). Applies to wall, roof, floor, window, and door elements."
+        },
+        "b_transmission": {
+          "allOf": [
+            { "$ref": "#/$defs/dimensionless_qty" },
+            { "properties": { "value": { "minimum": 0, "maximum": 1 } } }
+          ],
+          "description": "Transmission correction factor for elements adjacent to unheated spaces (e.g. cellar, attic). 1.0 = fully exposed to outdoor conditions. TABULA: b_Transmission_*",
+          "default": { "value": 1.0, "unit": "-" }
+        },
+        "g_gl": {
+          "allOf": [
+            { "$ref": "#/$defs/dimensionless_qty" },
+            { "properties": { "value": { "minimum": 0, "maximum": 1 } } }
+          ],
+          "description": "Solar heat gain coefficient — window elements only. Fraction of incident solar radiation that enters the building. TABULA: g_gl_n_Window",
+          "default": { "value": 0.5, "unit": "-" }
+        },
+        "air_changes": {
+          "allOf": [{ "$ref": "#/$defs/air_change_qty" }],
+          "description": "Air changes per hour — ventilation elements only"
         }
       },
       "if": {
@@ -202,126 +208,85 @@
 
     "thermal": {
       "type": "object",
-      "description": "Thermal performance parameters aligned with IEE TABULA definitions. All fields are optional — implementation defaults (SI units) apply when omitted.",
+      "description": "Building-wide thermal performance parameters aligned with IEE TABULA definitions. All fields are optional — model defaults (SI units) apply when omitted. Per-element thermal properties (U-value, g_gl, etc.) are defined directly on each envelope element.",
       "properties": {
         "n_air_infiltration": {
           "allOf": [{ "$ref": "#/$defs/air_change_qty" }],
-          "description": "Air change rate due to infiltration — TABULA: n_air_infiltration",
+          "description": "Uncontrolled air infiltration rate through gaps and cracks in the building fabric — TABULA: n_air_infiltration",
           "default": { "value": 0.5, "unit": "1/h" }
         },
         "n_air_use": {
           "allOf": [{ "$ref": "#/$defs/air_change_qty" }],
-          "description": "Air change rate due to building usage / mechanical ventilation — TABULA: n_air_use",
+          "description": "Ventilation air change rate during building occupancy — TABULA: n_air_use",
           "default": { "value": 0.5, "unit": "1/h" }
         },
         "c_m": {
           "allOf": [{ "$ref": "#/$defs/heat_capacity_qty" }],
-          "description": "Internal thermal capacity per m² of useful floor area — TABULA: c_m",
+          "description": "Internal thermal capacity per m² of floor area — how much heat the building structure can store. TABULA: c_m",
           "default": { "value": 165.0, "unit": "kJ/(m2K)" }
         },
         "thermal_class": {
           "type": "string",
           "enum": ["light", "medium", "heavy"],
-          "default": "medium",
-          "description": "ISO 13790 thermal mass class — determines c_m if c_m is not provided explicitly"
+          "description": "ISO 13790 thermal mass class — used to derive c_m when c_m is not provided explicitly",
+          "default": "medium"
         },
         "comfortT_lb": {
           "allOf": [{ "$ref": "#/$defs/temperature_qty" }],
-          "description": "Heating setpoint — indoor comfort lower bound",
+          "description": "Heating setpoint — minimum acceptable indoor temperature",
           "default": { "value": 21.0, "unit": "degC" }
         },
         "comfortT_ub": {
           "allOf": [{ "$ref": "#/$defs/temperature_qty" }],
-          "description": "Cooling setpoint — indoor comfort upper bound",
+          "description": "Cooling setpoint — maximum acceptable indoor temperature",
           "default": { "value": 24.0, "unit": "degC" }
         },
         "design_T_min": {
           "allOf": [{ "$ref": "#/$defs/temperature_qty" }],
-          "description": "Outdoor design temperature for peak load sizing — TABULA: Theta_e",
+          "description": "Outdoor design temperature used for peak heating load calculation — TABULA: Theta_e",
           "default": { "value": -12.0, "unit": "degC" }
         },
         "F_sh_hor": {
           "allOf": [{ "$ref": "#/$defs/dimensionless_qty" }],
-          "description": "Horizontal shading factor — TABULA: F_sh_hor",
+          "description": "Shading reduction factor for horizontal surfaces (e.g. roof) — TABULA: F_sh_hor",
           "default": { "value": 0.80, "unit": "-" }
         },
         "F_sh_vert": {
           "allOf": [{ "$ref": "#/$defs/dimensionless_qty" }],
-          "description": "Vertical shading factor — TABULA: F_sh_vert",
+          "description": "Shading reduction factor for vertical surfaces (e.g. walls, windows) — TABULA: F_sh_vert",
           "default": { "value": 0.75, "unit": "-" }
         },
         "F_f": {
           "allOf": [{ "$ref": "#/$defs/dimensionless_qty" }],
-          "description": "Window frame area fraction — TABULA: F_f",
+          "description": "Window frame area fraction — proportion of the window opening that is frame rather than glass. TABULA: F_f",
           "default": { "value": 0.20, "unit": "-" }
         },
         "F_w": {
           "allOf": [{ "$ref": "#/$defs/dimensionless_qty" }],
-          "description": "Window correction factor — TABULA: F_w",
+          "description": "Window non-perpendicularity correction factor — TABULA: F_w",
           "default": { "value": 1.0, "unit": "-" }
-        },
-        "element_properties": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/thermal_element" },
-          "description": "Per-element thermal properties — each entry references an envelope element by id"
-        }
-      }
-    },
-
-    "thermal_element": {
-      "type": "object",
-      "required": ["id"],
-      "description": "Thermal properties for one envelope element, referenced by id. Only the properties relevant to the element type need to be provided.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Matches an id in envelope.elements"
-        },
-        "U": {
-          "allOf": [{ "$ref": "#/$defs/u_value_qty" }],
-          "description": "Thermal transmittance — wall, roof, floor, window, door elements"
-        },
-        "b_transmission": {
-          "allOf": [
-            { "$ref": "#/$defs/dimensionless_qty" },
-            { "properties": { "value": { "minimum": 0, "maximum": 1 } } }
-          ],
-          "description": "Transmission correction factor — values < 1 for elements adjacent to unheated spaces. TABULA: b_Transmission_*",
-          "default": { "value": 1.0, "unit": "-" }
-        },
-        "g_gl": {
-          "allOf": [
-            { "$ref": "#/$defs/dimensionless_qty" },
-            { "properties": { "value": { "minimum": 0, "maximum": 1 } } }
-          ],
-          "description": "Solar heat gain coefficient — window elements only. TABULA: g_gl_n_Window",
-          "default": { "value": 0.5, "unit": "-" }
-        },
-        "air_changes": {
-          "allOf": [{ "$ref": "#/$defs/air_change_qty" }],
-          "description": "Air changes per hour — ventilation elements only"
         }
       }
     },
 
     "solver": {
       "type": "object",
-      "description": "Execution control flags for the thermal solver",
+      "description": "Execution settings for the BUEM thermal solver. These control how the model runs, not what it simulates.",
       "properties": {
         "use_milp": {
           "type": "boolean",
           "default": false,
-          "description": "Use Mixed Integer Linear Programming solver (CVXPY + CBC) instead of default scipy sparse / OSQP"
+          "description": "Use Mixed Integer Linear Programming solver (CVXPY + CBC) instead of the default scipy sparse solver. Slower but handles inequality constraints exactly."
         },
         "parallel_thermal": {
           "type": "boolean",
           "default": true,
-          "description": "Run heating and cooling simulations in parallel"
+          "description": "Run heating and cooling simulations in parallel within a single building"
         },
         "use_chunked_processing": {
           "type": "boolean",
           "default": true,
-          "description": "Process large feature collections in chunks to manage memory"
+          "description": "Process the 8760-hour timeseries in chunks to limit memory usage"
         }
       }
     },

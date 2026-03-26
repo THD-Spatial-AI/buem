@@ -1,79 +1,43 @@
-Introduction to BuEM
-====================
+Introduction
+============
 
-BuEM (Building Energy Model) is a comprehensive thermal simulation tool designed for building energy analysis and integration with other energy modeling systems.
+BuEM (Building Energy Model) is an open-source tool that calculates hourly
+heating and cooling loads for buildings.  It implements the **ISO 13790 5R1C**
+(five-resistor, one-capacitor) thermal-network model and solves an annual
+energy-balance problem using a linear-programming (LP) formulation.
 
-Overview
---------
+How It Works
+------------
 
-BuEM provides accurate thermal load calculations for buildings using:
+Given a building description (envelope U-values, areas, orientations) and a
+year of hourly weather data, BuEM:
 
-- **Thermal Physics**: Based on EN ISO 52016 building energy standards
-- **Component-Based Modeling**: Flexible building envelope definition
-- **Weather Integration**: Comprehensive climate data processing
-- **API-First Design**: Built for system integration
-- **Docker Ready**: Fully containerized deployment
+1. Constructs a 5R1C thermal network (air node, surface node, mass node).
+2. Distributes solar and internal gains across these nodes per ISO 13790 §C.2.
+3. Formulates the annual energy balance as an LP that minimises
+   :math:`\sum |Q_{\text{HC}}|` subject to dead-band comfort constraints.
+4. Solves with CVXPY (CLARABEL or OSQP) to obtain hourly heating/cooling
+   profiles.
+
+An experimental MILP path is also available, which separates heating and
+cooling into independent variables using binary indicators.
 
 Key Features
 ------------
 
-**Thermal Calculations**
-- Hourly heating and cooling load calculations
-- Solar gain analysis with proper shading factors
-- Internal heat gains from occupancy and equipment
-- Thermal mass effects and building response
-
-**Integration Capabilities** 
-- REST API for external system integration
-- GeoJSON standard for spatial building data
-- Flexible attribute system for building specification
-- Batch processing for multiple buildings
-
-**Deployment Options**
-- Docker containerization for easy deployment
-- Conda environment for development
-- Cloud-ready architecture
-- Scalable processing
+- **Physics-based**: EN ISO 13790 5R1C with annual-periodic boundary conditions
+- **LP / MILP solver**: CVXPY with CBC fallback; dead-band comfort modelling
+- **Solar gains**: pvlib isotropic-sky model for plane-of-array irradiance
+- **Stochastic occupancy**: Richardson-model electricity profiles
+- **REST API**: Flask + Gunicorn; GeoJSON in, GeoJSON out
+- **Docker-ready**: single ``docker compose up`` for production use
 
 Target Users
 ------------
 
-This documentation is specifically designed for:
+**Developers / Integrators** who connect BuEM to other simulation tools
+(district heating models, urban energy platforms) via its REST API in
+Docker containers.
 
-**Software Developers**
-- Integrating BuEM with other building simulation tools
-- Building energy management platforms
-- District energy system models
-- Urban planning and analysis tools
-
-**System Integrators**
-- Deploying BuEM in production environments
-- Setting up automated workflows
-- Managing building data pipelines
-- Ensuring robust error handling
-
-Use Cases
----------
-
-**Building Performance Analysis**
-- Annual energy consumption calculations
-- Peak load determination for HVAC sizing
-- Retrofit scenario analysis
-- Building certification support
-
-**District and Urban Scale**
-- Neighborhood energy demand mapping
-- Infrastructure planning support
-- Energy system optimization
-- Policy impact assessment
-
-**Real-Time Applications**
-- Building management system integration
-- Demand response program support
-- Predictive maintenance
-- Energy trading and optimization
-
-Next Steps
-----------
-
-Continue to :doc:`../api_integration/index` for comprehensive API integration guidance.
+**Researchers** who need quick, standards-based thermal-load estimates for
+large building stocks.

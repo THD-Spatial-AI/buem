@@ -5,7 +5,6 @@ services:
       dockerfile: Dockerfile
     container_name: buem-api
     env_file: .env
-    working_dir: /app
     environment:
       - PYTHONPATH=/app/src
       - BUEM_WEATHER_DIR=/app/data/weather

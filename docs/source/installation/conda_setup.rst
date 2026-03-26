@@ -6,8 +6,10 @@ Installing and configuring BuEM using Conda package manager.
 Prerequisites
 -------------
 
+Make sure you have completed the :doc:`prerequisites` page before continuing.
+
 * `Anaconda <https://docs.anaconda.com/anaconda/install/>`_ or `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`_
-* Python 3.8+ support (recommended: Python 3.11)
+* Python >= 3.13 (pinned in ``environment.yml``)
 
 Quick Installation
 ------------------
@@ -53,15 +55,19 @@ For custom environment configuration:
 .. code-block:: bash
 
     # Create new environment
-    conda create -n buem_env python=3.11
+    conda create -n buem_env python=3.13
     conda activate buem_env
     
     # Install core dependencies
     conda install -c conda-forge numpy pandas scipy matplotlib
     conda install -c conda-forge requests flask gunicorn
-    
-    # For PyPI installation (alternative)
-    pip install buem
+
+.. warning::
+
+   **Do not** use ``pip install buem`` from PyPI.  The PyPI package is
+   outdated (last updated September 2025) and does not match the current
+   codebase.  Always install from the repository using
+   ``conda env create -f environment.yml`` or ``conda develop src``.
 
 Optional Dependencies
 ---------------------
@@ -108,7 +114,7 @@ Troubleshooting
 
 .. code-block:: bash
 
-    # Ensure proper installation
-    pip install -e . --force-reinstall
+    # Re-register the source tree with conda
+    conda develop src
 
-For additional help, see :doc:`troubleshooting`.
+For additional help, check the container logs or API ``/api/health`` endpoint.

@@ -31,6 +31,7 @@ requirements:
     - pandas
     - pip
     - psutil
+    - psycopg2
     - pulp
     - pvlib
     - pyarrow

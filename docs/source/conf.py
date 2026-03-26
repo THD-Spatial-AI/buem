@@ -54,6 +54,10 @@ extensions = [
     "sphinx.ext.napoleon",
 ]
 
+# Prefix auto-generated section labels with the document path to avoid
+# duplicate-label warnings when different pages share headings like "Purpose".
+autosectionlabel_prefix_document = True
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 

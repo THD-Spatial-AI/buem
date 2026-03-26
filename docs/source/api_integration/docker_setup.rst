@@ -1,43 +1,23 @@
-Docker Setup and Deployment
-============================
+Docker Setup
+============
 
-BuEM is designed to run in Docker containers for easy deployment and integration with other containerized systems.
-
-Prerequisites
--------------
-
-- Docker Engine 20.10 or later
-- Docker Compose 2.0 or later (optional, for multi-service setup)
-- Minimum 2GB available memory
-- Network access for downloading dependencies
-
-Building the Container
-----------------------
-
-**Option 1: Using provided Dockerfile**
+Quick Start
+-----------
 
 .. code-block:: bash
 
-    # Clone the repository
-    git clone <buem-repository-url>
-    cd buem
-    
-    # Build the container
-    docker build -t buem:latest .
+   git clone <buem-repository-url>
+   cd buem
+   docker compose up
 
-**Option 2: Using Docker Compose**
+The API is now available at ``http://localhost:5000``.  Test it:
 
 .. code-block:: bash
 
-    # Use the provided docker-compose.yml
-    docker-compose build buem
+   curl http://localhost:5000/api/health
 
-Container Configuration
------------------------
-
-**Environment Variables**
-
-The BuEM container supports the following environment variables:
+Environment Variables
+---------------------
 
 .. list-table::
    :header-rows: 1
@@ -47,156 +27,46 @@ The BuEM container supports the following environment variables:
      - Default
      - Description
    * - ``BUEM_WEATHER_DIR``
-     - ``/app/data``
-     - Directory containing weather data files
+     - ``/app/data/weather``
+     - Weather CSV directory (mounted read-only)
    * - ``BUEM_RESULTS_DIR``
      - ``/app/results``
-     - Directory for saving timeseries output files
-   * - ``FLASK_PORT``
-     - ``5000``
-     - Port for the API server
-   * - ``FLASK_HOST``
-     - ``0.0.0.0``
-     - Host binding for the API server
+     - Output directory for timeseries files
+   * - ``BUEM_CBC_EXE``
+     - ``/opt/conda/envs/buem_env/bin/cbc``
+     - Path to the CBC solver binary (used by MILP path)
 
-**Volume Mounts**
-
-Essential directories to mount:
-
-.. code-block:: bash
-
-    docker run -d \\
-      -p 5000:5000 \\
-      -v /host/path/to/weather:/app/data/weather \\
-      -v /host/path/to/results:/app/results \\
-      -e BUEM_WEATHER_DIR=/app/data/weather \\
-      buem:latest
-
-Running the Container
----------------------
-
-**Single Container**
-
-.. code-block:: bash
-
-    docker run -d \\
-      --name buem-api \\
-      -p 5000:5000 \\
-      -v $(pwd)/data/weather:/app/data/weather \\
-      -v $(pwd)/results:/app/results \\
-      buem:latest
-
-**With Docker Compose**
-
-Create a ``docker-compose.yml``:
-
-.. code-block:: yaml
-
-    version: '3.8'
-    services:
-      buem:
-        build: .
-        ports:
-          - "5000:5000"
-        volumes:
-          - ./data/weather:/app/data/weather
-          - ./results:/app/results
-        environment:
-          - BUEM_WEATHER_DIR=/app/data/weather
-          - BUEM_RESULTS_DIR=/app/results
-        restart: unless-stopped
-
-    networks:
-      default:
-        driver: bridge
-
-Then run:
-
-.. code-block:: bash
-
-    docker-compose up -d
-
-Health Checks
+Volume Mounts
 -------------
 
-**API Health Endpoint**
+The provided ``docker-compose.yml`` mounts:
 
-Check if the container is running properly:
+- ``./src/buem/data/weather`` → ``/app/data/weather`` (read-only)
+- ``./src/buem/logs`` → ``/app/logs``
+- ``./results`` → ``/app/results``
 
-.. code-block:: bash
-
-    curl http://localhost:5000/api/health
-
-Expected response:
-
-.. code-block:: json
-
-    {
-      "status": "healthy",
-      "version": "1.0.0",
-      "timestamp": "2026-02-23T10:30:00Z"
-    }
-
-**Container Logs**
-
-Monitor container logs:
+Manual Build
+------------
 
 .. code-block:: bash
 
-    # For docker run
-    docker logs buem-api
-    
-    # For docker-compose
-    docker-compose logs buem
+   docker build -t buem:latest .
+   docker run -d --name buem-api \
+     -p 5000:5000 \
+     -v $(pwd)/src/buem/data/weather:/app/data/weather:ro \
+     -v $(pwd)/results:/app/results \
+     buem:latest
 
-Security Considerations
------------------------
+Health Check
+------------
 
-**Network Security**
-- Run containers on internal networks when possible
-- Use reverse proxy (nginx/traefik) for external access
-- Implement API authentication if required
-
-**Data Security**
-- Weather data directory should be read-only mounted
-- Results directory needs write permissions
-- Consider using Docker secrets for sensitive configuration
-
-**Resource Limits**
-
-Set appropriate resource limits:
+The Compose file includes a health check that calls ``/api/health`` every
+30 s.  Monitor with:
 
 .. code-block:: bash
 
-    docker run -d \\
-      --memory=2g \\
-      --cpus=1.0 \\
-      --name buem-api \\
-      buem:latest
-
-Integration with Other Services
--------------------------------
-
-**With Database Services**
-
-.. code-block:: yaml
-
-    services:
-      buem:
-        # ... buem configuration
-        depends_on:
-          - database
-      
-      database:
-        image: postgres:13
-        environment:
-          POSTGRES_DB: buildings
-          POSTGRES_USER: buem
-          POSTGRES_PASSWORD: secure_password
-
-**With Load Balancer**
-
-For production deployments, consider using multiple instances:
+   docker compose ps
+   docker compose logs buem-api
 
 .. code-block:: yaml
 

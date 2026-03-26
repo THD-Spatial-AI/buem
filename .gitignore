@@ -37,6 +37,10 @@ src/buem/_version.py
 src/buem/results/*
 !src/buem/results/standard_plots.py
 
+# Generated building JSON files (pipeline output — regenerated from data)
+src/buem/data/buildings/germany/
+src/buem/data/buildings/_parquet_cache/
+
 # Documentation builds and caches
 docs/build/
 docs/_build/

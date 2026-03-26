@@ -41,6 +41,7 @@ dependencies = [
     "openpyxl",
     "pandas",
     "psutil",
+    "psycopg2",
     "pulp",
     "pvlib",
     "pyarrow",

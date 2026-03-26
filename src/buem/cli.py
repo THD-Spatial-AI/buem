@@ -144,12 +144,20 @@ def main() -> None:
 
     # ── api ──────────────────────────────────────────────────────────────────
     elif args.command == "api":
-        if args.dev:
+        import platform
+
+        use_dev = args.dev or platform.system() == "Windows"
+
+        if use_dev:
             from buem.apis.api_server import create_app
 
             app = create_app()
-            print(f"Starting Flask dev server on http://{args.host}:{args.port}")
-            print("WARNING: Do not use the development server in production.")
+            if platform.system() == "Windows" and not args.dev:
+                print(
+                    "NOTE: Gunicorn is not supported on Windows. "
+                    "Starting Flask development server instead."
+                )
+            print(f"Starting Flask server on http://{args.host}:{args.port}")
             app.run(host=args.host, port=args.port, debug=False)
         else:
             import subprocess

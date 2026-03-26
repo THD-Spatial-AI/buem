@@ -1,28 +1,12 @@
-API Endpoints Reference
-=======================
+API Endpoints
+=============
 
-BuEM provides RESTful API endpoints for building energy model processing.
+Base URL: ``http://localhost:5000``  (default)
 
-Base URL
---------
+POST /api/process
+-----------------
 
-When running locally: ``http://localhost:5000/api``
-
-Core Endpoints
---------------
-
-POST /api/geojson
-~~~~~~~~~~~~~~~~~
-
-Submit building data for thermal analysis.
-
-**Request**
-
-- **Method**: ``POST``
-- **Content-Type**: ``application/json``
-- **Body**: GeoJSON FeatureCollection or Feature
-
-**Parameters**
+Submit a GeoJSON **FeatureCollection** for batch thermal analysis.
 
 .. list-table::
    :header-rows: 1
@@ -33,222 +17,83 @@ Submit building data for thermal analysis.
      - Required
      - Description
    * - ``include_timeseries``
-     - boolean
+     - bool
      - No
-     - Include detailed timeseries data export (default: false)
+     - Attach hourly arrays to each feature (default ``false``)
    * - ``use_milp``
-     - boolean
+     - bool
      - No
-     - Use MILP solver for optimization (default: false)
-
-**Example Request**
+     - Use experimental MILP solver (default ``false``)
 
 .. code-block:: bash
 
-    curl -X POST \\
-      "http://localhost:5000/api/geojson?include_timeseries=true" \\
-      -H "Content-Type: application/json" \\
-      -d @sample_request.geojson
+   curl -X POST "http://localhost:5000/api/process?include_timeseries=true" \
+     -H "Content-Type: application/json" \
+     -d @request.geojson
 
-**Response**
+**200 OK** — returns a GeoJSON FeatureCollection with
+``thermal_load_profile`` added to each feature's ``properties.buem``.
 
-- **Status**: ``200 OK``
-- **Content-Type**: ``application/json``
-- **Body**: GeoJSON FeatureCollection with thermal load results
+POST /api/run
+-------------
 
-**Example Response**
+Run the thermal model for a **single building** configuration (plain JSON,
+not GeoJSON).
 
-.. code-block:: json
-
-    {
-      "type": "FeatureCollection",
-      "processed_at": "2026-02-23T10:30:00Z",
-      "processing_elapsed_s": 2.45,
-      "features": [
-        {
-          "type": "Feature",
-          "id": "B001",
-          "geometry": { "type": "Point", "coordinates": [-0.1278, 51.5074] },
-          "properties": {
-            "buem": {
-              "building_attributes": { "..." },
-              "thermal_load_profile": {
-                "heating_total_kWh": 15420.5,
-                "heating_peak_kW": 8.2,
-                "cooling_total_kWh": 3250.1,
-                "cooling_peak_kW": 4.1,
-                "electricity_total_kWh": 4200.0,
-                "electricity_peak_kW": 2.1,
-                "start_time": "2018-01-01T00:00:00Z",
-                "end_time": "2018-12-31T23:00:00Z",
-                "n_points": 8760,
-                "elapsed_s": 1.23,
-                "timeseries_file": "/api/files/buem_ts_abc123.json.gz"
-              }
-            }
-          }
-        }
-      ]
-    }
-
-GET /api/files/{filename}
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Download timeseries data files.
-
-**Request**
-
-- **Method**: ``GET``
-- **Path**: ``/api/files/{filename}``
-
-**Parameters**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 15 15 50
-
-   * - Parameter
-     - Type
-     - Required
-     - Description
-   * - ``filename``
-     - string
-     - Yes
-     - Filename from timeseries_file response field
-
-**Response**
-
-- **Status**: ``200 OK``
-- **Content-Type**: ``application/gzip``
-- **Body**: Gzipped JSON file with timeseries data
-
-**Example Request**
+Same query parameters as ``/api/process``.
 
 .. code-block:: bash
 
-    curl -X GET \\
-      "http://localhost:5000/api/files/buem_ts_abc123.json.gz" \\
-      --output timeseries.json.gz
+   curl -X POST "http://localhost:5000/api/run" \
+     -H "Content-Type: application/json" \
+     -d @building.json
 
-**Timeseries File Format**
+**200 OK** — returns heating/cooling summary and optional timeseries.
 
-When decompressed, the JSON structure is:
+GET /api/files/<filename>
+-------------------------
 
-.. code-block:: json
+Download a timeseries result file.
 
-    {
-      "index": [
-        "2018-01-01T00:00:00Z",
-        "2018-01-01T01:00:00Z",
-        "..."
-      ],
-      "heat": [2.1, 2.3, 2.0, "..."],
-      "cool": [-0.5, -0.8, -0.2, "..."],
-      "electricity": [0.8, 0.9, 0.7, "..."]
-    }
+The ``timeseries_file`` path returned in a model response can be used
+directly:
 
-Utility Endpoints
------------------
+.. code-block:: bash
+
+   curl "http://localhost:5000/api/files/buem_ts_abc123.json" -o ts.json
 
 GET /api/health
-~~~~~~~~~~~~~~~
+---------------
 
-Health check endpoint.
-
-**Response**
+Health check.
 
 .. code-block:: json
 
-    {
-      "status": "healthy",
-      "version": "1.0.0",
-      "timestamp": "2026-02-23T10:30:00Z"
-    }
-
-GET /api/attributes/schema
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Get JSON schema for building attributes.
-
-**Response**
-
-.. code-block:: json
-
-    {
-      "type": "object",
-      "properties": {
-        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
-        "longitude": {"type": "number", "minimum": -180, "maximum": 180},
-        "A_ref": {"type": "number", "minimum": 0},
-        "components": {
-          "type": "object",
-          "properties": {
-            "Walls": {"..."},
-            "Roof": {"..."},
-            "...": "..."
-          }
-        }
-      }
-    }
+   {"status": "healthy", "version": "0.1.2", "timestamp": "..."}
 
 Error Responses
 ---------------
 
-All endpoints return consistent error responses:
+All endpoints return a consistent error envelope:
 
-**Client Errors (4xx)**
+.. code-block:: text
 
-.. list-table::
-   :header-rows: 1
-   :widths: 15 85
-
-   * - Status Code
-     - Description
-   * - ``400 Bad Request``
-     - Invalid JSON format or missing required fields
-   * - ``404 Not Found``
-     - Requested file or endpoint not found
-   * - ``422 Unprocessable Entity``
-     - Valid JSON but invalid building attributes
-
-**Server Errors (5xx)**
-
-.. list-table::
-   :header-rows: 1
-   :widths: 15 85
-
-   * - Status Code
-     - Description
-   * - ``500 Internal Server Error``
-     - Model execution error or server-side issue
-
-**Error Response Format**
+   400  Invalid JSON or missing fields
+   422  Valid JSON but invalid building attributes
+   404  File or endpoint not found
+   500  Model execution error
 
 .. code-block:: json
 
-    {
-      "error": {
-        "code": "VALIDATION_ERROR",
-        "message": "Building attribute validation failed",
-        "details": [
-          "components.Walls.U must be a positive number",
-          "latitude is required"
-        ]
-      },
-      "timestamp": "2026-02-23T10:30:00Z"
-    }
+   {
+     "error": {
+       "code": "VALIDATION_ERROR",
+       "message": "Building attribute validation failed",
+       "details": ["components.Walls.U must be positive"]
+     }
+   }
 
-Rate Limiting
--------------
+.. note::
 
-Currently, no rate limiting is implemented. For production deployments, consider implementing rate limiting at the reverse proxy level.
-
-Authentication
---------------
-
-The current API does not require authentication. For production deployments, implement authentication as needed (API keys, OAuth2, etc.).
-
-Next Steps
-----------
-
-Continue to :doc:`request_format` to understand the input data format in detail.
+   Authentication and rate limiting are **not** built into BuEM.  For
+   production use, add these at the reverse-proxy layer (e.g. nginx).

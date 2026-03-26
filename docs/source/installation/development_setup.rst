@@ -1,18 +1,20 @@
 Development Setup
-================
+=================
 
 Setting up BuEM for development and contribution.
 
 Development Prerequisites
-------------------------
+-------------------------
+
+See :doc:`prerequisites` for the full software requirements table.
 
 * Git
-* Python 3.8+ (recommended: 3.11)
-* Conda or pip
-* IDE/Editor with Python support
+* Python >= 3.13
+* Conda
+* IDE with Python support (VS Code or PyCharm recommended)
 
 Development Installation
------------------------
+------------------------
 
 .. code-block:: bash
 
@@ -109,8 +111,8 @@ Building Documentation
 
 .. code-block:: bash
 
-    # Install documentation dependencies
-    pip install -e .[docs]
+    # Ensure conda environment is active
+    conda activate buem_env
     
     # Build documentation
     cd docs
@@ -123,7 +125,7 @@ Building Documentation
     make clean
 
 Contribution Workflow
---------------------
+---------------------
 
 1. **Create Feature Branch:**
 
@@ -173,5 +175,3 @@ Create ``.vscode/settings.json``:
         "python.testing.pytestEnabled": true,
         "python.testing.pytestArgs": ["tests/"]
     }
-
-For more development guidelines, see :doc:`../contributing/coding_standards`.

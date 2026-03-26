@@ -276,12 +276,15 @@ class BuemSchema(Schema):
 
     @validates_schema
     def require_v2_or_v3(self, data, **kwargs):
-        """Ensure either v2 (building_attributes) or v3 (building+envelope) is present."""
+        """Ensure either v2 (building_attributes) or v3 (building with envelope) is present."""
         has_v2 = data.get('building_attributes') is not None
-        has_v3 = data.get('building') is not None or data.get('envelope') is not None
+        has_v3 = (
+            isinstance(data.get('building'), dict)
+            and isinstance(data['building'].get('envelope'), dict)
+        )
         if not has_v2 and not has_v3:
             raise ValidationError(
-                "Provide either 'building_attributes' (v2) or 'building'+'envelope' (v3)",
+                "Provide either 'building_attributes' (v2) or 'building' with 'envelope' (v3)",
                 field_name='buem',
             )
 
@@ -290,9 +293,17 @@ class PropertiesSchema(Schema):
     """Schema for feature properties."""
     start_time = fields.DateTime(required=True)
     end_time = fields.DateTime(required=True)
-    resolution = fields.Int(load_default=60)
+    resolution = fields.Raw(load_default="60")
     resolution_unit = fields.Str(load_default="minutes")
     buem = fields.Nested(BuemSchema, required=True)
+
+    @validates('resolution')
+    def coerce_resolution(self, value, **kwargs):
+        """Accept both int and str, ensure it's a positive number."""
+        try:
+            int(value)
+        except (TypeError, ValueError):
+            raise ValidationError("resolution must be a number or numeric string")
 
 
 class GeometrySchema(Schema):
@@ -402,17 +413,18 @@ class GeoJsonValidator:
         buem_data = feature.get('properties', {}).get('buem', {})
 
         # Detect schema version by key presence
-        is_v3 = 'building' in buem_data or 'envelope' in buem_data
+        is_v3 = 'building' in buem_data and isinstance(buem_data.get('building'), dict)
 
         if is_v3:
-            # v3: envelope.elements carries the component data
-            envelope = buem_data.get('envelope', {})
-            if not envelope.get('elements'):
+            # v3: building.envelope.elements carries the component data
+            building = buem_data.get('building', {})
+            envelope = building.get('envelope', buem_data.get('envelope', {}))
+            if not envelope or not envelope.get('elements'):
                 result.add_issue(
                     ValidationLevel.ERROR,
                     "No envelope elements found",
-                    f"{path}.properties.buem.envelope",
-                    suggestion="Provide 'elements' list inside 'envelope'"
+                    f"{path}.properties.buem.building.envelope",
+                    suggestion="Provide 'elements' list inside 'building.envelope'"
                 )
         else:
             # v2: building_attributes.components or child_components
@@ -459,9 +471,24 @@ class GeoJsonValidator:
                     )
     
     def _convert_components_format(self, data: Dict, result: ValidationResult):
-        """Convert child_components to nested components format if needed."""
+        """Convert child_components or v3 envelope to nested components format if needed."""
         for i, feature in enumerate(data.get('features', [])):
             buem_data = feature.get('properties', {}).get('buem', {})
+            
+            # Check for v3 format: building.envelope.elements
+            building = buem_data.get('building')
+            if isinstance(building, dict) and isinstance(building.get('envelope'), dict):
+                try:
+                    self._convert_v3_to_v2(feature, result, i)
+                except Exception as e:
+                    result.add_issue(
+                        ValidationLevel.ERROR,
+                        f"Failed to convert v3 format to internal format: {str(e)}",
+                        f"features[{i}].properties.buem.building"
+                    )
+                continue
+            
+            # v2 child_components conversion
             building_attrs = buem_data.get('building_attributes', {})
             child_components = buem_data.get('child_components', [])
             
@@ -481,6 +508,149 @@ class GeoJsonValidator:
                         f"Failed to convert child_components: {str(e)}",
                         f"features[{i}].properties.buem.child_components"
                     )
+    
+    def _convert_v3_to_v2(self, feature: Dict, result: ValidationResult, feature_idx: int):
+        """
+        Convert v3 format (building.envelope.elements with {value,unit} objects) 
+        to v2 format (building_attributes.components) for internal processing.
+        
+        The v3 format uses:
+          - buem.building.envelope.elements[] with type-based grouping
+          - Explicit {value, unit} measurement objects
+          
+        This converts to:
+          - buem.building_attributes.components.{Walls,Roof,...}.elements[]
+          - Plain numeric values
+        """
+        buem_data = feature['properties']['buem']
+        building = buem_data['building']
+        envelope = building.get('envelope', {})
+        elements = envelope.get('elements', [])
+        thermal = building.get('thermal', {})
+        
+        # Extract scalar values from {value, unit} objects
+        def extract_value(obj):
+            """Extract numeric value from either {value, unit} dict or plain value."""
+            if isinstance(obj, dict) and 'value' in obj:
+                return obj['value']
+            return obj
+        
+        # Extract building-level attributes
+        latitude = feature.get('geometry', {}).get('coordinates', [0, 0])[1]
+        longitude = feature.get('geometry', {}).get('coordinates', [0, 0])[0]
+        A_ref = extract_value(building.get('A_ref', 100.0))
+        h_room = extract_value(building.get('h_room', 2.5))
+        
+        # Group elements by type → component categories
+        type_map = {
+            'wall': 'Walls',
+            'roof': 'Roof',
+            'floor': 'Floor',
+            'window': 'Windows',
+            'door': 'Doors',
+            'ventilation': 'Ventilation',
+        }
+        
+        components = {}
+        for elem in elements:
+            elem_type = elem.get('type', '').lower()
+            comp_key = type_map.get(elem_type)
+            if not comp_key:
+                result.add_issue(
+                    ValidationLevel.WARNING,
+                    f"Unknown element type '{elem_type}' in envelope",
+                    f"features[{feature_idx}].properties.buem.building.envelope",
+                    suggestion=f"Valid types: {', '.join(type_map.keys())}"
+                )
+                continue
+            
+            if comp_key not in components:
+                components[comp_key] = {'elements': []}
+            
+            if elem_type == 'ventilation':
+                converted_elem = {
+                    'id': elem.get('id', f'Vent_{len(components[comp_key]["elements"])+1}'),
+                    'air_changes': extract_value(elem.get('air_changes', 0.5)),
+                }
+            else:
+                converted_elem = {
+                    'id': elem.get('id', f'{comp_key}_{len(components[comp_key]["elements"])+1}'),
+                    'area': extract_value(elem.get('area', 0)),
+                    'azimuth': extract_value(elem.get('azimuth', 0)),
+                    'tilt': extract_value(elem.get('tilt', 0)),
+                }
+                
+                # U-value (per-element)
+                if 'U' in elem:
+                    converted_elem['U'] = extract_value(elem['U'])
+                
+                # b_transmission
+                if 'b_transmission' in elem:
+                    converted_elem['b_transmission'] = extract_value(elem['b_transmission'])
+                
+                # Window-specific: g_gl, parent_id→surface
+                if elem_type == 'window':
+                    if 'g_gl' in elem:
+                        components[comp_key].setdefault('g_gl', extract_value(elem['g_gl']))
+                    if 'parent_id' in elem:
+                        converted_elem['surface'] = elem['parent_id']
+                
+                # Door-specific: parent_id→surface
+                if elem_type == 'door' and 'parent_id' in elem:
+                    converted_elem['surface'] = elem['parent_id']
+            
+            components[comp_key]['elements'].append(converted_elem)
+        
+        # Set component-level U-values from first element if all share the same value
+        for comp_key, comp_data in components.items():
+            if comp_key == 'Ventilation':
+                continue
+            elems = comp_data['elements']
+            u_values = [e.get('U') for e in elems if 'U' in e]
+            if u_values and len(u_values) == len(elems) and len(set(u_values)) == 1:
+                comp_data['U'] = u_values[0]
+                for e in elems:
+                    e.pop('U', None)
+        
+        # Extract thermal parameters
+        n_air_infiltration = extract_value(thermal.get('n_air_infiltration', 0.5))
+        n_air_use = extract_value(thermal.get('n_air_use', 0.5))
+        comfortT_lb = extract_value(thermal.get('comfortT_lb', 21))
+        comfortT_ub = extract_value(thermal.get('comfortT_ub', 24))
+        
+        # Build v2 building_attributes
+        building_attributes = {
+            'latitude': latitude,
+            'longitude': longitude,
+            'A_ref': A_ref,
+            'h_room': h_room,
+            'components': components,
+            # Thermal parameters
+            'n_air_infiltration': n_air_infiltration,
+            'n_air_use': n_air_use,
+            'comfortT_lb': comfortT_lb,
+            'comfortT_ub': comfortT_ub,
+        }
+        
+        # Optional building metadata
+        for key in ('building_type', 'construction_period', 'country', 'n_storeys',
+                     'neighbour_status', 'attic_condition', 'cellar_condition'):
+            if key in building:
+                building_attributes[key] = building[key]
+        
+        # Extract solver settings
+        solver = buem_data.get('solver', {})
+        use_milp = solver.get('use_milp', False)
+        
+        # Replace buem section with v2 format
+        buem_data['building_attributes'] = building_attributes
+        buem_data['use_milp'] = use_milp
+        
+        result.add_issue(
+            ValidationLevel.INFO,
+            "Converted v3 format (building.envelope) to v2 internal format (building_attributes.components)",
+            f"features[{feature_idx}].properties.buem"
+        )
     
     def _child_to_nested_components(self, child_components: List[Dict]) -> Dict[str, Any]:
         """Convert child_components array to nested components structure."""

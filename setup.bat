@@ -7,7 +7,7 @@ setlocal EnableDelayedExpansion
 ::
 :: Requires NO hardcoded paths. Uses:
 ::   %~dp0         – the directory of this .bat file (project root)
-::   buem          – console-script installed by pip install -e .
+::   buem          – console-script installed by conda develop src
 ::   conda run     – fallback when buem is not yet on PATH
 ::   docker compose – for container workflows
 ::

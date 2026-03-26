@@ -203,11 +203,9 @@ hourly_data = download_and_decompress(timeseries_url)
 
 **For Development Tools:**
 ```bash
-# Install with documentation extras
-pip install -e ".[docs]"
-
-# Or using conda environment (recommended)
+# Activate conda environment and register source
 conda activate buem_env
+conda develop src
 ```
 
 ### **Version Management**

@@ -4,13 +4,13 @@
 #
 # This script requires NO hardcoded paths.  It uses:
 #   - $PSScriptRoot  – the directory containing this file (project root)
-#   - The 'buem' console-script installed by:  pip install -e .
+#   - The 'buem' console-script installed by:  conda develop src
 #   - conda run -n <env>  as a fallback when 'buem' is not yet on PATH
 #   - docker compose  for container-based workflows
 #
 # To make 'buem' available directly, activate the conda environment first:
 #   conda activate buem_env
-#   pip install -e .
+#   conda develop src
 # ─────────────────────────────────────────────────────────────────────────────
 
 param(
@@ -28,7 +28,7 @@ Set-Location $PSScriptRoot
 $CondaEnv = if ($env:BUEM_CONDA_ENV) { $env:BUEM_CONDA_ENV } else { "buem_env" }
 
 # ── Helper: run a 'buem' subcommand ──────────────────────────────────────────
-# If 'buem' is on PATH (conda env active + pip install -e . done), use it.
+# If 'buem' is on PATH (conda env active + conda develop src done), use it.
 # Otherwise fall back to 'conda run -n <env> buem'.
 function Invoke-Buem {
     param([string[]]$BuemArgs)

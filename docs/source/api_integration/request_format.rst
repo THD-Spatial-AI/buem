@@ -8,32 +8,32 @@ GeoJSON Structure
 
 **Top Level**
 
-.. code-block:: json
+.. code-block:: javascript
 
     {
       "type": "FeatureCollection",
       "timeStamp": "2018-01-22T00:00:00Z",
       "numberMatched": 1,
       "numberReturned": 1,
-      "features": [...]
+      "features": [/* ... */]
     }
 
 **Feature Structure**
 
 Each building is represented as a GeoJSON Feature:
 
-.. code-block:: json
+.. code-block:: javascript
 
     {
       "type": "Feature",
       "id": "B001",
-      "geometry": { 
-        "type": "Point", 
-        "coordinates": [-0.1278, 51.5074] 
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-0.1278, 51.5074]
       },
       "properties": {
         "buem": {
-          "building_attributes": {...},
+          "building_attributes": {/* ... */},
           "use_milp": false
         }
       }

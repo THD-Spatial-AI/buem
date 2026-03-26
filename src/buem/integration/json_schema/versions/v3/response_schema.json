@@ -119,12 +119,10 @@
 
     "buem": {
       "type": "object",
-      "required": ["building", "envelope", "thermal_load_profile"],
-      "description": "Echoes all request buem nodes and adds thermal_load_profile and model_metadata",
+      "required": ["building", "thermal_load_profile"],
+      "description": "Echoes the request buem node (building contains envelope and thermal) and appends thermal_load_profile and model_metadata",
       "properties": {
-        "building":             { "type": "object", "description": "Echoed from request" },
-        "envelope":             { "type": "object", "description": "Echoed from request" },
-        "thermal":              { "type": "object", "description": "Echoed from request" },
+        "building":             { "type": "object", "description": "Echoed from request — contains envelope and thermal as nested objects" },
         "solver":               { "type": "object", "description": "Echoed from request" },
         "thermal_load_profile": { "$ref": "#/$defs/thermal_load_profile" },
         "model_metadata":       { "$ref": "#/$defs/model_metadata" }

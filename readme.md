@@ -28,6 +28,8 @@ related to temperature ranges and other bounded conditions.
    conda activate buem_env
    ```
 
+   **Note:** The environment includes `psycopg2` for PostgreSQL database access (e.g. city2tabula).
+
 ### Method 2: PyPI Installation
 
 ```bash

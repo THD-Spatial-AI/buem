@@ -1,18 +1,20 @@
-Welcome to the BuEM documentation
-===========================================
+BuEM — Building Energy Model
+============================
 
-BuEM (Building Energy Model) is a comprehensive thermal simulation tool designed for building energy analysis. This documentation is specifically tailored for developers who need to integrate BuEM with other models via API interactions through Docker containers.
+BuEM computes hourly heating and cooling demand for buildings using the
+**ISO 13790 5R1C** thermal-network method combined with a linear-programming
+solver.  It exposes a REST API that accepts GeoJSON and returns energy
+profiles, making it straightforward to integrate with other energy-system
+models via Docker containers.
 
 .. toctree::
-   :maxdepth: 3
+   :maxdepth: 2
    :caption: Contents:
 
    introduction/index
    installation/index
+   modules/index
    api_integration/index
-   model_attributes/index
-   examples/index
-   technical/index
    deployment/index
 
 

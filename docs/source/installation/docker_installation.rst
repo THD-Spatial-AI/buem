@@ -112,7 +112,7 @@ Production Deployment
 
 For production environments:
 
-.. code-block:: docker-compose
+.. code-block:: yaml
 
     version: '3.8'
     services:
