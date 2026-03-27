@@ -28,6 +28,7 @@ if /i "%COMMAND%"=="help"          goto :cmd_help
 if /i "%COMMAND%"=="install"       goto :cmd_install
 if /i "%COMMAND%"=="install-dev"   goto :cmd_install_dev
 if /i "%COMMAND%"=="validate"      goto :cmd_validate
+if /i "%COMMAND%"=="version"       goto :cmd_version
 if /i "%COMMAND%"=="run"           goto :cmd_run
 if /i "%COMMAND%"=="api"           goto :cmd_api
 if /i "%COMMAND%"=="multibuilding" goto :cmd_multibuilding
@@ -56,6 +57,7 @@ echo Environment Setup:
 echo   install          Install BUEM into the conda environment (conda develop src)
 echo   install-dev      Install BUEM + dev extras (pytest, black, flake8, mypy)
 echo   validate         Verify installation and environment paths
+echo   version          Print the installed BuEM version
 echo.
 echo Model Commands:
 echo   run              Run the thermal model for a single building
@@ -134,6 +136,11 @@ goto :end
 
 :cmd_validate
 set BUEM_SUBCMD=validate
+set BUEM_EXTRA_ARGS=
+goto :run_buem_cmd
+
+:cmd_version
+set BUEM_SUBCMD=version
 set BUEM_EXTRA_ARGS=
 goto :run_buem_cmd
 

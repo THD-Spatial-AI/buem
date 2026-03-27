@@ -10,6 +10,7 @@ Subcommands
 buem run            Run the ISO 52016 thermal model for a single building.
 buem api            Start the BUEM REST API server (Gunicorn or Flask dev).
 buem validate       Verify the installation and environment paths.
+buem version        Print the installed BuEM version.
 buem multibuilding  Run parallel multi-building processing.
 """
 from __future__ import annotations
@@ -54,6 +55,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── validate ─────────────────────────────────────────────────────────────
     sub.add_parser("validate", help="Verify the installation and environment")
+
+    # ── version ──────────────────────────────────────────────────────────────
+    sub.add_parser("version", help="Print the installed BuEM version")
 
     # ── multibuilding ─────────────────────────────────────────────────────────
     mb_p = sub.add_parser(
@@ -178,6 +182,11 @@ def main() -> None:
     # ── validate ─────────────────────────────────────────────────────────────
     elif args.command == "validate":
         _run_validate()
+
+    # ── version ──────────────────────────────────────────────────────────────
+    elif args.command == "version":
+        from buem import __version__
+        print(f"buem {__version__}")
 
     # ── multibuilding ─────────────────────────────────────────────────────────
     elif args.command == "multibuilding":

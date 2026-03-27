@@ -55,6 +55,7 @@ function Show-Help {
     Write-Host "  install          Install BUEM into the conda environment (conda develop src)"
     Write-Host "  install-dev      Install BUEM + dev extras (pytest, black, flake8, mypy)"
     Write-Host "  validate         Verify installation and environment paths"
+    Write-Host "  version          Print the installed BuEM version"
     Write-Host ""
     Write-Host "Model Commands:" -ForegroundColor Green
     Write-Host "  run              Run the thermal model for a single building"
@@ -124,6 +125,10 @@ function Invoke-InstallDev {
 
 function Invoke-Validate {
     Invoke-Buem @("validate")
+}
+
+function Invoke-Version {
+    Invoke-Buem @("version")
 }
 
 function Invoke-Run {
@@ -209,6 +214,7 @@ switch ($Command.ToLower()) {
     "install"       { Invoke-Install }
     "install-dev"   { Invoke-InstallDev }
     "validate"      { Invoke-Validate }
+    "version"       { Invoke-Version }
     "run"           { Invoke-Run }
     "api"           { Invoke-Api }
     "multibuilding" { Invoke-Multibuilding }
