@@ -1,17 +1,17 @@
 [build-system]
-requires = ["setuptools>=61.0", "setuptools-scm>=8"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "buem"
-dynamic = ["version"]
+version = "0.1.2"
 description = "Building energy model for analysis of hourly thermal load(ISO 52019-1:2017, 5R1C)"
 authors = [
     { name="Somadutta Sahoo", email="s.sahoo@uu.nl" }
 ]
 readme = "README.md"
 license = {text = "MIT License"}
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 keywords = [
     "building",
     "energy-model",
@@ -22,47 +22,43 @@ keywords = [
     "python",
 ]
 classifiers = [
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "cvxpy",
-    "flask",
-    "flask-swagger-ui",
-    "joblib",
-    "jsonschema",
-    "marshmallow>=4.0.0",
-    "marshmallow-dataclass>=8.0.0",
     "matplotlib",
-    "numba",
     "numpy",
-    "openpyxl",
     "pandas",
-    "psutil",
-    "psycopg2",
-    "pulp",
     "pvlib",
-    "pyarrow",
-    "python-dotenv",
     "scipy",
     "sympy",
+    "openpyxl",
+    "cvxpy",
+    "flask",
+    "python-dotenv",
+    "gunicorn",
+    "pulp",
+    "marshmallow>=4.0.0",
+    "marshmallow-dataclass>=8.0.0",
+    "psutil",
+    "joblib",
+    "xarray",
+    "netCDF4",
 ]
 
 [project.optional-dependencies]
 docs = [
-    "sphinx>=9.0.0",
-    "sphinx-rtd-theme>=3.0.0",
-    "sphinxcontrib-applehelp>=2.0.0",
-    "sphinxcontrib-devhelp>=2.0.0",
-    "sphinxcontrib-htmlhelp>=2.1.0",
-    "sphinxcontrib-qthelp>=2.0.0",
-    "sphinxcontrib-serializinghtml>=1.1.5",
-]
-server = [
-    "gunicorn",
+    "sphinx>=4.5.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "sphinxcontrib-applehelp==1.0.4",
+    "sphinxcontrib-devhelp==1.0.2",
+    "sphinxcontrib-htmlhelp==2.0.1",
+    "sphinxcontrib-qthelp==1.0.3",
+    "sphinxcontrib-serializinghtml==1.1.5",
+    "Jinja2<3.1",
 ]
 dev = [
     "pytest",
@@ -80,16 +76,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 buem = [
-    "apis/openapi.yaml",
     "data/**/*",
     "softwares/**/*",
     "integration/json_schema/**/*",
 ]
-
-[tool.setuptools_scm]
-version_file = "src/buem/_version.py"
-fallback_version = "0.1.3"
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import os
@@ -9,51 +10,77 @@ from buem.occupancy.occupancy_profile import OccupancyProfile
 from buem.occupancy.electricity_consumption import ElectricityConsumptionProfile
 
 from buem.weather.from_csv import CsvWeatherData
+from buem.weather.from_merra import MerraWeatherData
 from .attribute_types import AttributeCategory, AttrType, AttributeSpec
 
-# --- changed code: make weather CSV path configurable via BUEM_WEATHER_DIR env var ---
-# Default to package-local data/weather folder if env var is not set so behavior is backwards-compatible.
-DEFAULT_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "weather"))
-WEATHER_DIR = os.environ.get("BUEM_WEATHER_DIR", DEFAULT_DATA_DIR)
-WEATHER_CSV = os.path.join(WEATHER_DIR, "COSMO_Year__ix_390_650.csv")
-WEATHER_CACHE = os.path.join(WEATHER_DIR, "COSMO_Year__ix_390_650_processed.feather")
+import logging as _logging
+_log = _logging.getLogger(__name__)
 
-if not os.path.exists(WEATHER_CSV):
-    raise FileNotFoundError(
-        f"Weather CSV not found at {WEATHER_CSV}. "
-        "Provide the file there or set BUEM_WEATHER_DIR to a folder containing "
-        "COSMO_Year__ix_390_650.csv (e.g. mount ./data/weather and set env var accordingly)."
+# Default location used when loading a representative weather dataset at module
+# import time.  Individual API requests override this with their actual lat/lon.
+_DEFAULT_LAT = 51.5   # Central Germany
+_DEFAULT_LON = 10.0
+_DEFAULT_YEAR = 2018
+
+# Weather data directory (configurable via env var)
+_DEFAULT_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "weather"))
+WEATHER_DIR = os.environ.get("BUEM_WEATHER_DIR", _DEFAULT_DATA_DIR)
+
+
+def _load_default_weather() -> pd.DataFrame:
+    """Load a representative yearly weather dataset at module import time.
+
+    Priority:
+    1. MERRA-2 NetCDF (``combined_merra_{year}.nc``) if present in BUEM_WEATHER_DIR
+    2. COSMO CSV (``COSMO_Year__ix_390_650.csv``) if present in BUEM_WEATHER_DIR
+    3. Synthetic zero-filled fallback so the module can still be imported
+
+    Returns
+    -------
+    pd.DataFrame
+        Hourly DataFrame with columns T, GHI, DNI, DHI for _DEFAULT_YEAR.
+    """
+    csv_file = os.path.join(WEATHER_DIR, "COSMO_Year__ix_390_650.csv")
+
+    # Detect MERRA-2 .nc files in the directory (or its country sub-dirs)
+    from buem.weather.from_merra import _nc_years_in_dir, _COUNTRY_PRIORITY
+    merra_dir = Path(WEATHER_DIR)
+    has_merra = bool(_nc_years_in_dir(merra_dir)) or any(
+        (merra_dir / c).is_dir() and bool(_nc_years_in_dir(merra_dir / c))
+        for c in _COUNTRY_PRIORITY
     )
 
-# Try loading the already-processed feather cache (includes DISC-reconstructed DNI/DHI).
-# This avoids the ~2-3s pvlib DISC computation on every module import (critical for
-# multiprocessing workers that each re-import this module).
-if os.path.exists(WEATHER_CACHE):
-    df_weather = pd.read_feather(WEATHER_CACHE)
-    df_weather.set_index(df_weather.columns[0], inplace=True)
-    df_weather.index = pd.to_datetime(df_weather.index)
-else:
-    loader = CsvWeatherData(WEATHER_CSV)  # Loenen (52.07 N, 5.07 E) weather data
-    loader.extract_weather_columns()
+    if has_merra:
+        _log.info("Loading default MERRA-2 weather (%d) from %s", _DEFAULT_YEAR, WEATHER_DIR)
+        loader = MerraWeatherData(WEATHER_DIR, lat=_DEFAULT_LAT, lon=_DEFAULT_LON)
+        return loader.get_weather_df(year=_DEFAULT_YEAR)
 
-    # Reconstruct DNI and DHI from GHI using pvlib DISC decomposition.
-    # COSMO-REA6 stores DNI = (GHI-DHI)/cos(zenith), which diverges near the horizon
-    # (observed max: 4951 W/m2, physically impossible).  DISC gives bounded 0..~1000 W/m2.
-    df_weather = loader.reconstruct_dni_from_ghi(latitude=52.07, longitude=5.07)
-    df_weather.index = df_weather.index.tz_convert(None)
+    if os.path.exists(csv_file):
+        _log.info("Loading default COSMO weather from %s", csv_file)
+        loader = CsvWeatherData(csv_file)
+        loader.extract_weather_columns()
+        df = loader.reconstruct_dni_from_ghi(latitude=52.07, longitude=5.07)
+        df.index = df.index.tz_convert(None)
+        return df
 
-    # Save processed weather to feather cache for fast reloading by worker processes
-    try:
-        df_weather.reset_index().to_feather(WEATHER_CACHE)
-    except Exception:
-        pass  # Non-critical: caching failure should not block model execution
+    _log.warning(
+        "No weather data found in BUEM_WEATHER_DIR=%s. "
+        "Using synthetic zero-filled fallback. "
+        "Set BUEM_WEATHER_DIR to a directory containing MERRA-2 .nc files or "
+        "COSMO_Year__ix_390_650.csv.",
+        WEATHER_DIR,
+    )
+    idx = pd.date_range(f"{_DEFAULT_YEAR}-01-01", periods=8760, freq="h")
+    return pd.DataFrame({"T": 10.0, "GHI": 0.0, "DNI": 0.0, "DHI": 0.0}, index=idx)
 
+
+df_weather = _load_default_weather()
 main_index = df_weather.index
 n_hours = len(main_index)
 temp_profile = df_weather["T"]
 ghi_profile = df_weather["GHI"]
-dni_profile = df_weather["DNI"]   # DISC-reconstructed, physically bounded
-dhi_profile = df_weather["DHI"]   # back-computed from GHI - DNI*cos(zenith)
+dni_profile = df_weather["DNI"]
+dhi_profile = df_weather["DHI"]
 
 # Generate realistic electricity load profile using occupancy-based calculation
 occ_profile = OccupancyProfile(
@@ -176,13 +203,11 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "F_sh_hor": AttributeSpec("F_sh_hor", AttributeCategory.FIXED, AttrType.FLOAT, 0.80),  # Realistic shading for Netherlands
     "F_f": AttributeSpec("F_f", AttributeCategory.FIXED, AttrType.FLOAT, 0.2),
     "F_w": AttributeSpec("F_w", AttributeCategory.FIXED, AttrType.FLOAT, 1.0),
-    "F_red_htr": AttributeSpec("F_red_htr", AttributeCategory.FIXED, AttrType.FLOAT, 1.0,
-        doc="Intermittent heating reduction factor (ISO 13790 §13.2.2). TABULA F_red_htr1: 0.95 (AB/MFH), 0.90 (SFH/TH). 1.0 = no reduction."),
     "ventControl": AttributeSpec("ventControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "control": AttributeSpec("control", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "num_persons": AttributeSpec("num_persons", AttributeCategory.FIXED, AttrType.INT, 4, doc="Default persons for electricity profile generation"),
     "year": AttributeSpec("year", AttributeCategory.FIXED, AttrType.INT, 2018, doc="Default year for profile generation"),
-    "seed": AttributeSpec("seed", AttributeCategory.FIXED, AttrType.INT, 42, doc="RNG seed for reproducible electricity profiles (default: 42)"),
+    "seed": AttributeSpec("seed", AttributeCategory.FIXED, AttrType.INT, None, doc="Optional RNG seed for reproducible electricity profiles"),
     "use_provided_elecLoad": AttributeSpec("use_provided_elecLoad", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="If true, keep provided elecLoad even when force=True"),
 }
 

@@ -1,0 +1,4 @@
+# MERRA-2 NetCDF files are large (~45 MB each) and not version-controlled.
+# Copy them here from the shared MERRA-2 data directory or mount via Docker volume.
+# Expected filenames: combined_merra_{year}.nc  (e.g. combined_merra_2018.nc)
+*.nc

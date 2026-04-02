@@ -5,15 +5,16 @@ services:
       dockerfile: Dockerfile
     container_name: buem-api
     env_file: .env
+    working_dir: /app
     environment:
       - PYTHONPATH=/app/src
-      - BUEM_WEATHER_DIR=/app/data/weather
+      - BUEM_WEATHER_DIR=/app/data/merra
       - BUEM_CBC_EXE=/opt/conda/envs/buem_env/bin/cbc
       - BUEM_RESULTS_DIR=/app/results
     ports:
       - "5000:5000"
     volumes:
-      - ./src/buem/data/weather:/app/data/weather:ro
+      - ./data/merra:/app/data/merra:ro
       - ./src/buem/logs:/app/logs:rw
       - ./src/buem/results:/app/results:rw
     restart: unless-stopped
