@@ -21,10 +21,10 @@ fi
 
 if [ "$RUN_MODE" = "api" ]; then
   if [ -x "$GUNICORN_BIN" ]; then
-    exec "$GUNICORN_BIN" --bind 0.0.0.0:5000 "buem.apis.api_server:create_app()" --workers 2 --threads 2
+    exec "$GUNICORN_BIN" --bind 0.0.0.0:5000 "buem.apis.api_server:create_app()" --workers "${GUNICORN_WORKERS:-2}" --threads 1
   else
     # fallback to conda run if binary not found
-    exec /opt/conda/bin/conda run -n "$CONDA_ENV" --no-capture-output gunicorn --bind 0.0.0.0:5000 "buem.apis.api_server:create_app()" --workers 2 --threads 2
+    exec /opt/conda/bin/conda run -n "$CONDA_ENV" --no-capture-output gunicorn --bind 0.0.0.0:5000 "buem.apis.api_server:create_app()" --workers "${GUNICORN_WORKERS:-2}" --threads 1
   fi
 elif [ "$RUN_MODE" = "worker" ]; then
   if [ -x "$PYTHON_BIN" ]; then
