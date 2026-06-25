@@ -1,5 +1,0 @@
-# Documentation dependencies
-# These are used only if building docs outside of `pip install .[docs]`.
-# ReadTheDocs uses the [docs] extra from pyproject.toml instead.
-sphinx>=9.0.0
-sphinx-rtd-theme>=3.0.0

@@ -1,15 +1,22 @@
-from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-# Import required modules for proper electricity profile calculation
-from buem.occupancy.occupancy_profile import OccupancyProfile
-from buem.occupancy.electricity_consumption import ElectricityConsumptionProfile
-
-from buem.weather.from_csv import CsvWeatherData
 from .attribute_types import AttributeCategory, AttrType, AttributeSpec
+
+# ── Optional external sub-packages (now independent repos in UU-BUEM org) ─────
+# buem-occupancy: https://github.com/UU-BUEM/occupancy
+# buem-weather:   https://github.com/UU-BUEM/weather
+# Install via: pip install buem-occupancy  /  pip install buem-weather
+try:
+    from buem_occupancy.occupancy_profile import OccupancyProfile  # type: ignore[import]
+    from buem_occupancy.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
+    _OCCUPANCY_AVAILABLE = True
+except ImportError:
+    _OCCUPANCY_AVAILABLE = False
+    OccupancyProfile = None  # type: ignore[assignment,misc]
+    ElectricityConsumptionProfile = None  # type: ignore[assignment,misc]
 
 # --- changed code: make weather CSV path configurable via BUEM_WEATHER_DIR env var ---
 # Default to package-local data/weather folder if env var is not set so behavior is backwards-compatible.
@@ -33,13 +40,30 @@ if os.path.exists(WEATHER_CACHE):
     df_weather.set_index(df_weather.columns[0], inplace=True)
     df_weather.index = pd.to_datetime(df_weather.index)
 else:
-    loader = CsvWeatherData(WEATHER_CSV)  # Loenen (52.07 N, 5.07 E) weather data
-    loader.extract_weather_columns()
+    # Inline CSV loading with pvlib DISC reconstruction (replaces buem.weather.from_csv).
+    # pvlib is a core buem dependency; no external weather package required for this step.
+    import pvlib  # type: ignore[import-untyped]
+
+    _df = pd.read_csv(WEATHER_CSV)
+    _df.set_index(_df.columns[0], inplace=True)
+    _df.index = pd.to_datetime(_df.index, utc=True)
+    _df = _df[["T", "GHI", "DNI", "DHI"]].copy()
 
     # Reconstruct DNI and DHI from GHI using pvlib DISC decomposition.
     # COSMO-REA6 stores DNI = (GHI-DHI)/cos(zenith), which diverges near the horizon
     # (observed max: 4951 W/m2, physically impossible).  DISC gives bounded 0..~1000 W/m2.
-    df_weather = loader.reconstruct_dni_from_ghi(latitude=52.07, longitude=5.07)
+    _solpos = pvlib.solarposition.get_solarposition(_df.index, latitude=52.07, longitude=5.07)
+    _dni_extra = pvlib.irradiance.get_extra_radiation(_df.index.dayofyear)
+    _disc = pvlib.irradiance.disc(
+        ghi=_df["GHI"],
+        solar_zenith=_solpos["apparent_zenith"],
+        datetime_or_doy=_df.index,
+    )
+    _df["DNI"] = _disc["dni"].clip(lower=0, upper=_dni_extra).fillna(0)
+    _cos_z = np.cos(np.radians(_solpos["apparent_zenith"].clip(upper=90))).clip(lower=0)
+    _df["DHI"] = (_df["GHI"] - _df["DNI"] * _cos_z).clip(lower=0, upper=_df["GHI"]).fillna(0)
+
+    df_weather = _df.copy()
     df_weather.index = df_weather.index.tz_convert(None)
 
     # Save processed weather to feather cache for fast reloading by worker processes
@@ -55,20 +79,28 @@ ghi_profile = df_weather["GHI"]
 dni_profile = df_weather["DNI"]   # DISC-reconstructed, physically bounded
 dhi_profile = df_weather["DHI"]   # back-computed from GHI - DNI*cos(zenith)
 
-# Generate realistic electricity load profile using occupancy-based calculation
-occ_profile = OccupancyProfile(
-    num_persons=4,
-    year=2018,
-    seed=42  # For reproducibility
-)
-occ_profile.generate()
-
-elec_profile = ElectricityConsumptionProfile(
-    occupancy_profile=occ_profile,
-    seed=42
-)
-elec_df = elec_profile.generate()
-realistic_elec_load = elec_df["total_power_kwh"]  # This is in kWh per hour
+# Generate electricity load profile: use buem-occupancy if available, else sinusoidal fallback.
+# Install the occupancy package: pip install buem-occupancy
+if _OCCUPANCY_AVAILABLE:
+    _occ = OccupancyProfile(num_persons=4, year=2018, seed=42)
+    _occ.generate()
+    _elec_df = ElectricityConsumptionProfile(occupancy_profile=_occ, seed=42).generate()
+    realistic_elec_load = _elec_df["total_power_kwh"]  # kWh per hour
+else:
+    # Fallback: simple sinusoidal daily pattern scaled to ~3.5 kWh/day (avg Dutch household)
+    import warnings
+    warnings.warn(
+        "buem-occupancy package not found; using sinusoidal electricity load fallback. "
+        "Install it with: pip install buem-occupancy",
+        ImportWarning,
+        stacklevel=1,
+    )
+    _t = np.linspace(0, 2 * np.pi, n_hours, endpoint=False)
+    realistic_elec_load = pd.Series(
+        0.15 + 0.12 * (1 - np.cos(_t)) + 0.04 * (1 - np.cos(2 * _t)),
+        index=main_index,
+        name="elecLoad",
+    )
 
 # Build attribute specs using realistic electricity load
 ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
@@ -85,8 +117,14 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
         doc="Weather DataFrame with columns T, GHI, DNI, DHI indexed by datetimes."
     ),
     "bldg_tabula_id": AttributeSpec("bldg_tabula_id", AttributeCategory.FIXED, AttrType.STR, "NL.N.MFH.01.Gen"),
-    "costdatapath": AttributeSpec("costdatapath", AttributeCategory.FIXED, AttrType.STR,
-                                 os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "default_2016.xlsx"))),
+    "costdatapath": AttributeSpec(
+        "costdatapath",
+        AttributeCategory.FIXED,
+        AttrType.STR,
+        os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "data", "default_2016.xlsx")
+        ),
+    ),
     "refurbishment": AttributeSpec("refurbishment", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="Deprecated: refurbishment decisions not used in parameterized model"),
     "force_refurbishment": AttributeSpec("force_refurbishment", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="Deprecated"),
     "occControl": AttributeSpec("occControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="Deprecated"),
@@ -95,9 +133,13 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "elecLoad": AttributeSpec("elecLoad", AttributeCategory.FIXED, AttrType.SERIES,
                               default=realistic_elec_load,  # Use occupancy-based calculation
                               doc="Electric internal load profile from occupancy simulation (pd.Series)"),
-    "Q_ig": AttributeSpec("Q_ig", AttributeCategory.FIXED, AttrType.SERIES,
-                         default=pd.Series([0.1] * n_hours, index=main_index),
-                         doc="Internal gains profile (pd.Series)"),
+    "Q_ig": AttributeSpec(
+        "Q_ig",
+        AttributeCategory.FIXED,
+        AttrType.SERIES,
+        default=pd.Series([0.1] * n_hours, index=main_index),
+        doc="Internal gains profile (pd.Series)",
+    ),
     "occ_nothome": AttributeSpec("occ_nothome", AttributeCategory.FIXED, AttrType.SERIES,
                                  default=pd.Series(0.5 * (1 + np.sin(np.linspace(-np.pi/2, 3*np.pi/2, n_hours))), index=main_index),
                                  doc="Occupancy away profile"),
@@ -162,8 +204,13 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "onlyEnergyInvest": AttributeSpec("onlyEnergyInvest", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "g_gl_n_Window": AttributeSpec("g_gl_n_Window", AttributeCategory.FIXED, AttrType.FLOAT, 0.5),
     "thermalClass": AttributeSpec("thermalClass", AttributeCategory.FIXED, AttrType.STR, "medium"),
-    "c_m": AttributeSpec("c_m", AttributeCategory.FIXED, AttrType.FLOAT, 175.0,
-        doc="Specific thermal capacity of building mass [kJ/m²K]. ISO 13790 medium class midpoint: (137.5+212.5)/2=175."),
+    "c_m": AttributeSpec(
+        "c_m",
+        AttributeCategory.FIXED,
+        AttrType.FLOAT,
+        175.0,
+        doc="Specific thermal capacity of building mass [kJ/m²K]. ISO 13790 medium class midpoint: (137.5+212.5)/2=175.",
+    ),
     "comfortT_lb": AttributeSpec("comfortT_lb", AttributeCategory.FIXED, AttrType.FLOAT, 21.0),
     "comfortT_ub": AttributeSpec("comfortT_ub", AttributeCategory.FIXED, AttrType.FLOAT, 24.0),
     "roofs": AttributeSpec("roofs", AttributeCategory.FIXED, AttrType.LIST, [{'roofTilt': 45.0, 'roofOrientation': 135.0, 'roofArea': 30.0}], doc="List of roof dicts"),
@@ -176,8 +223,13 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "F_sh_hor": AttributeSpec("F_sh_hor", AttributeCategory.FIXED, AttrType.FLOAT, 0.80),  # Realistic shading for Netherlands
     "F_f": AttributeSpec("F_f", AttributeCategory.FIXED, AttrType.FLOAT, 0.2),
     "F_w": AttributeSpec("F_w", AttributeCategory.FIXED, AttrType.FLOAT, 1.0),
-    "F_red_htr": AttributeSpec("F_red_htr", AttributeCategory.FIXED, AttrType.FLOAT, 1.0,
-        doc="Intermittent heating reduction factor (ISO 13790 §13.2.2). TABULA F_red_htr1: 0.95 (AB/MFH), 0.90 (SFH/TH). 1.0 = no reduction."),
+    "F_red_htr": AttributeSpec(
+        "F_red_htr",
+        AttributeCategory.FIXED,
+        AttrType.FLOAT,
+        1.0,
+        doc="Intermittent heating reduction factor (ISO 13790 §13.2.2). TABULA F_red_htr1: 0.95 (AB/MFH), 0.90 (SFH/TH). 1.0 = no reduction.",
+    ),
     "ventControl": AttributeSpec("ventControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "control": AttributeSpec("control", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "num_persons": AttributeSpec("num_persons", AttributeCategory.FIXED, AttrType.INT, 4, doc="Default persons for electricity profile generation"),
@@ -185,82 +237,6 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     "seed": AttributeSpec("seed", AttributeCategory.FIXED, AttrType.INT, 42, doc="RNG seed for reproducible electricity profiles (default: 42)"),
     "use_provided_elecLoad": AttributeSpec("use_provided_elecLoad", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="If true, keep provided elecLoad even when force=True"),
 }
-
-# multi Family house (MFH), existing state refurbishment - NL.N.MFH.01.Gen
-##cfg =  {
-##        "weather": pd.DataFrame({
-##            "T": temp_profile,  # external temp
-##            "GHI": ghi_profile,  # global horizontal irradiance
-##            "DNI": dni_profile,  # direct normal irradiance
-##            "DHI": dhi_profile,  # diffuse horizontal irradiance
-##        }, index=df_weather.index),
-##        "bldg_tabula_id": "NL.N.MFH.01.Gen",
-##        "costdatapath": os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "default_2016.xlsx")),  
-##        "refurbishment": True,
-##        "force_refurbishment": False,
-##        "occControl": False,
-##        "nightReduction": False,
-##        "capControl": False,
-##        "elecLoad": pd.Series([0.5]*n_hours, index=main_index),
-##        "Q_ig": pd.Series([0.1]*n_hours, index=main_index),
-#         "Q_ig": pd.Series([0.3, 0.2], index=dummy_index),
-##        "occ_nothome": pd.Series(0.5 * (1 + np.sin(np.linspace(-np.pi/2, 3*np.pi/2, n_hours))), index=main_index),  # 0 (home) at night, 1 (away) at noon
-##        "occ_sleeping": pd.Series(0.5 * (1 - np.cos(np.linspace(0, 2*np.pi, n_hours))), index=main_index), # 1 at night, 0 during day
-##        "latitude": 52.0,
-##        "longitude": 5.0,
-##        "A_Roof_1": 497.7,
-#         "A_Roof_2": 128.1,
-##        "U_Roof_1": 1.54,
-#         "U_Roof_2": 1.54,
-##        "b_Transmission_Roof_1": 1.0,
-#         "b_Transmission_Roof_2": 1.0,
-##        "A_Wall_1": 1226.9,
-#         "A_Wall_2": 136.7,
-#         "A_Wall_3": 136.7,
-##        "U_Wall_1": 1.61,
-#         "U_Wall_2": 1.61,
-#         "U_Wall_3": 1.61,
-##        "b_Transmission_Wall_1": 1.0,
-#        "b_Transmission_Wall_2": 1.0,
-#        "b_Transmission_Wall_3": 1.0,
-##        "A_Floor_1": 469.0,
-#         "A_Floor_2": 93.0,
-##        "U_Floor_1": 1.72,
-#         "U_Floor_2": 1.72,
-##        "b_Transmission_Floor_1": 1.0,
-#         "b_Transmission_Floor_2": 1.0,
-##        "A_Window": 78.4,
-##        "U_Window": 5.2,
-##        "A_Door_1": 58.8,
-##        "U_Door_1": 3.5,
-##        "A_ref": 2064,
-##        "h_room": 2.5,
-##        "n_air_infiltration": 0.5,
-##        "n_air_use": 0.5,
-##        "design_T_min": -12.0,
-##        "onlyEnergyInvest": False,
-##        "g_gl_n_Window": 0.5, # Window g-value (solar energy transmittance)
-##        "thermalClass": "medium",
-##        "comfortT_lb": 21.0,  # lower bound of the comfortable temperature if active
-##        "comfortT_ub": 24.0,  # upper bound of the comfortable temperature if active
-##        "roofs":[{'roofTilt': 45.0,
-##            'roofOrientation': 135.0,
-##            'roofArea': 30.0
-##        },],
-        # Window areas and U-values for each orientation
-##        "A_Window_North": 5.0,
-##        "A_Window_East": 5.0,
-##        "A_Window_South": 5.0,
-##        "A_Window_West": 5.0,
-##        "A_Window_Horizontal": 5.0,
-        # Shading and orientation factors (set to 1.0 for no shading as default)
-##        "F_sh_vert": 1.0,  # vertical shading factor for windows
-##        "F_sh_hor": 1.0, # horizontal shading factor for windows
-##        "F_f": 0.2, # fraction of the window area that is shaded
-##        "F_w": 1.0,  # window orientation factor (1.0 for no orientation effect)
-##        "ventControl": False,  # ventilation control flag
-##        "control": False, # flaf for controling strategies, include smart thermostat, occupancy control, night reduction, temp control
-##    }
 
 # Legacy default cfg dict (keeps existing API for other modules)
 cfg: Dict[str, Any] = {spec.name: spec.default for spec in ATTRIBUTE_SPECS.values()}

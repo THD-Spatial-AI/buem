@@ -7,8 +7,15 @@ import pandas as pd
 
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS
 from buem.config.validator import validate_cfg
-from buem.occupancy.occupancy_profile import OccupancyProfile
-from buem.occupancy.electricity_consumption import ElectricityConsumptionProfile
+
+# buem-occupancy is an optional independent package (https://github.com/UU-BUEM/buem-occupancy)
+# Install with: pip install buem-occupancy
+try:
+    from buem_occupancy.occupancy_profile import OccupancyProfile  # type: ignore[import]
+    from buem_occupancy.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
+    _OCCUPANCY_AVAILABLE = True
+except ImportError:
+    _OCCUPANCY_AVAILABLE = False
 
 
 class AttributeBuilder:
@@ -110,13 +117,18 @@ class AttributeBuilder:
         
         try:
             # Generate profile
+            if not _OCCUPANCY_AVAILABLE:
+                raise ImportError(
+                    "buem-occupancy package is required for electricity profile generation. "
+                    "Install it with: pip install buem-occupancy"
+                )
             occ = OccupancyProfile(num_persons=num_persons, year=weather_year, seed=seed)
             elec_gen = ElectricityConsumptionProfile(occ, seed=seed)
             profile_df = elec_gen.generate()
-            
+
             if "total_power_kwh" not in profile_df:
                 raise ValueError("ElectricityConsumptionProfile missing 'total_power_kwh' column")
-            
+
             elec_series = profile_df["total_power_kwh"]
             
             # Align index with weather (8760 hourly points)

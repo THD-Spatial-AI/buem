@@ -1,21 +1,17 @@
 name: buem_env
 channels:
   - conda-forge
-  - default
+  - defaults
 dependencies:
-  - python=3.13
+  - python>=3.14
   # Core scientific
-  - cfgrib
   - coincbc
   - cvxpy
-  - dask
-  - eccodes
   - flask
   - flask-swagger-ui
   - joblib
   - jsonschema
   - matplotlib
-  - netcdf4
   - numba
   - numpy
   - openpyxl
@@ -25,26 +21,15 @@ dependencies:
   - pulp
   - pvlib
   - pyarrow
-  - pyproj
   - python-dotenv
   - scipy
   - setuptools-scm>=8
-  - sympy
-  - xarray
   # Development
   - mypy
   - pytest
   - pytest-cov
   - ruff
-  # Documentation
-  - sphinx>=9.0.0
-  - sphinx_rtd_theme>=3.0.0
   - pip
   - pip:
     - marshmallow>=4.0.0
     - marshmallow-dataclass>=8.0.0
-    - sphinxcontrib-applehelp>=2.0.0
-    - sphinxcontrib-devhelp>=2.0.0
-    - sphinxcontrib-htmlhelp>=2.1.0
-    - sphinxcontrib-qthelp>=2.0.0
-    - sphinxcontrib-serializinghtml>=1.1.5

@@ -53,7 +53,7 @@ function Show-Help {
     Write-Host ""
     Write-Host "Environment Setup:" -ForegroundColor Green
     Write-Host "  install          Install BUEM into the conda environment (conda develop src)"
-    Write-Host "  install-dev      Install BUEM + dev extras (pytest, black, flake8, mypy)"
+    Write-Host "  install-dev      Install BUEM + dev extras (pytest, ruff, mypy)"
     Write-Host "  validate         Verify installation and environment paths"
     Write-Host "  version          Print the installed BuEM version"
     Write-Host ""
@@ -119,7 +119,7 @@ function Invoke-Install {
 function Invoke-InstallDev {
     Write-Host "Installing BUEM + dev extras into the conda environment..." -ForegroundColor Blue
     conda develop src
-    conda install --name $CondaEnv --yes pytest pytest-cov black flake8 mypy
+    conda install --name $CondaEnv --yes pytest pytest-cov ruff mypy
     Write-Host "Dev extras installed." -ForegroundColor Green
 }
 

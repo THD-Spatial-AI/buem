@@ -12,16 +12,13 @@ build:
 
 requirements:
   host:
-    - python >=3.13
+    - python >=3.14
     - pip
     - setuptools-scm >=8
   run:
-    - python >=3.13
-    - cfgrib
+    - python >=3.14
     - coinor-cbc  # [linux]
     - cvxpy
-    - dask
-    - eccodes
     - flask
     - flask-swagger-ui
     - gunicorn    # [linux]
@@ -30,7 +27,6 @@ requirements:
     - marshmallow >=4.0.0
     - marshmallow-dataclass >=8.0.0
     - matplotlib
-    - netcdf4
     - numba
     - numpy
     - openpyxl
@@ -41,11 +37,8 @@ requirements:
     - pulp
     - pvlib
     - pyarrow
-    - pyproj
     - python-dotenv
     - scipy
-    - sympy
-    - xarray
 
 about:
   summary: "Building thermal simulation module (ISO 52016-1 5R1C)"
