@@ -8,11 +8,12 @@ import pandas as pd
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS
 from buem.config.validator import validate_cfg
 
-# buem-occupancy is an optional independent package (https://github.com/UU-BUEM/buem-occupancy)
-# Install with: pip install buem-occupancy
+# occupancy is an optional independent package (https://github.com/UU-BUEM/occupancy),
+# not published to PyPI. Install with:
+# pip install git+https://github.com/UU-BUEM/occupancy.git
 try:
-    from buem_occupancy.occupancy_profile import OccupancyProfile  # type: ignore[import]
-    from buem_occupancy.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
+    from occupancy.internal_gains.occupancy_profile import OccupancyProfile  # type: ignore[import]
+    from occupancy.electricity.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
     _OCCUPANCY_AVAILABLE = True
 except ImportError:
     _OCCUPANCY_AVAILABLE = False
@@ -119,8 +120,8 @@ class AttributeBuilder:
             # Generate profile
             if not _OCCUPANCY_AVAILABLE:
                 raise ImportError(
-                    "buem-occupancy package is required for electricity profile generation. "
-                    "Install it with: pip install buem-occupancy"
+                    "occupancy package is required for electricity profile generation. "
+                    "Install it with: pip install git+https://github.com/UU-BUEM/occupancy.git"
                 )
             occ = OccupancyProfile(num_persons=num_persons, year=weather_year, seed=seed)
             elec_gen = ElectricityConsumptionProfile(occ, seed=seed)

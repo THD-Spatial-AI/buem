@@ -10,13 +10,12 @@ from buem.weather.from_merra import MerraWeatherData, _nc_years_in_dir, _COUNTRY
 import logging as _logging
 _log = _logging.getLogger(__name__)
 
-# ── Optional external sub-packages (now independent repos in UU-BUEM org) ─────
-# buem-occupancy: https://github.com/UU-BUEM/occupancy
-# buem-weather:   https://github.com/UU-BUEM/weather
-# Install via: pip install buem-occupancy  /  pip install buem-weather
+# ── Optional external sub-package (now an independent repo in UU-BUEM org) ────
+# occupancy: https://github.com/UU-BUEM/occupancy — not published to PyPI,
+# install with: pip install git+https://github.com/UU-BUEM/occupancy.git
 try:
-    from buem_occupancy.occupancy_profile import OccupancyProfile  # type: ignore[import]
-    from buem_occupancy.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
+    from occupancy.internal_gains.occupancy_profile import OccupancyProfile  # type: ignore[import]
+    from occupancy.electricity.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
     _OCCUPANCY_AVAILABLE = True
 except ImportError:
     _OCCUPANCY_AVAILABLE = False
