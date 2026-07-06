@@ -11,8 +11,8 @@ import logging as _logging
 _log = _logging.getLogger(__name__)
 
 # ── Optional external sub-package (now an independent repo in UU-BUEM org) ────
-# occupancy: https://github.com/THD-Spatial-AI/occupancy (fork of UU-BUEM/occupancy) — not published to PyPI,
-# install with: pip install git+https://github.com/THD-Spatial-AI/occupancy.git@fix/config-path-resolution
+# occupancy: https://github.com/enerplanet/occupancy (fork of UU-BUEM/occupancy) — not published to PyPI,
+# install with: pip install git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution
 try:
     from occupancy.internal_gains.occupancy_profile import OccupancyProfile  # type: ignore[import]
     from occupancy.electricity.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
@@ -123,7 +123,7 @@ dni_profile = df_weather["DNI"]   # DISC-reconstructed, physically bounded
 dhi_profile = df_weather["DHI"]   # back-computed from GHI - DNI*cos(zenith)
 
 # Generate electricity load profile: use occupancy package if available, else sinusoidal fallback.
-# Install: pip install git+https://github.com/THD-Spatial-AI/occupancy.git@fix/config-path-resolution
+# Install: pip install git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution
 if _OCCUPANCY_AVAILABLE:
     _occ = OccupancyProfile(num_persons=4, year=2018, seed=42)
     _occ.generate()
@@ -134,7 +134,7 @@ else:
     import warnings
     warnings.warn(
         "occupancy package not found; using sinusoidal electricity load fallback. "
-        "Install it with: pip install git+https://github.com/THD-Spatial-AI/occupancy.git@fix/config-path-resolution",
+        "Install it with: pip install git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution",
         ImportWarning,
         stacklevel=1,
     )
