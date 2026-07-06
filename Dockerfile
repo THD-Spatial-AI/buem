@@ -27,4 +27,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS http://localhost:5000/api/health || exit 1
 
 # run gunicorn directly (uses gunicorn from conda env installed via environment_docker.yml)
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "buem.apis.api_server:create_app()", "--workers", "2", "--threads", "2"]
+CMD gunicorn --bind 0.0.0.0:5000 "buem.apis.api_server:create_app()" --workers "${GUNICORN_WORKERS:-2}" --threads 1

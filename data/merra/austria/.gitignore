@@ -1,0 +1,3 @@
+# MERRA-2 NetCDF files — not version-controlled (~45 MB each)
+# Copy combined_merra_{year}.nc files here for this country's MERRA-2 coverage
+*.nc
