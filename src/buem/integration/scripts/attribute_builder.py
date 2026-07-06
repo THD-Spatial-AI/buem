@@ -8,9 +8,9 @@ import pandas as pd
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS
 from buem.config.validator import validate_cfg
 
-# occupancy is an optional independent package (https://github.com/UU-BUEM/occupancy),
+# occupancy is an optional independent package (https://github.com/THD-Spatial-AI/occupancy, fork of UU-BUEM/occupancy),
 # not published to PyPI. Install with:
-# pip install git+https://github.com/UU-BUEM/occupancy.git
+# pip install git+https://github.com/THD-Spatial-AI/occupancy.git@fix/config-path-resolution
 try:
     from occupancy.internal_gains.occupancy_profile import OccupancyProfile  # type: ignore[import]
     from occupancy.electricity.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
@@ -121,7 +121,7 @@ class AttributeBuilder:
             if not _OCCUPANCY_AVAILABLE:
                 raise ImportError(
                     "occupancy package is required for electricity profile generation. "
-                    "Install it with: pip install git+https://github.com/UU-BUEM/occupancy.git"
+                    "Install it with: pip install git+https://github.com/THD-Spatial-AI/occupancy.git@fix/config-path-resolution"
                 )
             occ = OccupancyProfile(num_persons=num_persons, year=weather_year, seed=seed)
             elec_gen = ElectricityConsumptionProfile(occ, seed=seed)

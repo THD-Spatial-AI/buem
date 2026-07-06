@@ -56,7 +56,7 @@ dependencies = [
 # Optional sub-package, now an independent repo in the UU-BUEM organisation.
 # Not published to PyPI, so it needs a direct git reference.
 occupancy = [
-    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git",
+    "occupancy @ git+https://github.com/THD-Spatial-AI/occupancy.git@fix/config-path-resolution",
 ]
 weather = [
     "weather",

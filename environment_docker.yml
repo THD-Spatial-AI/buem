@@ -30,4 +30,4 @@ dependencies:
   - pip:
     - marshmallow>=4.0.0
     - marshmallow-dataclass>=8.0.0
-    - git+https://github.com/UU-BUEM/occupancy.git
+    - git+https://github.com/THD-Spatial-AI/occupancy.git@fix/config-path-resolution
