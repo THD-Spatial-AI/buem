@@ -24,6 +24,8 @@ dependencies:
   - python-dotenv
   - scipy
   - setuptools-scm>=8
+  - xarray
+  - netCDF4
   - pip
   - pip:
     - marshmallow>=4.0.0

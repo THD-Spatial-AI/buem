@@ -1,7 +1,6 @@
 import time
 import logging
 from buem.thermal.model_buem import ModelBUEM
-from buem.results.standard_plots import PlotVariables as pvar
 from buem.config.cfg_attribute import cfg
 from buem.config.validator import validate_cfg
 import numpy as np
@@ -47,6 +46,7 @@ def run_model(cfg_dict, plot: bool = False, use_milp: bool = False, return_model
 
         if plot:
             try:
+                from buem.results.standard_plots import PlotVariables as pvar
                 plotter = pvar()
                 plotter.plot_variables(model, model, period='year')
             except Exception:

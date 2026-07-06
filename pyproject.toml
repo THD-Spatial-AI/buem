@@ -48,6 +48,8 @@ dependencies = [
     "pyarrow",
     "python-dotenv",
     "scipy",
+    "xarray",
+    "netCDF4",
 ]
 
 [project.optional-dependencies]

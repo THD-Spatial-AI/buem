@@ -1,9 +1,14 @@
 import pandas as pd
 import numpy as np
 import os
+from pathlib import Path
 from typing import Any, Dict
 
 from .attribute_types import AttributeCategory, AttrType, AttributeSpec
+from buem.weather.from_merra import MerraWeatherData, _nc_years_in_dir, _COUNTRY_PRIORITY
+
+import logging as _logging
+_log = _logging.getLogger(__name__)
 
 # ── Optional external sub-packages (now independent repos in UU-BUEM org) ─────
 # buem-occupancy: https://github.com/UU-BUEM/occupancy
@@ -25,53 +30,92 @@ WEATHER_DIR = os.environ.get("BUEM_WEATHER_DIR", DEFAULT_DATA_DIR)
 WEATHER_CSV = os.path.join(WEATHER_DIR, "COSMO_Year__ix_390_650.csv")
 WEATHER_CACHE = os.path.join(WEATHER_DIR, "COSMO_Year__ix_390_650_processed.feather")
 
-if not os.path.exists(WEATHER_CSV):
-    raise FileNotFoundError(
-        f"Weather CSV not found at {WEATHER_CSV}. "
-        "Provide the file there or set BUEM_WEATHER_DIR to a folder containing "
-        "COSMO_Year__ix_390_650.csv (e.g. mount ./data/weather and set env var accordingly)."
+# Default location used only for the module-level representative weather sample
+# below; individual API requests override this with their actual lat/lon.
+_DEFAULT_LAT = 51.5   # Central Germany
+_DEFAULT_LON = 10.0
+_DEFAULT_YEAR = 2018
+
+
+def _has_merra_data(weather_dir: str) -> bool:
+    """True if MERRA-2 combined_merra_{year}.nc files exist directly in weather_dir or a country subdir."""
+    merra_dir = Path(weather_dir)
+    return bool(_nc_years_in_dir(merra_dir)) or any(
+        (merra_dir / c).is_dir() and bool(_nc_years_in_dir(merra_dir / c))
+        for c in _COUNTRY_PRIORITY
     )
 
-# Try loading the already-processed feather cache (includes DISC-reconstructed DNI/DHI).
-# This avoids the ~2-3s pvlib DISC computation on every module import (critical for
-# multiprocessing workers that each re-import this module).
-if os.path.exists(WEATHER_CACHE):
-    df_weather = pd.read_feather(WEATHER_CACHE)
-    df_weather.set_index(df_weather.columns[0], inplace=True)
-    df_weather.index = pd.to_datetime(df_weather.index)
-else:
-    # Inline CSV loading with pvlib DISC reconstruction (replaces buem.weather.from_csv).
-    # pvlib is a core buem dependency; no external weather package required for this step.
-    import pvlib  # type: ignore[import-untyped]
 
-    _df = pd.read_csv(WEATHER_CSV)
-    _df.set_index(_df.columns[0], inplace=True)
-    _df.index = pd.to_datetime(_df.index, utc=True)
-    _df = _df[["T", "GHI", "DNI", "DHI"]].copy()
+def _load_default_weather() -> pd.DataFrame:
+    """Load a representative yearly weather dataset at module import time.
 
-    # Reconstruct DNI and DHI from GHI using pvlib DISC decomposition.
-    # COSMO-REA6 stores DNI = (GHI-DHI)/cos(zenith), which diverges near the horizon
-    # (observed max: 4951 W/m2, physically impossible).  DISC gives bounded 0..~1000 W/m2.
-    _solpos = pvlib.solarposition.get_solarposition(_df.index, latitude=52.07, longitude=5.07)
-    _dni_extra = pvlib.irradiance.get_extra_radiation(_df.index.dayofyear)
-    _disc = pvlib.irradiance.disc(
-        ghi=_df["GHI"],
-        solar_zenith=_solpos["apparent_zenith"],
-        datetime_or_doy=_df.index,
+    Priority:
+    1. MERRA-2 NetCDF (``combined_merra_{year}.nc``) if present in BUEM_WEATHER_DIR
+    2. COSMO CSV (``COSMO_Year__ix_390_650.csv``), with pvlib DISC-reconstructed DNI/DHI
+    3. Synthetic zero-filled fallback so the module can still be imported
+    """
+    if _has_merra_data(WEATHER_DIR):
+        _log.info("Loading default MERRA-2 weather (%d) from %s", _DEFAULT_YEAR, WEATHER_DIR)
+        loader = MerraWeatherData(WEATHER_DIR, lat=_DEFAULT_LAT, lon=_DEFAULT_LON)
+        return loader.get_weather_df(year=_DEFAULT_YEAR)
+
+    if os.path.exists(WEATHER_CSV):
+        # Try loading the already-processed feather cache (includes DISC-reconstructed DNI/DHI).
+        # This avoids the ~2-3s pvlib DISC computation on every module import (critical for
+        # multiprocessing workers that each re-import this module).
+        if os.path.exists(WEATHER_CACHE):
+            df = pd.read_feather(WEATHER_CACHE)
+            df.set_index(df.columns[0], inplace=True)
+            df.index = pd.to_datetime(df.index)
+            return df
+
+        # Inline CSV loading with pvlib DISC reconstruction (replaces buem.weather.from_csv).
+        # pvlib is a core buem dependency; no external weather package required for this step.
+        import pvlib  # type: ignore[import-untyped]
+
+        _log.info("Loading default COSMO weather from %s", WEATHER_CSV)
+        _df = pd.read_csv(WEATHER_CSV)
+        _df.set_index(_df.columns[0], inplace=True)
+        _df.index = pd.to_datetime(_df.index, utc=True)
+        _df = _df[["T", "GHI", "DNI", "DHI"]].copy()
+
+        # Reconstruct DNI and DHI from GHI using pvlib DISC decomposition.
+        # COSMO-REA6 stores DNI = (GHI-DHI)/cos(zenith), which diverges near the horizon
+        # (observed max: 4951 W/m2, physically impossible).  DISC gives bounded 0..~1000 W/m2.
+        _solpos = pvlib.solarposition.get_solarposition(_df.index, latitude=52.07, longitude=5.07)
+        _dni_extra = pvlib.irradiance.get_extra_radiation(_df.index.dayofyear)
+        _disc = pvlib.irradiance.disc(
+            ghi=_df["GHI"],
+            solar_zenith=_solpos["apparent_zenith"],
+            datetime_or_doy=_df.index,
+        )
+        _df["DNI"] = _disc["dni"].clip(lower=0, upper=_dni_extra).fillna(0)
+        _cos_z = np.cos(np.radians(_solpos["apparent_zenith"].clip(upper=90))).clip(lower=0)
+        _df["DHI"] = (_df["GHI"] - _df["DNI"] * _cos_z).clip(lower=0, upper=_df["GHI"]).fillna(0)
+
+        df = _df.copy()
+        df.index = df.index.tz_convert(None)
+
+        # Save processed weather to feather cache for fast reloading by worker processes
+        try:
+            df.reset_index().to_feather(WEATHER_CACHE)
+        except Exception:
+            pass  # Non-critical: caching failure should not block model execution
+
+        return df
+
+    _log.warning(
+        "No weather data found in BUEM_WEATHER_DIR=%s. "
+        "Using synthetic zero-filled fallback. "
+        "Set BUEM_WEATHER_DIR to a directory containing MERRA-2 .nc files or "
+        "COSMO_Year__ix_390_650.csv.",
+        WEATHER_DIR,
     )
-    _df["DNI"] = _disc["dni"].clip(lower=0, upper=_dni_extra).fillna(0)
-    _cos_z = np.cos(np.radians(_solpos["apparent_zenith"].clip(upper=90))).clip(lower=0)
-    _df["DHI"] = (_df["GHI"] - _df["DNI"] * _cos_z).clip(lower=0, upper=_df["GHI"]).fillna(0)
+    idx = pd.date_range(f"{_DEFAULT_YEAR}-01-01", periods=8760, freq="h")
+    return pd.DataFrame({"T": 10.0, "GHI": 0.0, "DNI": 0.0, "DHI": 0.0}, index=idx)
 
-    df_weather = _df.copy()
-    df_weather.index = df_weather.index.tz_convert(None)
 
-    # Save processed weather to feather cache for fast reloading by worker processes
-    try:
-        df_weather.reset_index().to_feather(WEATHER_CACHE)
-    except Exception:
-        pass  # Non-critical: caching failure should not block model execution
-
+df_weather = _load_default_weather()
 main_index = df_weather.index
 n_hours = len(main_index)
 temp_profile = df_weather["T"]
