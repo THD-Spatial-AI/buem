@@ -53,11 +53,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Optional sub-packages now in independent repos within the UU-BUEM organisation.
-# buem-occupancy: https://github.com/UU-BUEM/occupancy
-# buem-weather:   https://github.com/UU-BUEM/weather
+# Optional sub-package, now an independent repo in the UU-BUEM organisation.
+# Not published to PyPI, so it needs a direct git reference.
 occupancy = [
-    "occupancy",
+    "occupancy @ git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution",
 ]
 weather = [
     "weather",
