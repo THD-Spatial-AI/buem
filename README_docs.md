@@ -1,10 +1,15 @@
 # BuEM Documentation
 
-This repository contains the documentation for the Building Energy Model (BuEM) package, specifically designed for developers integrating BuEM with other models via APIs through Docker containers.
+This repository contains the documentation for
+the Building Energy Model (BuEM) package, specifically
+designed for developers integrating BuEM with other models
+via APIs through Docker containers.
 
 ## About BuEM
 
-BuEM is a comprehensive thermal simulation tool for building energy analysis. It provides:
+BuEM is a comprehensive thermal simulation tool for building
+energy analysis. It provides:
+
 - Thermal load calculations for heating and cooling
 - REST API for model integration
 - Docker containerization support
@@ -32,11 +37,13 @@ To generate the documentation locally:
 ### Prerequisites
 
 Make sure you have the BuEM conda environment activated:
+
 ```shell
 conda activate buem_env
 ```
 
 Install documentation dependencies:
+
 ```shell
 pip install -r docs/requirements.txt
 ```
@@ -48,7 +55,8 @@ cd docs
 make html
 ```
 
-Then the HTML is generated in the directory `docs/build/html`. Open the `index.html` in that directory in your browser to see your changes.
+Then the HTML is generated in the directory `docs/build/html`.
+Open the `index.html` in that directory in your browser to see your changes.
 
 ### Alternative Build Commands
 
@@ -74,7 +82,8 @@ When contributing to the documentation:
 
 ## Automatic Deployment
 
-When changes are pushed to the main branch, the online documentation is automatically regenerated within a few minutes through ReadTheDocs integration.
+When changes are pushed to the main branch, the online documentation
+is automatically regenerated within a few minutes through ReadTheDocs integration.
 
 ## License
 

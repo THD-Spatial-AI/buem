@@ -12,11 +12,11 @@ build:
 
 requirements:
   host:
-    - python >=3.13
+    - python >=3.14
     - pip
     - setuptools-scm >=8
   run:
-    - python >=3.13
+    - python >=3.14
     - coinor-cbc  # [linux]
     - cvxpy
     - flask
@@ -39,7 +39,6 @@ requirements:
     - pyarrow
     - python-dotenv
     - scipy
-    - sympy
 
 about:
   summary: "Building thermal simulation module (ISO 52016-1 5R1C)"

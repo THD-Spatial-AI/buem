@@ -1,14 +1,17 @@
+from __future__ import annotations
+
+from typing import Any
+
 import pvlib
 import cvxpy as cp
-from scipy.sparse.linalg import spsolve
 from scipy.sparse import lil_matrix, vstack
 import pandas as pd
 import numpy as np
-import os 
+import os
 import shutil
-import platform
 from dotenv import load_dotenv
 from buem.config.validator import validate_cfg
+
 
 class ModelBUEM(object):
     """
@@ -63,7 +66,7 @@ class ModelBUEM(object):
         "C_air": 1.006,  # kJ/kg/K
         }
 
-    def __init__(self, cfg: dict, maxLoad: float = None):
+    def __init__(self, cfg: dict, maxLoad: float | None = None):
         """
         Initialise the model and declare cross-method attributes.
 
@@ -82,7 +85,7 @@ class ModelBUEM(object):
             Override for maximum heating system capacity [kW].
             If *None*, computed from :meth:`calcDesignHeatLoad`.
         """
-        self.cfg = cfg 
+        self.cfg = cfg
         self.maxLoad = maxLoad
 
         # time series index
@@ -93,13 +96,13 @@ class ModelBUEM(object):
 
         # component tree and per-component parameters
         # component_elements: dict[component] -> list[element dicts {id, area, azimuth, tilt, ...}]
-        self.component_elements = {}
+        self.component_elements: dict[str, list[dict]] = {}
         # component-level U (same for all elements)
-        self.bU = {}
+        self.bU: dict[str, Any] = {}
         # component conductance [kW/K] aggregated over elements (Original state)
-        self.bH = {}
+        self.bH: dict[str, dict[str, float]] = {}
         # window element list (shortcut)
-        self.windows = []
+        self.windows: list[dict] = []
 
         # 5R1C thermal parameters (initialized later in _init5R1C)
         self.bA_f = None
@@ -112,11 +115,11 @@ class ModelBUEM(object):
         self.bT_comf_ub = None
 
         # profiles (internal gains, occupancy, solar gains created in _init5R1C)
-        self.profiles = {}
-        self.profilesEval = {}
+        self.profiles: dict[str, Any] = {}
+        self.profilesEval: dict[str, Any] = {}
 
         # results containers
-        self.static_results = {}
+        self.static_results: dict[str, Any] = {}
         self.detailedResults = pd.DataFrame(index=self.times)
 
         # solver/runtime bookkeeping
@@ -133,7 +136,7 @@ class ModelBUEM(object):
                 raise ValueError(f"Required configuration key '{key}' missing from cfg")
             else:
                 raise KeyError(f"Configuration key '{key}' not found")
-        
+
         v = self.cfg[key]
         try:
             return float(v)
@@ -146,7 +149,7 @@ class ModelBUEM(object):
                     raise ValueError(f"Cannot convert cfg['{key}'] to float: {v}, error: {e}")
             else:
                 raise ValueError(f"Cannot convert cfg['{key}'] to float: {v}, error: {e}")
-            
+
     # -------- parameter parsing --------
     def _initPara(self):
         """Ensure ``self.profiles`` and ``self.profilesEval`` dicts exist."""
@@ -197,7 +200,8 @@ class ModelBUEM(object):
                         break
                 if not elems and f"A_{comp}" in self.cfg:
                     had_any = True
-                    elems.append({"id": f"{comp}_1", "area": float(self.cfg[f"A_{comp}"]) if f"A_{comp}" in self.cfg else 0.0})
+                    area_val = float(self.cfg[f"A_{comp}"])
+                    elems.append({"id": f"{comp}_1", "area": area_val})
                 if elems:
                     # keep U as-is (may be None) and let the same processing logic handle it
                     constructed[comp] = {"U": self.cfg.get(f"U_{comp}"), "elements": elems}
@@ -263,7 +267,11 @@ class ModelBUEM(object):
                             e_b = float(e.get("b_transmission", 1.0))
                             total_conductance += float(e["U"]) * float(e["area"]) * e_b
                         except Exception:
-                            raise ValueError(f"components.{comp_name}.elements contains invalid U or area for element {e.get('id', 'unknown')}")
+                            eid = e.get('id', 'unknown')
+                            raise ValueError(
+                                f"components.{comp_name}.elements contains "
+                                f"invalid U or area for element {eid}"
+                            )
                     # store None to indicate per-element U was used; bH uses computed conductance (kW/K)
                     self.bU[comp_name] = None
                     self.bH[comp_name] = {"Original": total_conductance / 1000.0}
@@ -296,7 +304,8 @@ class ModelBUEM(object):
                     azimuth = e["azimuth"] if "azimuth" in e else "default"
                     tilt = e["tilt"] if "tilt" in e else "default"
                     area_val = float(e["area"]) if "area" in e and e["area"] is not None else 0
-                    print(f"  - {e['id'] if 'id' in e else 'unknown'}: {area_val:.1f} m², az: {azimuth}°, tilt: {tilt}°")
+                    eid = e['id'] if 'id' in e else 'unknown'
+                    print(f"  - {eid}: {area_val:.1f} m², az: {azimuth}°, tilt: {tilt}°")
                 if len(elements) > 3:
                     print(f"  ... and {len(elements)-3} more")
         print("=========================================\n")
@@ -307,33 +316,33 @@ class ModelBUEM(object):
         A_ref = self._cfg_float("A_ref", required=True)
         if A_ref <= 0:
             raise ValueError(f"A_ref must be > 0, got: {A_ref}")
-            
+
         if "h_room" not in self.cfg:
             raise ValueError("h_room (room height) missing from configuration")
         h_room = self._cfg_float("h_room", required=True)
         if h_room <= 0 or h_room > 5.0:
             raise ValueError(f"h_room ({h_room}) must be between 0 and 5.0 meters")
-            
+
         rho_air = self.CONST["rho_air"]
         C_air = self.CONST["C_air"]
-        
+
         if "n_air_infiltration" not in self.cfg:
             raise ValueError("n_air_infiltration missing from configuration")
         if "n_air_use" not in self.cfg:
             raise ValueError("n_air_use missing from configuration")
-            
+
         n_air_inf = self._cfg_float("n_air_infiltration", required=True)
         n_air_use = self._cfg_float("n_air_use", required=True)
-        
+
         if n_air_inf < 0 or n_air_use < 0:
             raise ValueError(f"Air change rates cannot be negative: inf={n_air_inf}, use={n_air_use}")
         if (n_air_inf + n_air_use) > 10.0:
             print(f"WARNING: Very high air change rate: {n_air_inf + n_air_use:.2f} /h")
-            
+
         H_ve = A_ref * h_room * rho_air * C_air * (n_air_inf + n_air_use) / 3600.0
         self.bH.setdefault("Ventilation", {})["Original"] = H_ve
 
-    # -------- 5R1C & solar --------        
+    # -------- 5R1C & solar --------
     def _init5R1C(self):
         """
         Compute ISO 13790 5R1C thermal network parameters and build solar gain
@@ -369,7 +378,6 @@ class ModelBUEM(object):
         # c_m is explicitly provided in cfg (default 175 kJ/m²K = medium class midpoint)
         bClass_f_a = {"very light": 2.5, "light": 2.5, "medium": 2.5, "heavy": 3.0, "very heavy": 3.5}
 
-
         # Heated floor area and basic derived thermal params - NO DEFAULTS
         if "A_ref" not in self.cfg:
             raise ValueError("A_ref (reference floor area) required in configuration")
@@ -377,13 +385,13 @@ class ModelBUEM(object):
         if A_ref is None or float(A_ref) <= 0:
             raise ValueError(f"A_ref (reference floor area) must be > 0, got: {A_ref}")
         self.bA_f = float(A_ref)
-        
+
         thermalClass = self.cfg.get("thermalClass")
         if thermalClass is None:
             raise ValueError("thermalClass must be specified (very light, light, medium, heavy, very heavy)")
         if thermalClass not in bClass_f_a:
             raise ValueError(f"Invalid thermalClass '{thermalClass}'. Must be one of: {list(bClass_f_a.keys())}")
-            
+
         self.bA_m = self.bA_f * bClass_f_a[thermalClass]
         self.bH_ms = self.bA_m * self.bConst["h_ms"]
 
@@ -401,17 +409,17 @@ class ModelBUEM(object):
             raise ValueError("comfortT_lb (lower comfort temperature) must be specified")
         if "comfortT_ub" not in self.cfg:
             raise ValueError("comfortT_ub (upper comfort temperature) must be specified")
-            
+
         comfortT_lb = self.cfg["comfortT_lb"]
         comfortT_ub = self.cfg["comfortT_ub"]
-        
+
         if comfortT_lb is None or comfortT_ub is None:
             raise ValueError("comfortT_lb and comfortT_ub must be specified for thermal simulation")
         if float(comfortT_lb) >= float(comfortT_ub):
             raise ValueError(f"comfortT_lb ({comfortT_lb}) must be < comfortT_ub ({comfortT_ub})")
         if float(comfortT_lb) < 15 or float(comfortT_ub) > 30:
             raise ValueError(f"Comfort temperatures unreasonable: lb={comfortT_lb}, ub={comfortT_ub}")
-            
+
         self.bT_comf_lb = float(comfortT_lb)
         self.bT_comf_ub = float(comfortT_ub)
 
@@ -430,13 +438,13 @@ class ModelBUEM(object):
 
         # compute POA irradiance per element (populates self._irrad_surf in kW/m2)
         self._calcRadiation(surf_az, surf_tilt)
-        
+
         # DEBUG: Check POA irradiance values
         print("=== POA IRRADIANCE DIAGNOSTICS ===")
         print(f"POA calculated for {len(self._irrad_surf.columns)} surfaces: {list(self._irrad_surf.columns)}")
         for col in self._irrad_surf.columns[:5]:  # Show first 5 surfaces
             max_poa = self._irrad_surf[col].max()
-            mean_poa = self._irrad_surf[col].mean() 
+            mean_poa = self._irrad_surf[col].mean()
             print(f"  {col}: max = {max_poa:.3f} kW/m², mean = {mean_poa:.3f} kW/m²")
         if len(self._irrad_surf.columns) > 5:
             print(f"  ... and {len(self._irrad_surf.columns)-5} more surfaces")
@@ -449,9 +457,9 @@ class ModelBUEM(object):
         g_gl_default = self.cfg["g_gl_n_Window"]
         if float(g_gl_default) <= 0 or float(g_gl_default) > 1:
             raise ValueError(f"g_gl_n_Window ({g_gl_default}) must be between 0 and 1")
-            
+
         self.g_gl = float(g_gl_default)
-        
+
         # Shading and window factors - NO DEFAULTS, must be provided
         if "F_sh_vert" not in self.cfg:
             raise ValueError("F_sh_vert (vertical shading factor) must be specified")
@@ -461,7 +469,7 @@ class ModelBUEM(object):
             raise ValueError("F_w (window frame factor) must be specified")
         if "F_f" not in self.cfg:
             raise ValueError("F_f (floor reflection factor) must be specified")
-            
+
         self.F_sh_vert = float(self.cfg["F_sh_vert"])
         self.F_sh_hor = float(self.cfg["F_sh_hor"])
         self.F_w = float(self.cfg["F_w"])
@@ -478,7 +486,7 @@ class ModelBUEM(object):
             if "area" not in w:
                 raise ValueError(f"Window element {wid} missing area specification")
             area = float(w["area"])
-            
+
             # window may reference a parent surface (e.g., "surface": "Wall_1")
             surf_ref = w["surface"] if "surface" in w else wid
             if surf_ref in self._irrad_surf.columns:
@@ -487,13 +495,16 @@ class ModelBUEM(object):
                 poa = self._irrad_surf[wid].values
             else:
                 # NO FALLBACK! If POA data missing, that's an error
-                raise ValueError(f"POA irradiance data missing for window {wid} (surface: {surf_ref}). Check _calcRadiation.")
-            
+                raise ValueError(
+                    f"POA irradiance data missing for window {wid}"
+                    f" (surface: {surf_ref}). Check _calcRadiation."
+                )
+
             gwin = float(w["g_gl"]) if "g_gl" in w else self.g_gl
             # Q [kW] = area * g_gl * irr * fraction factors - small thermal sky term handled below
             qwin = poa * area * gwin * (1.0 - self.F_f) * self.F_w
             win_list.append(qwin)
-        
+
         if not win_list:
             raise ValueError("No window elements found but windows are configured. Check window element definitions.")
         self.profiles["bQ_sol_Windows"] = np.sum(np.vstack(win_list), axis=0)
@@ -568,18 +579,22 @@ class ModelBUEM(object):
         self.profiles["bQ_sol_Roof"] = np.sum(np.vstack(roof_q), axis=0)
 
         # Floor solar gains should be explicitly zero (no solar exposure)
-        self.profiles["bQ_sol_Floor"] = np.zeros(len(self.times)) # floor solar gains are zero by design
-        self.profiles["bQ_sol_Opaque"] = self.profiles["bQ_sol_Walls"] + self.profiles["bQ_sol_Roof"] + self.profiles["bQ_sol_Floor"]
+        self.profiles["bQ_sol_Floor"] = np.zeros(len(self.times))  # floor solar gains are zero by design
+        self.profiles["bQ_sol_Opaque"] = (
+            self.profiles["bQ_sol_Walls"]
+            + self.profiles["bQ_sol_Roof"]
+            + self.profiles["bQ_sol_Floor"]
+        )
 
         # provide debug sums (kWh per timestep is kW * 1h)
         total_window_solar = self.profiles["bQ_sol_Windows"].sum()
         total_opaque_solar = self.profiles["bQ_sol_Opaque"].sum()
         total_wall_solar = self.profiles["bQ_sol_Walls"].sum()
         total_roof_solar = self.profiles["bQ_sol_Roof"].sum()
-        
+
         print("=== SOLAR GAIN DIAGNOSTICS ===")
         print(f"Total window solar gains: {total_window_solar:.1f} kWh/year")
-        print(f"Total wall solar gains: {total_wall_solar:.1f} kWh/year") 
+        print(f"Total wall solar gains: {total_wall_solar:.1f} kWh/year")
         print(f"Total roof solar gains: {total_roof_solar:.1f} kWh/year")
         print(f"Total opaque solar gains: {total_opaque_solar:.1f} kWh/year")
         print(f"Peak window solar: {self.profiles['bQ_sol_Windows'].max():.2f} kW")
@@ -614,15 +629,15 @@ class ModelBUEM(object):
             raise ValueError("Latitude must be specified in configuration for solar calculations")
         if "longitude" not in self.cfg:
             raise ValueError("Longitude must be specified in configuration for solar calculations")
-            
+
         latitude = float(self.cfg["latitude"])
         longitude = float(self.cfg["longitude"])
-        
+
         if not (-90 <= latitude <= 90):
             raise ValueError(f"Latitude {latitude} out of valid range [-90, 90]")
         if not (-180 <= longitude <= 180):
             raise ValueError(f"Longitude {longitude} out of valid range [-180, 180]")
-            
+
         solpos = pvlib.solarposition.get_solarposition(
             self.cfg["weather"].index,
             latitude,
@@ -635,14 +650,24 @@ class ModelBUEM(object):
         required_weather = ["DNI", "DHI", "GHI", "T"]
         missing = [k for k in required_weather if k not in self.cfg["weather"]]
         if missing:
-            raise RuntimeError(f"Weather must include {missing} series for POA calculations. Available: {list(self.cfg['weather'].columns)}")
-            
+            available = list(self.cfg['weather'].columns)
+            raise RuntimeError(
+                f"Weather must include {missing} series for POA"
+                f" calculations. Available: {available}"
+            )
+
         # Validate weather data ranges
         weather_data = self.cfg["weather"]
         if weather_data["GHI"].max() > 1500 or weather_data["GHI"].min() < 0:
-            print(f"WARNING: GHI range unusual: {weather_data['GHI'].min():.0f} to {weather_data['GHI'].max():.0f} W/m2")
+            print(
+                f"WARNING: GHI range unusual: {weather_data['GHI'].min():.0f}"
+                f" to {weather_data['GHI'].max():.0f} W/m2"
+            )
         if weather_data["T"].max() > 50 or weather_data["T"].min() < -40:
-            print(f"WARNING: Temperature range extreme: {weather_data['T'].min():.1f} to {weather_data['T'].max():.1f} C")
+            print(
+                f"WARNING: Temperature range extreme:"
+                f" {weather_data['T'].min():.1f} to {weather_data['T'].max():.1f} C"
+            )
 
         # Clip DNI to the physical maximum: extraterrestrial irradiance at this time of year.
         # COSMO (and other NWP models) compute DNI = (GHI-DHI)/cos(zenith).
@@ -652,7 +677,11 @@ class ModelBUEM(object):
         dni_clipped = weather_data["DNI"].clip(lower=0, upper=dni_extra)
         clipped_hours = (weather_data["DNI"] > dni_extra).sum()
         if clipped_hours > 0:
-            print(f"WARNING: DNI sanitised: {clipped_hours} hours clipped from raw max {dni_raw_max:.0f} W/m2 to extraterrestrial max {float(dni_extra.max()):.0f} W/m2")
+            print(
+                f"WARNING: DNI sanitised: {clipped_hours} hours clipped"
+                f" from raw max {dni_raw_max:.0f} W/m2 to"
+                f" extraterrestrial max {float(dni_extra.max()):.0f} W/m2"
+            )
 
         df = pd.DataFrame(index=self.times)
         for comp, elems in self.component_elements.items():
@@ -668,7 +697,7 @@ class ModelBUEM(object):
                 # pvlib surface_tilt convention: 0=horizontal-up, 90=vertical, 180=horizontal-down
                 # Elements MUST specify tilt in pvlib convention — no silent defaults allowed
                 if e.get("tilt") is not None:
-                    tilt = float(e.get("tilt"))
+                    tilt = float(e["tilt"])
                 elif eid in surf_tilt:
                     tilt = float(surf_tilt[eid])
                 else:
@@ -676,7 +705,7 @@ class ModelBUEM(object):
                         f"Tilt not specified for element '{eid}' in component '{comp}'. "
                         "Provide 'tilt' in pvlib convention (0=horizontal-up, 90=vertical, 180=horizontal-down)."
                     )
-                
+
                 # Resolve azimuth precedence: element -> surf_az dict -> default (180° south)
                 if "azimuth" in e and e["azimuth"] is not None:
                     az = float(e["azimuth"])
@@ -750,8 +779,6 @@ class ModelBUEM(object):
         else:
             self.bMaxLoad = self.maxLoad
 
-
-
         # Prepare basic profiles references for other code paths - NO DEFAULTS, must be provided
         if "Q_ig" not in self.cfg:
             raise ValueError("Q_ig (internal gains profile) must be provided in configuration")
@@ -759,11 +786,11 @@ class ModelBUEM(object):
             raise ValueError("occ_nothome (occupancy away profile) must be provided in configuration")
         if "occ_sleeping" not in self.cfg:
             raise ValueError("occ_sleeping (sleeping occupancy profile) must be provided in configuration")
-            
+
         self.profiles["bQ_ig"] = self.cfg["Q_ig"]
         self.profiles["occ_nothome"] = self.cfg["occ_nothome"]
         self.profiles["occ_sleeping"] = self.cfg["occ_sleeping"]
- 
+
         # compute big-M bounds for aggregated heat flows (for compatibility)
         self.bM_q = {}
         self.bm_q = {}
@@ -789,7 +816,7 @@ class ModelBUEM(object):
 
         # temperature dicts (legacy per-timestep containers)
         self.bT_m = {}   # thermal mass node [°C]
-        self.bT_air = {} # air node [°C]
+        self.bT_air = {}  # air node [°C]
         self.bT_s = {}   # surface node [°C]
 
         # heat-flow dicts (legacy per-timestep containers)
@@ -798,8 +825,8 @@ class ModelBUEM(object):
         self.bQ_st = {}  # radiative gains to surface node [kW]
 
         # ventilation
-        self.bQ_ve = {}  # ventilation heat flow [kW]         
-                                    
+        self.bQ_ve = {}  # ventilation heat flow [kW]
+
     def scaleHeatLoad(self, scale=1):
         """
         Multiply original U-values and air-change rates by *scale*.
@@ -875,7 +902,7 @@ class ModelBUEM(object):
         equation reference.  Returns ``(A_eq, b_eq, milp_meta)``.
         """
         n = len(self.timeIndex)
-        
+
         # Helper to get variable indices
         def idx_T_air(i): return i
         def idx_T_m(i): return n + i
@@ -900,7 +927,11 @@ class ModelBUEM(object):
         H_ve = self.bH["Ventilation"]["Original"]
         # Windows and Doors are optional:
         H_windows = self.bH["Windows"]["Original"] if "Windows" in self.bH and "Original" in self.bH["Windows"] else 0.0
-        H_doors   = self.bH["Doors"]["Original"]   if "Doors"   in self.bH and "Original" in self.bH["Doors"]   else 0.0
+        H_doors = (
+            self.bH["Doors"]["Original"]
+            if "Doors" in self.bH and "Original" in self.bH["Doors"]
+            else 0.0
+        )
 
         # ISO 13790 §13.2.2: intermittent heating reduction factor.
         # Reduces transmission conductances to account for night/absence setback
@@ -909,24 +940,30 @@ class ModelBUEM(object):
         F_red = float(self.cfg.get("F_red_htr", 1.0))
         if not (0.0 < F_red <= 1.0):
             raise ValueError(f"F_red_htr must be in (0, 1], got {F_red}")
-        H_walls   *= F_red
-        H_roofs   *= F_red
-        H_floors  *= F_red
+        H_walls *= F_red
+        H_roofs *= F_red
+        H_floors *= F_red
         H_windows *= F_red
-        H_doors   *= F_red
+        H_doors *= F_red
 
         # Total transmission conductance and opaque-only mass-node conductance.
         H_tot = H_ve + H_walls + H_roofs + H_floors + H_windows + H_doors
         # H_tr_em: mass node couples to exterior through opaque components only
         # (ISO 13790 §12.2.2).  H_ve → air node; H_windows → surface node.
         H_tr_em = H_walls + H_roofs + H_floors + H_doors
-        print(f"H_tot={H_tot:.4f} kW/K, H_tr_em={H_tr_em:.4f} kW/K (mass node), H_ve={H_ve:.4f}, H_windows={H_windows:.4f}")
-        
+        print(
+            f"H_tot={H_tot:.4f} kW/K, H_tr_em={H_tr_em:.4f} kW/K"
+            f" (mass node), H_ve={H_ve:.4f}, H_windows={H_windows:.4f}"
+        )
+
         # Validate minimum transmission conductance
         if H_tot <= 0.001:  # Less than 1 W/K is unrealistic
-            raise ValueError(f"Total transmission conductance too low: {H_tot:.6f} kW/K. Check building envelope definition.")
+            raise ValueError(
+                f"Total transmission conductance too low: {H_tot:.6f} kW/K."
+                " Check building envelope definition."
+            )
 
-        #mass–surface and surface–air conductances
+        # mass–surface and surface–air conductances
         C_m = self.bC_m
         H_ms = self.bH_ms
         # H_is must have been set by _init5R1C
@@ -942,19 +979,23 @@ class ModelBUEM(object):
         # f_w:  fraction of radiative gains lost directly through windows
         # f_st: remainder reaching internal surfaces
         f_Am = self.bA_m / self.bA_tot
-        f_w  = H_windows / (self.bConst["h_ms"] * self.bA_tot)  # h_ms in kW/m²K
+        f_w = H_windows / (self.bConst["h_ms"] * self.bA_tot)  # h_ms in kW/m²K
         f_st = max(0.0, 1.0 - f_Am - f_w)
         print(f"ISO 13790 §C.2 gain fractions: f_Am={f_Am:.3f}, f_st={f_st:.3f}, f_w={f_w:.4f}")
 
         # use precomputed solar profiles from _init5R1C - NO FALLBACKS
-        if "bQ_sol_Windows" not in self.profiles or "bQ_sol_Opaque" not in self.profiles or "bQ_ig" not in self.profiles:
+        if (
+            "bQ_sol_Windows" not in self.profiles
+            or "bQ_sol_Opaque" not in self.profiles
+            or "bQ_ig" not in self.profiles
+        ):
             raise ValueError("Solar/internal gain profiles not initialised. _init5R1C must run first.")
         Q_win_profile = np.asarray(self.profiles["bQ_sol_Windows"])
         Q_opaque_profile = np.asarray(self.profiles["bQ_sol_Opaque"])
-        Q_ig_profile = np.asarray(self.profiles["bQ_ig"])
+        Q_ig_profile = np.asarray(self.profiles["bQ_ig"])  # noqa: F841
         if "occ_nothome" not in self.profiles or "occ_sleeping" not in self.profiles:
             raise ValueError("Occupancy profiles not set in self.profiles. Call sim_model or _addPara first.")
-        
+
         # Per-timestep gain arrays (also forwarded in milp_meta)
         Q_air_list = np.zeros(n)
         Q_surface_list = np.zeros(n)
@@ -978,15 +1019,18 @@ class ModelBUEM(object):
             elecLoad = float(self.cfg["elecLoad"].iloc[i])
             Q_ia = (Q_ig + elecLoad) * (occ * (1 - sleeping) + sleeping_factor * sleeping)
 
-            T_e = self.profiles["T_e"][(t1, t2)] if isinstance(self.profiles.get("T_e"), dict) else float(self.cfg["weather"]["T"].iloc[i])
-            
+            if isinstance(self.profiles.get("T_e"), dict):
+                T_e = self.profiles["T_e"][(t1, t2)]
+            else:
+                T_e = float(self.cfg["weather"]["T"].iloc[i])
+
             # ISO 13790 §C.2 gain distribution (Schütz et al. 2017 Eqs. 20-22)
             # φ_int = total internal gains;  φ_sol = total solar gains (window + opaque)
             phi_int = Q_ia
             phi_sol = Q_sol_win + Q_sol_opaque
-            phi_ia  = 0.5 * phi_int                         # convective → air node
-            phi_st  = f_st * (0.5 * phi_int + phi_sol)      # radiative → surface node
-            phi_m   = f_Am * (0.5 * phi_int + phi_sol)      # radiative → mass node
+            phi_ia = 0.5 * phi_int                          # convective → air node
+            phi_st = f_st * (0.5 * phi_int + phi_sol)       # radiative → surface node
+            phi_m = f_Am * (0.5 * phi_int + phi_sol)        # radiative → mass node
 
             Q_air = phi_ia
             Q_surface = phi_st
@@ -1013,7 +1057,7 @@ class ModelBUEM(object):
             row[0, idx_T_air(i)] = -H_is
             row[0, idx_T_m(i)] = -H_ms
             eq_rows.append(row)
-            eq_vals.append(Q_surface + H_windows * T_e)  
+            eq_vals.append(Q_surface + H_windows * T_e)
 
             # 3) Mass node dynamics (ISO 13790 forward Euler, annual-periodic):
             # C_m/step*(T_m(i+1) - T_m(i)) = φ_m + H_ms*(T_sur(i)-T_m(i)) + H_tr_em*(T_e(i)-T_m(i))
@@ -1024,15 +1068,15 @@ class ModelBUEM(object):
             if i < n - 1:
                 row = lil_matrix((1, self.n_vars))
                 row[0, idx_T_m(i+1)] = C_m / step
-                row[0, idx_T_m(i)]   = -C_m / step + H_ms + H_tr_em
+                row[0, idx_T_m(i)] = -C_m / step + H_ms + H_tr_em
                 row[0, idx_T_sur(i)] = -H_ms
                 eq_rows.append(row)
                 eq_vals.append(H_tr_em * T_e + phi_m)
             else:
                 # Wrap-around: same dynamics with T_m(n-1) → T_m(0)
                 row = lil_matrix((1, self.n_vars))
-                row[0, idx_T_m(0)]   = C_m / step
-                row[0, idx_T_m(i)]   = -C_m / step + H_ms + H_tr_em
+                row[0, idx_T_m(0)] = C_m / step
+                row[0, idx_T_m(i)] = -C_m / step + H_ms + H_tr_em
                 row[0, idx_T_sur(i)] = -H_ms
                 eq_rows.append(row)
                 eq_vals.append(H_tr_em * T_e + phi_m)
@@ -1146,7 +1190,11 @@ class ModelBUEM(object):
             print(f"[MILP] Added to PATH: {added_dirs}")
 
         # locate executables
-        cbc_path = shutil.which("cbc") or shutil.which("cbc.exe") or (cbc_exe_env if cbc_exe_env and os.path.isfile(cbc_exe_env) else None)
+        cbc_path = (
+            shutil.which("cbc")
+            or shutil.which("cbc.exe")
+            or (cbc_exe_env if cbc_exe_env and os.path.isfile(cbc_exe_env) else None)
+        )
         glpsol_path = shutil.which("glpsol") or shutil.which("glpk.exe")
 
         print(f"[MILP] shutil.which -> cbc: {cbc_path}, glpsol: {glpsol_path}")
@@ -1205,12 +1253,25 @@ class ModelBUEM(object):
 
         constraints = []
         for i in range(n):
-            constraints.append((H_is + H_ve) * T_air[i] - H_is * T_sur[i] - Q_heat[i] + Q_cool[i] == Q_air[i] + H_ve * T_e[i])
-            constraints.append((H_is + H_ms + H_windows) * T_sur[i] - H_is * T_air[i] - H_ms * T_m[i] == Q_surface[i] + H_windows * T_e[i])
+            constraints.append(
+                (H_is + H_ve) * T_air[i] - H_is * T_sur[i]
+                - Q_heat[i] + Q_cool[i]
+                == Q_air[i] + H_ve * T_e[i]
+            )
+            constraints.append(
+                (H_is + H_ms + H_windows) * T_sur[i]
+                - H_is * T_air[i] - H_ms * T_m[i]
+                == Q_surface[i] + H_windows * T_e[i]
+            )
             if i == 0:
                 constraints.append(T_m[0] == self.T_set)
             elif i < n - 1:
-                constraints.append((-C_m / step - H_ms - H_tr_em) * T_m[i] + (C_m / step) * T_m[i + 1] + H_ms * T_sur[i] == -H_tr_em * T_e[i])
+                constraints.append(
+                    (-C_m / step - H_ms - H_tr_em) * T_m[i]
+                    + (C_m / step) * T_m[i + 1]
+                    + H_ms * T_sur[i]
+                    == -H_tr_em * T_e[i]
+                )
             else:
                 constraints.append(T_m[n - 1] - T_m[0] == 0)
             constraints.append(T_air[i] >= self.bT_comf_lb)
@@ -1239,10 +1300,17 @@ class ModelBUEM(object):
             try:
                 import pulp
             except Exception:
-                raise RuntimeError("No cvxpy MILP solver available and PuLP not installed. Install pulp (pip install pulp).")
+                raise RuntimeError(
+                    "No cvxpy MILP solver available and PuLP"
+                    " not installed. Install pulp (pip install pulp)."
+                )
 
             if not cbc_path:
-                raise RuntimeError("No CBC executable found and cvxpy has no MILP solver interface. Set BUEM_CBC_EXE in .env or install a cvxpy-supported solver.")
+                raise RuntimeError(
+                    "No CBC executable found and cvxpy has no MILP solver"
+                    " interface. Set BUEM_CBC_EXE in .env or install a"
+                    " cvxpy-supported solver."
+                )
 
             # build PuLP model (same constraints)
             prob_pulp = pulp.LpProblem("buem_milp", pulp.LpMinimize)
@@ -1254,12 +1322,25 @@ class ModelBUEM(object):
             y_p = [pulp.LpVariable(f"y_{i}", cat="Binary") for i in range(n)]
 
             for i in range(n):
-                prob_pulp += ((H_is + H_ve) * T_air_p[i] - H_is * T_sur_p[i] - Q_heat_p[i] + Q_cool_p[i] == Q_air[i] + H_ve * T_e[i])
-                prob_pulp += ((H_is + H_ms + H_windows) * T_sur_p[i] - H_is * T_air_p[i] - H_ms * T_m_p[i] == Q_surface[i] + H_windows * T_e[i])
+                prob_pulp += (
+                    (H_is + H_ve) * T_air_p[i] - H_is * T_sur_p[i]
+                    - Q_heat_p[i] + Q_cool_p[i]
+                    == Q_air[i] + H_ve * T_e[i]
+                )
+                prob_pulp += (
+                    (H_is + H_ms + H_windows) * T_sur_p[i]
+                    - H_is * T_air_p[i] - H_ms * T_m_p[i]
+                    == Q_surface[i] + H_windows * T_e[i]
+                )
                 if i == 0:
                     prob_pulp += (T_m_p[0] == self.T_set)
                 elif i < n - 1:
-                    prob_pulp += ((-C_m / step - H_ms - H_tr_em) * T_m_p[i] + (C_m / step) * T_m_p[i+1] + H_ms * T_sur_p[i] == -H_tr_em * T_e[i])
+                    prob_pulp += (
+                        (-C_m / step - H_ms - H_tr_em) * T_m_p[i]
+                        + (C_m / step) * T_m_p[i+1]
+                        + H_ms * T_sur_p[i]
+                        == -H_tr_em * T_e[i]
+                    )
                 else:
                     prob_pulp += (T_m_p[n-1] - T_m_p[0] == 0)
                 prob_pulp += (T_air_p[i] >= self.bT_comf_lb)
@@ -1346,6 +1427,7 @@ class ModelBUEM(object):
             self.profiles["T_e"] = self.cfg["weather"]["T"]
 
         # T_set: initial mass-node temperature (dead-band midpoint)
+        assert self.bT_comf_lb is not None and self.bT_comf_ub is not None
         self.T_set = (self.bT_comf_lb + self.bT_comf_ub) / 2.0
 
         # Build 5R1C physics constraint matrix A_eq (3*n x 4*n)
@@ -1389,9 +1471,9 @@ class ModelBUEM(object):
 
         x_val = np.asarray(x.value)
         self.T_air = x_val[0:n]
-        self.T_m   = x_val[n:2*n]
+        self.T_m = x_val[n:2*n]
         self.T_sur = x_val[2*n:3*n]
-        self.Q_HC  = x_val[3*n:4*n]
+        self.Q_HC = x_val[3*n:4*n]
 
         # Snap near-zero Q_HC to exactly zero (numerical noise in dead-band hours)
         self.Q_HC[np.abs(self.Q_HC) < 1e-3] = 0.0  # |Q_HC| < 1 W → 0

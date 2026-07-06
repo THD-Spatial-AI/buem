@@ -35,7 +35,6 @@ def _build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--milp", action="store_true", help="Use MILP solver (experimental)"
     )
-
     # ── api ──────────────────────────────────────────────────────────────────
     api_p = sub.add_parser("api", help="Start the BUEM REST API server")
     api_p.add_argument(
@@ -45,7 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--port", type=int, default=5000, help="Bind port (default: 5000)"
     )
     api_p.add_argument(
-        "--workers", type=int, default=2, help="Gunicorn worker processes (default: 2)"
+        "--workers", type=int, default=4, help="Gunicorn worker processes (default: 4)"
     )
     api_p.add_argument(
         "--dev",
@@ -143,7 +142,8 @@ def main() -> None:
         res = run_model(cfg, plot=args.plot, use_milp=args.milp, return_models=True)
         print(f"Heating load total:               {res['heating'].sum():.1f} kWh/yr")
         print(f"Cooling load total:               {res['cooling'].sum():.1f} kWh/yr")
-        print(f"Total HVAC (heating + |cooling|): {float(np.sum(res['heating']) + np.sum(np.abs(res['cooling']))):.1f} kWh/yr")
+        hvac = float(np.sum(res['heating']) + np.sum(np.abs(res['cooling'])))
+        print(f"Total HVAC (heating + |cooling|): {hvac:.1f} kWh/yr")
         print(f"Execution time:                   {res['elapsed_s']:.2f} s")
 
     # ── api ──────────────────────────────────────────────────────────────────
@@ -260,6 +260,18 @@ def _run_validate() -> None:
     ok = True
     lines: list[str] = []
 
+    # Check Python version
+    required_python = (3, 14)
+    current_python = sys.version_info[:2]
+    if current_python >= required_python:
+        lines.append(f"  [OK]  Python {current_python[0]}.{current_python[1]}")
+    else:
+        lines.append(
+            f"  [ERR] Python: Found {current_python[0]}.{current_python[1]}, "
+            f"need >= {required_python[0]}.{required_python[1]}"
+        )
+        ok = False
+
     # Package imports
     for pkg in ("pandas", "numpy", "pvlib", "cvxpy"):
         try:
@@ -279,7 +291,7 @@ def _run_validate() -> None:
 
     # Environment variables
     for var, default_note in [
-        ("BUEM_WEATHER_DIR", "auto: <package>/data"),
+        ("BUEM_WEATHER_DIR", "auto: <package>/data/weather"),
         ("BUEM_RESULTS_DIR", "auto: <package>/results"),
         ("BUEM_LOG_DIR",     "auto: <package>/logs"),
     ]:

@@ -8,7 +8,7 @@ The BuEM documentation is organized as follows:
 
 - `docs/source/introduction/` - Project overview and introduction
 - `docs/source/api_integration/` - API integration guide for developers
-- `docs/source/model_attributes/` - Complete reference of building attributes 
+- `docs/source/model_attributes/` - Complete reference of building attributes
 - `docs/source/technical/` - In-depth technical documentation
 - `docs/source/installation/` - Setup and deployment instructions
 - `docs/source/examples/` - Practical examples and use cases
@@ -24,27 +24,31 @@ The BuEM documentation is organized as follows:
 ### Setting Up Development Environment
 
 1. Clone the repository:
-```bash
-git clone <buem-repository-url>
-cd buem
-```
 
-2. Set up conda environment:
-```bash
-conda env create -f environment.yml
-conda activate buem_env
-```
+   ```bash
+   git clone <buem-repository-url>
+   cd buem
+   ```
 
-3. Install documentation dependencies:
-```bash
-pip install -r docs/requirements.txt
-```
+1. Set up conda environment:
 
-4. Build documentation locally:
-```bash
-cd docs
-make html
-```
+   ```bash
+   conda env create -f environment.yml
+   conda activate buem_env
+   ```
+
+1. Install documentation dependencies:
+
+   ```bash
+   pip install -r docs/requirements.txt
+   ```
+
+1. Build documentation locally:
+
+   ```bash
+   cd docs
+   make html
+   ```
 
 The built documentation will be available in `docs/build/html/index.html`.
 
@@ -60,33 +64,36 @@ The built documentation will be available in `docs/build/html/index.html`.
 ### reStructuredText Guidelines
 
 - Use consistent heading styles:
+
   ```rst
   Page Title
   ==========
-  
+
   Major Section
   -------------
-  
+
   Subsection
   ~~~~~~~~~~
   ```
 
 - Format code blocks with proper syntax highlighting:
+
   ```rst
   .. code-block:: python
-  
+
       import requests
       response = requests.get('http://localhost:5000/api/health')
   ```
 
 - Use tables for structured information:
+
   ```rst
   .. list-table::
      :header-rows: 1
      :widths: 25 25 50
-  
+
      * - Parameter
-       - Type  
+       - Type
        - Description
      * - latitude
        - number
@@ -112,6 +119,7 @@ The built documentation will be available in `docs/build/html/index.html`.
 ### 1. Issue Creation
 
 Before making changes, create an issue describing:
+
 - What documentation needs to be added/changed
 - Why the change is needed
 - Target audience for the content
@@ -119,6 +127,7 @@ Before making changes, create an issue describing:
 ### 2. Branch Creation
 
 Create a feature branch for your changes:
+
 ```bash
 git checkout -b feature/document-new-feature
 ```
@@ -127,10 +136,12 @@ git checkout -b feature/document-new-feature
 
 - Edit `.rst` files using any text editor
 - Build documentation locally to test changes:
+
   ```bash
   cd docs
   make html
   ```
+
 - Review the output in `docs/build/html/`
 
 ### 4. Testing
@@ -145,6 +156,7 @@ Before submitting:
 ### 5. Pull Request Submission
 
 Submit a pull request with:
+
 - Clear description of changes
 - Reference to related issue(s)
 - Screenshots of rendered documentation changes (if applicable)
@@ -154,6 +166,7 @@ Submit a pull request with:
 ### Reviewer Checklist
 
 Documentation reviewers should verify:
+
 - [ ] Technical accuracy of content
 - [ ] Completeness of API documentation
 - [ ] Code examples are runnable and correct
@@ -164,6 +177,7 @@ Documentation reviewers should verify:
 ### Approval Criteria
 
 Pull requests are approved when:
+
 - Technical review is complete
 - Documentation builds successfully
 - Content meets style guidelines
@@ -174,12 +188,14 @@ Pull requests are approved when:
 ### API Integration Documentation
 
 **High Priority Areas**:
+
 - Authentication and security examples
 - Error handling patterns
 - Performance optimization guidance
 - Real-world integration scenarios
 
 **Requirements**:
+
 - Must include complete, runnable examples
 - Should cover both success and error cases
 - Must be Docker-container focused for deployment
@@ -187,12 +203,14 @@ Pull requests are approved when:
 ### Model Attributes Documentation
 
 **Focus Areas**:
+
 - Building component specifications
 - Validation rules and constraints
 - Data exchange formats
 - Integration with external building databases
 
 **Requirements**:
+
 - Precise technical specifications
 - Clear examples of valid/invalid values
 - Cross-references between related attributes
@@ -200,14 +218,16 @@ Pull requests are approved when:
 ### Examples and Use Cases
 
 **Needed Examples**:
+
 - Industry-specific use cases
 - Multi-building batch processing
 - Integration with specific platforms
 - Performance optimization techniques
 
 **Requirements**:
+
 - Complete, working code examples
-- Real-world scenarios 
+- Real-world scenarios
 - Step-by-step instructions
 - Expected outputs and results
 
@@ -216,6 +236,7 @@ Pull requests are approved when:
 ### Regular Updates
 
 Documentation should be updated when:
+
 - API endpoints change
 - New features are added
 - Building attribute specifications change
@@ -227,9 +248,35 @@ Documentation should be updated when:
 - Breaking changes require clear migration guides
 - Deprecated features need sunset timelines
 
+## Versioning
+
+BuEM follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
+```text
+ MAJOR . MINOR . PATCH
+   │       │       └─── docs, bugfixes, refactors (no API change)
+   │       └─────────── new features (backwards-compatible)
+   └─────────────────── breaking changes
+```
+
+**Examples:**
+
+```text
+ 1.0.0 → 1.0.1   fix: corrected unit conversion in thermal model
+ 1.0.1 → 1.1.0   feat: added multi-building batch processing
+ 1.1.0 → 2.0.0   breaking: renamed API endpoints, changed response format
+```
+
+When bumping a version:
+
+1. Add an entry to `CHANGELOG.md` under the new version heading.
+1. Tag the commit: `git tag v1.0.2 && git push --tags`.
+
 ### Quality Assurance
 
 Monthly quality checks should verify:
+
 - All examples still work with current API
 - Links and references remain valid
 - Content accuracy against latest codebase
@@ -238,6 +285,7 @@ Monthly quality checks should verify:
 ## Contact and Support
 
 For documentation questions:
+
 - Create an issue in the repository
 - Tag documentation maintainers in pull requests
 - Use descriptive issue titles and clear descriptions
@@ -245,6 +293,7 @@ For documentation questions:
 ## Recognition
 
 Contributors will be recognized by:
+
 - Attribution in documentation credits
 - Mention in release notes for significant contributions
 - Invitation to documentation review team for regular contributors

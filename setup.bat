@@ -55,7 +55,7 @@ echo Usage: setup.bat ^<command^> [options]
 echo.
 echo Environment Setup:
 echo   install          Install BUEM into the conda environment (conda develop src)
-echo   install-dev      Install BUEM + dev extras (pytest, black, flake8, mypy)
+echo   install-dev      Install BUEM + dev extras (pytest, ruff, mypy)
 echo   validate         Verify installation and environment paths
 echo   version          Print the installed BuEM version
 echo.
@@ -131,7 +131,7 @@ goto :end
 :cmd_install_dev
 echo Installing BUEM + dev extras into the conda environment...
 conda develop src
-conda install --name %BUEM_CONDA_ENV% --yes pytest pytest-cov black flake8 mypy
+conda install --name %BUEM_CONDA_ENV% --yes pytest pytest-cov ruff mypy
 goto :end
 
 :cmd_validate

@@ -2,7 +2,7 @@
 
 [![Documentation](https://readthedocs.org/projects/buem/badge/?version=latest)](https://buem.readthedocs.io/en/latest/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 
 BuEM computes **hourly heating and cooling demand** for buildings using the
 **ISO 13790 5R1C** thermal-network method combined with a linear-programming
@@ -17,7 +17,7 @@ making it straightforward to integrate with urban energy-system models.
 
 ```bash
 # 1. Clone and create the environment
-git clone https://github.com/somadsahoo/buem.git
+git clone https://github.com/UU-BUEM/buem.git
 cd buem
 conda env create -f environment.yml
 conda activate buem_env
@@ -33,14 +33,14 @@ buem api
 # Open http://localhost:5000/api/docs
 ```
 
-> For detailed installation instructions (conda, Docker, editable install),
+> For detailed installation instructions (conda and Docker),
 > see the [Installation Guide](https://buem.readthedocs.io/en/latest/installation/index.html).
 
 ---
 
 ## CLI Reference
 
-```
+```bash
 buem <command> [options]
 ```
 
@@ -51,6 +51,15 @@ buem <command> [options]
 | `buem validate` | Verify the installation and environment |
 | `buem version` | Print the installed BuEM version |
 | `buem multibuilding [--test MODE] [--workers N]` | Run parallel multi-building processing |
+
+> **Note:** The `weather` and `occupancy` sub-modules have been moved to independent
+> repositories within the [UU-BUEM](https://github.com/UU-BUEM) GitHub organisation.
+> Install them separately if needed:
+>
+> ```bash
+> pip install buem-occupancy  # https://github.com/UU-BUEM/buem-occupancy
+> pip install buem-weather    # https://github.com/UU-BUEM/buem-weather
+> ```
 
 ```bash
 buem --help            # Show all commands
@@ -141,7 +150,7 @@ for details.
 
 ## Requirements
 
-- Python ≥ 3.13
+- Python ≥ 3.14
 - Key dependencies: cvxpy, flask, numpy, pandas, pvlib, scipy
 
 > Full dependency list:
