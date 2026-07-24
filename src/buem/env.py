@@ -53,7 +53,7 @@ def load_env() -> None:
             _root = found.parent
             for _var in (
                 "BUEM_WEATHER_DIR", "BUEM_RESULTS_DIR", "BUEM_LOG_DIR",
-                "BUEM_CBC_EXE", "BUEM_LOG_FILE",
+                "BUEM_CBC_EXE", "BUEM_LOG_FILE", "BUEM_ELEC_PROFILE_DIR",
             ):
                 _val = os.environ.get(_var)
                 if _val and not Path(_val).is_absolute():
@@ -67,3 +67,4 @@ def load_env() -> None:
     os.environ.setdefault("BUEM_WEATHER_DIR", str(_pkg / "data" / "weather"))
     os.environ.setdefault("BUEM_RESULTS_DIR", str(_pkg / "results"))
     os.environ.setdefault("BUEM_LOG_DIR",     str(_pkg / "logs"))
+    os.environ.setdefault("BUEM_ELEC_PROFILE_DIR", str(_pkg / "data" / "electricity_profiles"))
