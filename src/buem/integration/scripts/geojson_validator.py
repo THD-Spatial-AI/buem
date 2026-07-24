@@ -327,6 +327,9 @@ class GeoJsonRequestSchema(Schema):
     timeStamp = fields.DateTime(required=False, allow_none=True)
     numberMatched = fields.Int(required=False, allow_none=True)
     numberReturned = fields.Int(required=False, allow_none=True)
+    # Not used by the solver — forwarded as-is so callers (e.g. buem-gateway)
+    # can isolate output per model without BUEM needing to understand why.
+    model_id = fields.Str(required=False, allow_none=True)
     
     @post_load
     def normalize_single_feature(self, data, **kwargs):
