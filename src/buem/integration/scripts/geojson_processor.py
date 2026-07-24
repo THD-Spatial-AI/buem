@@ -14,6 +14,7 @@ import pandas as pd
 from flask import current_app
 
 from buem.integration.scripts.attribute_builder import AttributeBuilder
+from buem.integration.scripts.electricity_load_profile import load_electricity_load_profile
 from buem.integration.scripts.geojson_validator import (
     validate_geojson_request,
     create_validation_report,
@@ -344,6 +345,16 @@ class GeoJsonProcessor:
         if feature_weather is not None:
             internal_attrs["weather"] = feature_weather
 
+        # User-provided electricity load profile (buem.inputs.electricity_load_profile).
+        # Referenced by file path, not inlined — see electricity_load_profile.py.
+        electricity_source = "model_generated"
+        elec_input = (buem.get("inputs") or {}).get("electricity_load_profile") or {}
+        elec_path = elec_input.get("path")
+        if elec_path:
+            internal_attrs["elecLoad"] = load_electricity_load_profile(elec_path)
+            internal_attrs["use_provided_elecLoad"] = True
+            electricity_source = "client_provided"
+
         # Build complete attributes (merge with defaults + optional DB lookup)
         builder = AttributeBuilder(
             payload_attrs=internal_attrs,
@@ -415,6 +426,7 @@ class GeoJsonProcessor:
             "parallel_thermal": parallel_thermal,
             "use_chunked_processing": use_chunked_processing,
             "simulations_run": simulations_run,
+            "electricity_source": electricity_source,
             "validation_warnings": [w.message for w in validation_result.get_warnings()],
         }
 

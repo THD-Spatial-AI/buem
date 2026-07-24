@@ -274,6 +274,9 @@ class BuemSchema(Schema):
     thermal = fields.Dict(required=False, allow_none=True)
     solver = fields.Dict(required=False, allow_none=True)
 
+    # v4: buem.inputs.electricity_load_profile — see electricity_load_profile.py
+    inputs = fields.Dict(required=False, allow_none=True)
+
     @validates_schema
     def require_v2_or_v3(self, data, **kwargs):
         """Ensure either v2 (building_attributes) or v3 (building with envelope) is present."""
