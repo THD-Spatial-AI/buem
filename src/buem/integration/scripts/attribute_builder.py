@@ -101,17 +101,18 @@ class AttributeBuilder:
     def generate_electricity_profile(self):
         """Generate electricity consumption profile unless explicitly opted out."""
         use_provided = bool(self.merged_attrs.get("use_provided_elecLoad", False))
-        
-        if use_provided:
-            return  # Keep provided elecLoad
-        
+
         # Extract weather to determine year
         weather_df = self.merged_attrs.get("weather", ATTRIBUTE_SPECS["weather"].default)
         if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:
             weather_year = int(weather_df.index[0].year)
         else:
             weather_year = int(ATTRIBUTE_SPECS["year"].default)
-        
+
+        if use_provided:
+            self._normalize_provided_elec_load(weather_df)
+            return
+
         # Get generation parameters
         num_persons = int(self.merged_attrs.get("num_persons", ATTRIBUTE_SPECS["num_persons"].default))
         seed = self.merged_attrs.get("seed", ATTRIBUTE_SPECS["seed"].default)
@@ -141,7 +142,34 @@ class AttributeBuilder:
             
         except Exception as exc:
             raise RuntimeError(f"Electricity profile generation failed: {exc}") from exc
-    
+
+    def _normalize_provided_elec_load(self, weather_df):
+        """Turn a caller-provided elecLoad (plain list, array, or Series) into
+        a pd.Series aligned to weather_df's index.
+
+        A file-supplied profile (see electricity_load_profile.py) has no
+        timestamps of its own — it's assigned positionally against the
+        weather index, the same convention BuEM's own generated profiles and
+        CSV outputs already use.
+        """
+        provided = self.merged_attrs.get("elecLoad")
+        if provided is None:
+            raise ValueError("use_provided_elecLoad is True but no elecLoad was supplied")
+
+        has_weather_index = isinstance(weather_df, pd.DataFrame) and not weather_df.empty
+
+        if isinstance(provided, pd.Series):
+            series = provided
+        else:
+            values = list(provided)
+            index = weather_df.index[:len(values)] if has_weather_index else pd.RangeIndex(len(values))
+            series = pd.Series(values, index=index)
+
+        if has_weather_index and not series.index.equals(weather_df.index):
+            series = series.reindex(weather_df.index, method="nearest", fill_value=0.0)
+
+        self.merged_attrs["elecLoad"] = series
+
     def align_timeseries(self):
         """Ensure all timeseries share weather data year/index."""
         weather_df = self.merged_attrs.get("weather")
