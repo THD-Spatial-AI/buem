@@ -9,14 +9,16 @@ import sys
 logger = logging.getLogger(__name__)
 
 
-def run_model(cfg_dict, plot: bool = False, use_milp: bool = False, return_models: bool = False):
+def run_model(cfg_dict, plot: bool = False, use_milp: bool = False, return_models: bool = False,
+              compute_cooling: bool = False):
     """
     Run the ISO 52016 single-pass dead-band thermal model and return results.
 
     One ModelBUEM instance is created and sim_model() is called once.  The
     single-pass QP simultaneously determines heating AND cooling demand:
     - heating_load[i] > 0  when T_air would fall below comfortT_lb without HVAC
-    - cooling_load[i] < 0  when T_air would rise above comfortT_ub without HVAC
+    - cooling_load[i] < 0  when T_air would rise above comfortT_ub without HVAC,
+                           and only when compute_cooling is True
     - both zero            in passive comfort (dead-band) hours
 
     Parameters
@@ -29,11 +31,17 @@ def run_model(cfg_dict, plot: bool = False, use_milp: bool = False, return_model
         If True use the experimental MILP solver path.
     return_models : bool, optional
         If True include the ModelBUEM instance in the returned dict under key 'model'.
+    compute_cooling : bool, optional
+        If False (the default), the upper comfort bound is not enforced and no
+        cooling load is produced — the building free-floats above comfortT_ub.
     """
     start_time = time.time()
 
     if cfg_dict is None:
         raise ValueError("cfg_dict must be provided to run_model")
+
+    cfg_dict = dict(cfg_dict)
+    cfg_dict["compute_cooling"] = compute_cooling
 
     issues = validate_cfg(cfg_dict)
     if issues:
