@@ -126,6 +126,11 @@ class ModelBUEM(object):
         self.components = ["Walls", "Roof", "Floor", "Windows", "Ventilation"]
         self.hasTypPeriods = False
         self.ventControl = bool(self.cfg.get("ventControl", False))
+        # When False (the default), the upper comfort bound (comfortT_ub) is
+        # not enforced: the building free-floats above it in summer and no
+        # cooling load is produced. comfortT_ub itself is still required and
+        # still used for T_set and scaling (see _addPara, _addConstraints_sequential).
+        self.compute_cooling = bool(self.cfg.get("compute_cooling", False))
 
     # -------- utilities --------
     def _cfg_float(self, key, required=True):
@@ -1275,10 +1280,13 @@ class ModelBUEM(object):
             else:
                 constraints.append(T_m[n - 1] - T_m[0] == 0)
             constraints.append(T_air[i] >= self.bT_comf_lb)
-            constraints.append(T_air[i] <= self.bT_comf_ub)
             Mi = float(M_array[i])
             constraints.append(Q_heat[i] <= Mi * y[i])
-            constraints.append(Q_cool[i] <= Mi * (1 - y[i]))
+            if self.compute_cooling:
+                constraints.append(T_air[i] <= self.bT_comf_ub)
+                constraints.append(Q_cool[i] <= Mi * (1 - y[i]))
+            else:
+                constraints.append(Q_cool[i] == 0)
 
         objective = cp.Minimize(cp.sum(Q_heat + Q_cool))
         prob = cp.Problem(objective, constraints)
@@ -1344,10 +1352,13 @@ class ModelBUEM(object):
                 else:
                     prob_pulp += (T_m_p[n-1] - T_m_p[0] == 0)
                 prob_pulp += (T_air_p[i] >= self.bT_comf_lb)
-                prob_pulp += (T_air_p[i] <= self.bT_comf_ub)
                 Mi = float(M_array[i])
                 prob_pulp += (Q_heat_p[i] <= Mi * y_p[i])
-                prob_pulp += (Q_cool_p[i] <= Mi * (1 - y_p[i]))
+                if self.compute_cooling:
+                    prob_pulp += (T_air_p[i] <= self.bT_comf_ub)
+                    prob_pulp += (Q_cool_p[i] <= Mi * (1 - y_p[i]))
+                else:
+                    prob_pulp += (Q_cool_p[i] == 0)
 
             prob_pulp += pulp.lpSum([Q_heat_p[i] + Q_cool_p[i] for i in range(n)])
             # Use PULP_CBC_CMD without explicit path (we already added the cbc dir to PATH).
@@ -1450,11 +1461,12 @@ class ModelBUEM(object):
         constraints = [
             A_eq @ x == b_eq,
             x[0:n] >= self.bT_comf_lb,
-            x[0:n] <= self.bT_comf_ub,
         ]
+        if self.compute_cooling:
+            constraints.append(x[0:n] <= self.bT_comf_ub)
         prob = cp.Problem(obj, constraints)
-        print(f"Solving LP: {4*n} vars, A_eq {A_eq.shape}, "
-              f"comfort [{self.bT_comf_lb}, {self.bT_comf_ub}] degC ...")
+        comfort_desc = f"[{self.bT_comf_lb}, {self.bT_comf_ub}]" if self.compute_cooling else f"[{self.bT_comf_lb}, +inf) (cooling disabled)"
+        print(f"Solving LP: {4*n} vars, A_eq {A_eq.shape}, comfort {comfort_desc} degC ...")
         # Try CLARABEL (interior-point, high accuracy) first; fall back to OSQP
         try:
             prob.solve(solver=cp.CLARABEL, verbose=False)

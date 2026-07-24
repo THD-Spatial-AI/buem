@@ -360,9 +360,10 @@ class GeoJsonProcessor:
         use_milp = bool(solver.get("use_milp", False))
         parallel_thermal = bool(solver.get("parallel_thermal", True))
         use_chunked_processing = bool(solver.get("use_chunked_processing", True))
+        compute_cooling = bool(solver.get("compute_cooling", False))
 
         start = time.time()
-        res = run_model(cfg, plot=False, use_milp=use_milp)
+        res = run_model(cfg, plot=False, use_milp=use_milp, compute_cooling=compute_cooling)
         elapsed = time.time() - start
 
         # Extract results
@@ -385,7 +386,7 @@ class GeoJsonProcessor:
             times, heating, cooling, electricity, elapsed,
             props.get("start_time"), props.get("end_time"),
             props.get("resolution", "60"), props.get("resolution_unit", "minutes"),
-            a_ref=a_ref,
+            a_ref=a_ref, compute_cooling=compute_cooling,
         )
 
         # Save timeseries .gz file if requested
@@ -403,6 +404,8 @@ class GeoJsonProcessor:
             weather_year = int(weather_df.index[0].year)
 
         # Attach results — thermal_load_profile and model_metadata are siblings under buem
+        simulations_run = ["heating", "cooling", "electricity"] if compute_cooling else ["heating", "electricity"]
+
         buem["thermal_load_profile"] = profile
         buem["model_metadata"] = {
             "model_version": "BUEM-v2.0",
@@ -411,6 +414,7 @@ class GeoJsonProcessor:
             "weather_year": weather_year,
             "parallel_thermal": parallel_thermal,
             "use_chunked_processing": use_chunked_processing,
+            "simulations_run": simulations_run,
             "validation_warnings": [w.message for w in validation_result.get_warnings()],
         }
 
@@ -507,10 +511,10 @@ class GeoJsonProcessor:
     def _build_thermal_load_profile(
         self, times, heating, cooling, electricity, elapsed,
         start_time, end_time, resolution, resolution_unit,
-        a_ref: float = 100.0,
+        a_ref: float = 100.0, compute_cooling: bool = True,
     ) -> Dict[str, Any]:
         """
-        Build thermal load profile matching the v3 response schema.
+        Build thermal load profile matching the v4 response schema.
 
         All summary quantities are emitted as {value, unit} measurement objects.
         timeseries arrays use plain lists under a shared unit key.
@@ -529,11 +533,15 @@ class GeoJsonProcessor:
             Time resolution specification.
         a_ref : float
             Reference floor area in m² (for energy intensity calculation).
+        compute_cooling : bool
+            Whether cooling was actually computed (solver.compute_cooling).
+            When False, `cooling` is omitted from both summary and timeseries
+            (v4: cooling is only present when it was requested).
 
         Returns
         -------
         Dict[str, Any]
-            Thermal load profile matching v3 response schema.
+            Thermal load profile matching v4 response schema.
         """
         # Resolve time bounds
         has_times = False
@@ -566,34 +574,36 @@ class GeoJsonProcessor:
             }
 
         heating_summary = energy_summary(heating)
-        cooling_summary = energy_summary(np.abs(cooling))
         elec_summary = energy_summary(electricity)
 
-        total_energy_kwh = (
-            heating_summary["total"]["value"]
-            + cooling_summary["total"]["value"]
-            + elec_summary["total"]["value"]
-        )
+        total_energy_kwh = heating_summary["total"]["value"] + elec_summary["total"]["value"]
+
+        summary: Dict[str, Any] = {
+            "heating": heating_summary,
+            "electricity": elec_summary,
+            "peak_heating_load": {"value": heating_summary["max"]["value"], "unit": "kW"},
+        }
+
+        if compute_cooling:
+            cooling_summary = energy_summary(np.abs(cooling))
+            total_energy_kwh += cooling_summary["total"]["value"]
+            summary["cooling"] = cooling_summary
+            summary["peak_cooling_load"] = {"value": cooling_summary["max"]["value"], "unit": "kW"}
+
         energy_intensity_kwh_m2 = round(total_energy_kwh / a_ref, 3) if a_ref > 0 else 0.0
+        summary["total_energy_demand"] = {"value": round(total_energy_kwh, 3), "unit": "kWh"}
+        summary["energy_intensity"] = {"value": energy_intensity_kwh_m2, "unit": "kWh/m2"}
 
         profile: Dict[str, Any] = {
             "start_time": start_iso,
             "end_time": end_iso,
             "resolution": resolution,
             "resolution_unit": resolution_unit,
-            "summary": {
-                "heating": heating_summary,
-                "cooling": cooling_summary,
-                "electricity": elec_summary,
-                "total_energy_demand":  {"value": round(total_energy_kwh, 3), "unit": "kWh"},
-                "peak_heating_load":    {"value": heating_summary["max"]["value"], "unit": "kW"},
-                "peak_cooling_load":    {"value": cooling_summary["max"]["value"], "unit": "kW"},
-                "energy_intensity":     {"value": energy_intensity_kwh_m2, "unit": "kWh/m2"},
-            },
+            "summary": summary,
         }
 
         if self.include_timeseries and has_times:
-            profile["timeseries"] = {
+            timeseries: Dict[str, Any] = {
                 "unit": "kW",
                 "timestamps": (
                     [t.isoformat() for t in times]
@@ -601,9 +611,11 @@ class GeoJsonProcessor:
                     else [str(t) for t in times]
                 ),
                 "heating":     heating.tolist(),
-                "cooling":     cooling.tolist(),
                 "electricity": electricity.tolist(),
             }
+            if compute_cooling:
+                timeseries["cooling"] = cooling.tolist()
+            profile["timeseries"] = timeseries
 
         return profile
     
