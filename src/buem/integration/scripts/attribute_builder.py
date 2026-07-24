@@ -19,6 +19,13 @@ except ImportError:
     _OCCUPANCY_AVAILABLE = False
 
 
+def _reindex_to_weather(series: pd.Series, weather_df: pd.DataFrame) -> pd.Series:
+    """Align a timeseries onto the weather index with nearest-neighbor fill."""
+    if series.index.equals(weather_df.index):
+        return series
+    return series.reindex(weather_df.index, method="nearest", fill_value=0.0)
+
+
 class AttributeBuilder:
     """
     Merge building attributes from multiple sources and generate derived profiles.
@@ -132,11 +139,11 @@ class AttributeBuilder:
                 raise ValueError("ElectricityConsumptionProfile missing 'total_power_kwh' column")
 
             elec_series = profile_df["total_power_kwh"]
-            
+
             # Align index with weather (8760 hourly points)
             if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:
-                elec_series = elec_series.reindex(weather_df.index, method='nearest', fill_value=0.0)
-            
+                elec_series = _reindex_to_weather(elec_series, weather_df)
+
             self.merged_attrs["elecLoad"] = elec_series
             self.merged_attrs["year"] = weather_year  # Force year consistency
             
@@ -157,16 +164,22 @@ class AttributeBuilder:
             raise ValueError("use_provided_elecLoad is True but no elecLoad was supplied")
 
         has_weather_index = isinstance(weather_df, pd.DataFrame) and not weather_df.empty
+        n_provided = len(provided)
+
+        if has_weather_index and n_provided != len(weather_df.index):
+            raise ValueError(
+                f"elecLoad has {n_provided} values but weather data has "
+                f"{len(weather_df.index)} hours — they must match"
+            )
 
         if isinstance(provided, pd.Series):
             series = provided
         else:
-            values = list(provided)
-            index = weather_df.index[:len(values)] if has_weather_index else pd.RangeIndex(len(values))
-            series = pd.Series(values, index=index)
+            index = weather_df.index if has_weather_index else pd.RangeIndex(n_provided)
+            series = pd.Series(list(provided), index=index)
 
-        if has_weather_index and not series.index.equals(weather_df.index):
-            series = series.reindex(weather_df.index, method="nearest", fill_value=0.0)
+        if has_weather_index:
+            series = _reindex_to_weather(series, weather_df)
 
         self.merged_attrs["elecLoad"] = series
 
@@ -176,19 +189,11 @@ class AttributeBuilder:
         if not isinstance(weather_df, pd.DataFrame) or weather_df.empty:
             return
         
-        weather_index = weather_df.index
-        
         # Align elecLoad (already done in generate_electricity_profile, but verify)
         if "elecLoad" in self.merged_attrs and isinstance(self.merged_attrs["elecLoad"], pd.Series):
-            if not self.merged_attrs["elecLoad"].index.equals(weather_index):
-                self.merged_attrs["elecLoad"] = self.merged_attrs["elecLoad"].reindex(
-                    weather_index, method='nearest', fill_value=0.0
-                )
-        
+            self.merged_attrs["elecLoad"] = _reindex_to_weather(self.merged_attrs["elecLoad"], weather_df)
+
         # Align other profiles (Q_ig, occ_nothome, etc.) if needed
         for key in ("Q_ig", "occ_nothome", "occ_sleeping"):
             if key in self.merged_attrs and isinstance(self.merged_attrs[key], pd.Series):
-                if not self.merged_attrs[key].index.equals(weather_index):
-                    self.merged_attrs[key] = self.merged_attrs[key].reindex(
-                        weather_index, method='nearest', fill_value=0.0
-                    )
+                self.merged_attrs[key] = _reindex_to_weather(self.merged_attrs[key], weather_df)
