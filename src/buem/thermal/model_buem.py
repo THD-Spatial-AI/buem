@@ -325,8 +325,16 @@ class ModelBUEM(object):
         if "h_room" not in self.cfg:
             raise ValueError("h_room (room height) missing from configuration")
         h_room = self._cfg_float("h_room", required=True)
-        if h_room <= 0 or h_room > 5.0:
-            raise ValueError(f"h_room ({h_room}) must be between 0 and 5.0 meters")
+        # h_room only ever multiplies into the air-capacitance/ventilation terms
+        # below (H_ve, and the air node's thermal mass) — nothing about the 5R1C
+        # method itself bounds it. The upper bound is a sanity check against a
+        # unit/data error (e.g. cm passed as m), not a physical limit, so it's
+        # set generously enough to admit a real tall single-volume space (a
+        # lecture hall, gym, auditorium) rather than only typical residential
+        # room heights.
+        MAX_H_ROOM_M = 20.0
+        if h_room <= 0 or h_room > MAX_H_ROOM_M:
+            raise ValueError(f"h_room ({h_room}) must be between 0 and {MAX_H_ROOM_M} meters")
 
         rho_air = self.CONST["rho_air"]
         C_air = self.CONST["C_air"]
