@@ -75,3 +75,14 @@ def load_env() -> None:
     os.environ.setdefault("BUEM_WEATHER_DIR", str(_pkg / "data" / "weather"))
     os.environ.setdefault("BUEM_RESULTS_DIR", str(_pkg / "results"))
     os.environ.setdefault("BUEM_LOG_DIR",     str(_pkg / "logs"))
+
+    # BUEM_RESULTS_DIR/BUEM_LOG_DIR are output directories the app writes
+    # to at runtime (result cache, log files) -- ensure they exist rather
+    # than waiting for whichever code path happens to write there first.
+    # BUEM_WEATHER_DIR is deliberately NOT created here: it must already
+    # contain the bundled weather CSV, and cfg_attribute.py raises
+    # FileNotFoundError with a clear message if it doesn't -- silently
+    # creating an empty directory would turn that into a more confusing
+    # failure later.
+    Path(os.environ["BUEM_RESULTS_DIR"]).mkdir(parents=True, exist_ok=True)
+    Path(os.environ["BUEM_LOG_DIR"]).mkdir(parents=True, exist_ok=True)
