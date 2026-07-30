@@ -291,7 +291,7 @@ class SchemaVersionManager:
             version = self.get_latest_version()
         
         paths = self.get_schema_paths(version)
-        info = {
+        info: dict[str, Any] = {
             "version": version,
             "is_latest": version == self.get_latest_version(),
             "directory": str(self.base_dir / version),

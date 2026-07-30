@@ -42,10 +42,11 @@ Performance Insights:
 import json
 import logging
 import statistics
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import psutil
 
@@ -70,6 +71,11 @@ except ImportError:
     logger.warning("matplotlib not available - visualization features will be limited")
 
 
+class ScenarioConfig(TypedDict):
+    count: int
+    workers: list[int]
+
+
 class PerformanceComparator:
     """
     Comprehensive performance comparison system for building processing methods.
@@ -92,8 +98,8 @@ class PerformanceComparator:
     
     def __init__(
         self,
-        test_scenarios: list[str] = None,
-        max_workers: int = None,
+        test_scenarios: list[str] | None = None,
+        max_workers: int | None = None,
         visualize_results: bool = True,
         save_detailed_report: bool = True,
         output_dir: str = "performance_reports"
@@ -145,14 +151,14 @@ class PerformanceComparator:
                 'timestamp': datetime.now(UTC).isoformat()
             }
             return sys_info
-        except Exception as e:
+        except psutil.Error as e:
             logger.warning(f"Could not collect system info: {e}")
             return {'error': str(e)}
     
     def compare_processing_methods(
         self,
         building_files: list[str | Path],
-        worker_counts: list[int] = None
+        worker_counts: list[int] | None = None
     ) -> dict[str, Any]:
         """
         Compare parallel and sequential processing on the same dataset.
@@ -262,7 +268,7 @@ class PerformanceComparator:
     
     def run_comprehensive_benchmark(
         self,
-        building_files: list[str | Path] = None,
+        building_files: list[str | Path] | None = None,
         scaling_test: bool = True
     ) -> dict[str, Any]:
         """
@@ -303,7 +309,7 @@ class PerformanceComparator:
             'scenario_results': {}
         }
         
-        scenario_configs = {
+        scenario_configs: dict[str, ScenarioConfig] = {
             'small': {'count': min(3, len(building_files)), 'workers': [1, 2]},
             'medium': {'count': min(5, len(building_files)), 'workers': [1, 2, 4]},
             'large': {'count': len(building_files), 'workers': [1, 2, 4, 8]},
@@ -405,7 +411,7 @@ class PerformanceComparator:
         sequential = comparison_results['results']['sequential']
         parallel_results = comparison_results['results']['parallel']
         
-        summary = {
+        summary: dict[str, Any] = {
             'sequential_performance': {
                 'total_time': sequential['actual_total_time'],
                 'buildings_per_second': sequential['performance']['buildings_per_second'],
@@ -445,7 +451,7 @@ class PerformanceComparator:
     
     def _analyze_benchmark_results(self, benchmark_results: dict[str, Any]) -> dict[str, Any]:
         """Analyze benchmark results across all scenarios."""
-        analysis = {
+        analysis: dict[str, Any] = {
             'scaling_characteristics': {},
             'optimal_configurations': {},
             'performance_trends': {},
@@ -477,7 +483,7 @@ class PerformanceComparator:
     
     def _save_comparison_report(self, comparison_results: dict[str, Any]):
         """Save detailed comparison report to file."""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
         report_file = self.output_dir / f"performance_comparison_{timestamp}.json"
         
         with open(report_file, 'w') as f:
@@ -487,7 +493,7 @@ class PerformanceComparator:
     
     def _save_benchmark_report(self, benchmark_results: dict[str, Any]):
         """Save comprehensive benchmark report to file."""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
         report_file = self.output_dir / f"comprehensive_benchmark_{timestamp}.json"
         
         with open(report_file, 'w') as f:
@@ -502,18 +508,18 @@ class PerformanceComparator:
             return
         
         try:
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-            
+            _fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+
             # Extract data
             sequential_time = comparison_results['results']['sequential']['actual_total_time']
             parallel_results = comparison_results['results']['parallel']
-            
+
             worker_counts = []
             processing_times = []
             speedups = []
             efficiencies = []
-            
-            for config_name, result in parallel_results.items():
+
+            for result in parallel_results.values():
                 worker_counts.append(result['workers'])
                 processing_times.append(result['actual_total_time'])
                 speedups.append(result['speedup_vs_sequential'])
@@ -521,7 +527,9 @@ class PerformanceComparator:
             
             # Sort by worker count for better visualization
             sorted_data = sorted(zip(worker_counts, processing_times, speedups, efficiencies))
-            worker_counts, processing_times, speedups, efficiencies = zip(*sorted_data)
+            worker_counts, processing_times, speedups, efficiencies = (
+                list(col) for col in zip(*sorted_data)
+            )
             
             # Chart 1: Processing Time Comparison
             ax1.bar(['Sequential'] + [f'{w} workers' for w in worker_counts], 
@@ -551,7 +559,7 @@ class PerformanceComparator:
             
             # Chart 4: Buildings per Second
             buildings_per_sec = [comparison_results['results']['sequential']['performance']['buildings_per_second']]
-            for config_name, result in parallel_results.items():
+            for result in parallel_results.values():
                 buildings_per_sec.append(result['performance']['buildings_per_second'])
             
             ax4.bar(['Sequential'] + [f'{w}w' for w in worker_counts], 
@@ -564,14 +572,14 @@ class PerformanceComparator:
             plt.tight_layout()
             
             # Save chart
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
             chart_file = self.output_dir / f"performance_comparison_charts_{timestamp}.png"
             plt.savefig(chart_file, dpi=300, bbox_inches='tight')
             plt.close()
-            
+
             logger.info(f"Performance visualization saved: {chart_file}")
-            
-        except Exception as e:
+
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError, OSError) as e:
             logger.error(f"Error creating visualizations: {e}")
     
     def _create_benchmark_visualizations(self, benchmark_results: dict[str, Any]):
@@ -594,7 +602,7 @@ class PerformanceComparator:
                 best_speedups.append(best_speedup)
                 sequential_times.append(results['results']['sequential']['actual_total_time'])
             
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+            _fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
             
             # Speedup by scenario
             bars1 = ax1.bar(scenarios, best_speedups, color='skyblue', edgecolor='navy')
@@ -625,14 +633,14 @@ class PerformanceComparator:
             plt.tight_layout()
             
             # Save chart
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
             chart_file = self.output_dir / f"benchmark_analysis_{timestamp}.png"
             plt.savefig(chart_file, dpi=300, bbox_inches='tight')
             plt.close()
             
             logger.info(f"Benchmark visualization saved: {chart_file}")
             
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError, OSError) as e:
             logger.error(f"Error creating benchmark visualizations: {e}")
 
 

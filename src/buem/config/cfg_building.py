@@ -1,6 +1,6 @@
-# ...existing code...
 import copy
 import json
+import logging
 from typing import Any
 
 import numpy as np
@@ -9,6 +9,8 @@ import pandas as pd
 from buem.config.attribute_types import AttributeCategory, AttributeSpec, AttrType
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS
 from buem.config.cfg_attribute import cfg as DEFAULT_CFG
+
+logger = logging.getLogger(__name__)
 
 
 def _series_to_list(s: pd.Series | None) -> list | None:
@@ -63,10 +65,10 @@ class WeatherConfig:
                 if index is None:
                     # try to reuse default index length if available
                     default_weather = DEFAULT_CFG.get("weather")
-                    if isinstance(default_weather, pd.DataFrame) and len(default_weather) == len(list(cols.values())[0]):
+                    if isinstance(default_weather, pd.DataFrame) and len(default_weather) == len(next(iter(cols.values()))):
                         index = default_weather.index
                     else:
-                        index = pd.date_range("2025-01-01", periods=len(list(cols.values())[0]), freq="h")
+                        index = pd.date_range("2025-01-01", periods=len(next(iter(cols.values()))), freq="h")
                 self.df = pd.DataFrame(cols, index=index)
                 return
 
@@ -176,7 +178,7 @@ class FixedConfig:
                 try:
                     json.dumps(v)
                     out[k] = v
-                except Exception:
+                except TypeError:
                     out[k] = str(v)
         return out
 
@@ -227,7 +229,7 @@ class CfgBuilding:
                 raise ValueError("CfgBuilding requires a non-empty JSON string on initialization.")
             parsed = json.loads(json_input)
         else:
-            raise ValueError("CfgBuilding requires a dict or non-empty JSON string on initialization.")
+            raise TypeError("CfgBuilding requires a dict or non-empty JSON string on initialization.")
 
         # ensure all attributes are present (fill missing from specs)
         parsed_filled = self._ensure_and_normalize_input(parsed)
@@ -290,8 +292,8 @@ class CfgBuilding:
                 # which already contains defaults if the caller omitted them.
                 try:
                     cfg[name] = copy.deepcopy(self._parsed_filled.get(name))
-                except Exception:
-                    # fallback: use the spec default if anything goes wrong
+                except (TypeError, copy.Error, AttributeError):
+                    # fallback: use the spec default if the parsed value isn't deepcopy-able
                     cfg[name] = copy.deepcopy(spec.default)
 
         # include any dynamically added items present in fixed._data (already added via update),
@@ -325,8 +327,8 @@ class CfgBuilding:
                     for e in comp_data.get("elements", []):
                         try:
                             total_area += float(e.get("area", 0.0))
-                        except Exception:
-                            pass
+                        except (TypeError, ValueError, AttributeError) as exc:
+                            logger.debug("Skipping element with non-numeric area %r: %s", e, exc)
             if total_area > 0:
                 cfg["A_ref"] = total_area
 
@@ -355,7 +357,7 @@ class CfgBuilding:
                 try:
                     json.dumps(v)
                     out[k] = v
-                except Exception:
+                except TypeError:
                     out[k] = str(v)
         return json.dumps(out, indent=2)
 

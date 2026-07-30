@@ -65,6 +65,10 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     logger.warning("psutil not available - system monitoring will be limited")
 
+# Usable in except clauses regardless of whether psutil is installed
+# (referencing psutil.Error directly would raise NameError when it's absent).
+_PSUTIL_EXCEPTIONS = (psutil.Error,) if PSUTIL_AVAILABLE else ()
+
 
 def process_single_building_sequential(building_file: str | Path) -> dict[str, Any]:
     """
@@ -94,7 +98,7 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
     building_file = Path(building_file)
     
     # Initialize detailed stats tracking
-    stats = {
+    stats: dict[str, float] = {
         'load_time': 0,
         'validation_time': 0,
         'processing_time': 0,
@@ -168,7 +172,7 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
             }
         }
         
-    except Exception as e:
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         total_time = time.time() - start_time
         stats['total_time'] = total_time
         error_msg = f"Error processing {building_file}: {e!s}"
@@ -276,7 +280,7 @@ class SequentialBuildingProcessor:
         # Initialize results tracking
         completed_buildings = []
         failed_buildings = []
-        performance_metrics = {
+        performance_metrics: dict[str, Any] = {
             'start_time': start_time,
             'mode': 'sequential',
             'total_buildings': total_buildings,
@@ -334,7 +338,7 @@ class SequentialBuildingProcessor:
                         if self.detailed_logging:
                             logger.info(f"Memory usage: {current_memory:.1f} MB")
                     
-                except Exception as e:
+                except (KeyError, *_PSUTIL_EXCEPTIONS) as e:
                     error_result = {
                         'building_id': Path(building_file).stem,
                         'success': False,
@@ -387,7 +391,7 @@ class SequentialBuildingProcessor:
                 performance_metrics['average_model_processing_time'] = sum(s['processing_time'] for s in all_stats) / len(all_stats)
         
         # Compile comprehensive results
-        results = {
+        results: dict[str, Any] = {
             'summary': {
                 'total_buildings': total_buildings,
                 'successful': successful_count,
@@ -409,7 +413,7 @@ class SequentialBuildingProcessor:
             if not results_file:
                 results_dir = Path(__file__).resolve().parent.parent / "results"
                 results_dir.mkdir(parents=True, exist_ok=True)
-                results_file = str(results_dir / f"sequential_processing_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                results_file = str(results_dir / f"sequential_processing_results_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json")
             with open(results_file, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
             logger.info(f"Results saved to: {results_file}")

@@ -10,14 +10,17 @@ Checks performed:
   - element areas > 0 and unique element ids if 'components' provided
   - weather timeseries length consistent when series provided
 """
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _is_number(v) -> bool:
     try:
         float(v)
         return True
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 def validate_cfg(cfg: dict[str, Any]) -> list[str]:
@@ -47,7 +50,7 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
             try:
                 if float(u) <= 0:
                     issues.append(f"components.{comp}.U must be positive number")
-            except Exception:
+            except (TypeError, ValueError):
                 issues.append(f"components.{comp}.U invalid: {u}")
 
         # validate elements if present
@@ -70,7 +73,7 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
                     try:
                         if float(area) <= 0:
                             issues.append(f"components.{comp}.elements[{idx}].area must be > 0")
-                    except Exception:
+                    except (TypeError, ValueError):
                         issues.append(f"components.{comp}.elements[{idx}].area invalid: {area}")
                 u_e = e.get("U")
                 if u is None:  # if component-level U missing, require per-element U
@@ -80,7 +83,7 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
                         try:
                             if float(u_e) <= 0:
                                 issues.append(f"components.{comp}.elements[{idx}].U must be positive number")
-                        except Exception:
+                        except (TypeError, ValueError):
                             issues.append(f"components.{comp}.elements[{idx}].U invalid: {u_e}")
 
     # weather presence/length sanity check (optional)
@@ -92,8 +95,8 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
             n = len(weather)
             if n == 0:
                 issues.append("weather timeseries appears empty")
-        except Exception:
-            # if not lengthable, ignore deep check here
-            pass
+        except TypeError:
+            # not lengthable (e.g. a scalar) -- skip the deep length check here
+            logger.debug("weather value of type %s is not lengthable; skipping length check", type(weather))
 
     return issues

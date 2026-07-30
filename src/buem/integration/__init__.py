@@ -193,31 +193,22 @@ def list_schema_versions():
     """
     return schema_manager.get_available_versions()
 
-# Public API
+# Public API. Core classes: BuemSchemaValidator, GeoJsonValidator,
+# SchemaVersionManager. Infrastructure-dependent (lazy loaded): AttributeBuilder,
+# BuemDebugger, GeoJsonProcessor. See module docstring above for details.
 __all__ = [
-    # Core classes (always available)
-    "BuemSchemaValidator", 
-    "SchemaVersionManager",
-    "GeoJsonValidator",
-    
-    # Infrastructure-dependent classes (lazy loaded)
-    "GeoJsonProcessor",
-    "BuemDebugger", 
     "AttributeBuilder",
-    
-    # Validation functions
-    "validate_geojson_request",
-    "create_validation_report", 
-    "validate_request_file",
-    
-    # Enums and data classes
+    "BuemDebugger",
+    "BuemSchemaValidator",
+    "GeoJsonProcessor",
+    "GeoJsonValidator",
+    "SchemaVersionManager",
     "ValidationLevel",
     "ValidationResult",
-    
-    # Manager instances
-    "schema_manager",
-    
-    # Utility functions
+    "create_validation_report",
     "get_latest_schema_version",
     "list_schema_versions",
+    "schema_manager",
+    "validate_geojson_request",
+    "validate_request_file",
 ]

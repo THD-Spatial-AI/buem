@@ -391,7 +391,7 @@ class GeoJsonValidator:
         except ValidationError as e:
             result.is_valid = False
             self._process_marshmallow_errors(e.messages, result)
-        except Exception as e:
+        except (TypeError, ValueError, KeyError, AttributeError) as e:
             result.add_issue(
                 ValidationLevel.ERROR,
                 f"Unexpected validation error: {e!s}",
@@ -456,9 +456,9 @@ class GeoJsonValidator:
             
             if start_time and end_time:
                 if isinstance(start_time, str):
-                    start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    start_time = datetime.fromisoformat(start_time)
                 if isinstance(end_time, str):
-                    end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                    end_time = datetime.fromisoformat(end_time)
                 
                 if start_time >= end_time:
                     result.add_issue(
@@ -478,7 +478,7 @@ class GeoJsonValidator:
             if isinstance(building, dict) and isinstance(building.get('envelope'), dict):
                 try:
                     self._convert_v3_to_v2(feature, result, i)
-                except Exception as e:
+                except (TypeError, ValueError, KeyError, AttributeError) as e:
                     result.add_issue(
                         ValidationLevel.ERROR,
                         f"Failed to convert v3 format to internal format: {e!s}",
@@ -500,7 +500,7 @@ class GeoJsonValidator:
                         "Converted child_components to nested components format",
                         f"features[{i}].properties.buem.building_attributes"
                     )
-                except Exception as e:
+                except (TypeError, ValueError, KeyError, AttributeError) as e:
                     result.add_issue(
                         ValidationLevel.ERROR,
                         f"Failed to convert child_components: {e!s}",
@@ -549,7 +549,7 @@ class GeoJsonValidator:
             'ventilation': 'Ventilation',
         }
         
-        components = {}
+        components: dict[str, dict[str, Any]] = {}
         for elem in elements:
             elem_type = elem.get('type', '').lower()
             comp_key = type_map.get(elem_type)
@@ -685,7 +685,7 @@ class GeoJsonValidator:
     
     def _child_to_nested_components(self, child_components: list[dict]) -> dict[str, Any]:
         """Convert child_components array to nested components structure."""
-        components = {}
+        components: dict[str, dict[str, Any]] = {}
         
         # Group by component type
         for child in child_components:
@@ -745,7 +745,7 @@ class GeoJsonValidator:
         
         return components
     
-    def _process_marshmallow_errors(self, errors: dict, result: ValidationResult):
+    def _process_marshmallow_errors(self, errors: dict | list | str, result: ValidationResult):
         """Process marshmallow validation errors."""
         self._flatten_errors(errors, result, "")
     

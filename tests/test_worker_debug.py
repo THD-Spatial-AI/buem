@@ -1,5 +1,6 @@
 """Debug: test worker init and process_single_building in pool."""
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 # Ensure feather cache
@@ -22,7 +23,8 @@ if __name__ == "__main__":
         try:
             res = fut.result(timeout=120)
             print(f"  success={res['success']}, time={res['processing_time']:.2f}s")
-        except Exception as e:
+        except (TimeoutError, BrokenProcessPool, OSError, ValueError, KeyError,
+                IndexError, TypeError, AttributeError) as e:
             print(f"  FAILED: {type(e).__name__}: {e}")
 
     # Test 3: Pool WITHOUT initializer (to compare)
@@ -32,5 +34,6 @@ if __name__ == "__main__":
         try:
             res = fut.result(timeout=120)
             print(f"  success={res['success']}, time={res['processing_time']:.2f}s")
-        except Exception as e:
+        except (TimeoutError, BrokenProcessPool, OSError, ValueError, KeyError,
+                IndexError, TypeError, AttributeError) as e:
             print(f"  FAILED: {type(e).__name__}: {e}")

@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from jsonschema import Draft202012Validator, ValidationError
+from jsonschema.exceptions import SchemaError
 
 from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
 from buem.integration.scripts.schema_manager import SchemaVersionManager
@@ -142,7 +143,7 @@ class BuemSchemaValidator:
             summary = f"❌ JSON Schema validation failed ({len(errors)} errors, version {self.version})"
             return False, summary, error_messages
             
-        except Exception as e:
+        except (OSError, ValueError, SchemaError) as e:
             return False, f"❌ Schema validation error: {e}", [str(e)]
     
     def validate_buem_domain(self, payload: dict[str, Any]) -> tuple[bool, str, list[str]]:
@@ -188,7 +189,7 @@ class BuemSchemaValidator:
         Returns:
             Validation result dictionary with detailed information
         """
-        result = {
+        result: dict[str, Any] = {
             "version": self.version,
             "schema_type": schema_type,
             "overall_valid": True,
@@ -237,7 +238,7 @@ class BuemSchemaValidator:
         try:
             with file_path.open(encoding="utf-8") as f:
                 payload = json.load(f)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             return {
                 "version": self.version,
                 "schema_type": schema_type,
@@ -380,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     
     try:
         validator = BuemSchemaValidator(version=args.version)
-    except Exception as e:
+    except (FileNotFoundError, OSError) as e:
         print(f"❌ Failed to initialize validator: {e}")
         return 2
     

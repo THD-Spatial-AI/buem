@@ -17,7 +17,8 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,7 @@ class GeoJsonTestSuite:
     
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
-        self.results = {
+        self.results: dict[str, Any] = {
             'validation_tests': [],
             'processing_tests': [],
             'format_conversion_tests': [],
@@ -46,13 +47,13 @@ class GeoJsonTestSuite:
     def log(self, message: str):
         """Log message if verbose mode is enabled."""
         if self.verbose:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+            print(f"[{datetime.now(UTC).strftime('%H:%M:%S')}] {message}")
     
     def test_schema_validation(self) -> dict[str, Any]:
         """Test schema validation functionality."""
         self.log("Testing schema validation...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -96,7 +97,7 @@ class GeoJsonTestSuite:
         """Test hybrid format conversion (child_components to nested components)."""
         self.log("Testing format conversion...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -127,7 +128,7 @@ class GeoJsonTestSuite:
         """Test complete processing pipeline."""
         self.log("Testing processing pipeline...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -161,7 +162,7 @@ class GeoJsonTestSuite:
         """Test that responses comply with response schema."""
         self.log("Testing response schema compliance...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -204,7 +205,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"validate_{file_path.name}",
                 'passed': False,
@@ -232,7 +233,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"validate_{name}",
                 'passed': False,
@@ -253,7 +254,13 @@ class GeoJsonTestSuite:
                 }
             
             validated_data = result.validated_data
-            
+            if validated_data is None:
+                return {
+                    'test_name': f"convert_{name}",
+                    'passed': False,
+                    'message': "Payload passed validation but produced no validated_data"
+                }
+
             # Check if conversion happened
             features = validated_data.get('features', [])
             if features:
@@ -281,7 +288,7 @@ class GeoJsonTestSuite:
                     'message': "No features found in payload"
                 }
             
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"convert_{name}",
                 'passed': False,
@@ -322,7 +329,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"process_{file_path.name}",
                 'passed': False,
@@ -334,7 +341,7 @@ class GeoJsonTestSuite:
         """Test response schema compliance (structure check)."""
         try:
             # Create expected response structure and check compliance
-            expected_fields = {
+            expected_fields: dict[str, Any] = {
                 'type': 'FeatureCollection',
                 'features': list,
                 'processed_at': str,
@@ -343,7 +350,7 @@ class GeoJsonTestSuite:
             }
             
             # For testing, create a mock response structure
-            mock_response = {
+            mock_response: dict[str, Any] = {
                 'type': 'FeatureCollection',
                 'features': [
                     {
@@ -375,7 +382,7 @@ class GeoJsonTestSuite:
                         }
                     }
                 ],
-                'processed_at': datetime.now().isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'processing_elapsed_s': 0.5,
                 'metadata': {
                     'total_features': 1,
@@ -391,6 +398,10 @@ class GeoJsonTestSuite:
             for field, expected_type in expected_fields.items():
                 if field not in mock_response:
                     compliance_issues.append(f"Missing field: {field}")
+                elif isinstance(expected_type, str):
+                    # Exact value match
+                    if mock_response[field] != expected_type:
+                        compliance_issues.append(f"Wrong value for {field}: expected {expected_type}, got {mock_response[field]}")
                 elif not isinstance(mock_response[field], expected_type):
                     compliance_issues.append(f"Wrong type for {field}: expected {expected_type}, got {type(mock_response[field])}")
             
@@ -415,7 +426,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (KeyError, TypeError, IndexError) as e:
             return {
                 'test_name': f"response_compliance_{file_path.name}",
                 'passed': False,
@@ -531,16 +542,18 @@ class GeoJsonTestSuite:
         """Run all test suites."""
         self.log("Starting comprehensive GeoJSON test suite...")
         
-        start_time = datetime.now()
-        
+        wall_start = datetime.now(UTC)
+        start_time = time.monotonic()
+
         # Run test suites
         validation_results = self.test_schema_validation()
         conversion_results = self.test_format_conversion()
         processing_results = self.test_processing_pipeline()
         compliance_results = self.test_response_schema_compliance()
-        
-        end_time = datetime.now()
-        elapsed = (end_time - start_time).total_seconds()
+
+        wall_end = datetime.now(UTC)
+        end_time = time.monotonic()
+        elapsed = end_time - start_time
         
         # Compile summary
         total_tests = (validation_results['passed'] + validation_results['failed'] +
@@ -552,8 +565,8 @@ class GeoJsonTestSuite:
                        processing_results['passed'] + compliance_results['passed'])
         
         summary = {
-            'start_time': start_time.isoformat(),
-            'end_time': end_time.isoformat(),
+            'start_time': wall_start.isoformat(),
+            'end_time': wall_end.isoformat(),
             'elapsed_seconds': elapsed,
             'total_tests': total_tests,
             'total_passed': total_passed,
@@ -638,7 +651,7 @@ def main():
     except KeyboardInterrupt:
         print("\nTest suite interrupted by user")
         sys.exit(130)
-    except Exception as e:
+    except (KeyError, TypeError, ZeroDivisionError) as e:
         print(f"Test suite failed with error: {e}")
         if args.verbose:
             import traceback

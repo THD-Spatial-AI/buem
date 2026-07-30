@@ -248,9 +248,7 @@ class LOD2Mapper:
                 ))
 
         # --- roofs ---
-        roof_counter = 0
-        for _, row in roofs_df.iterrows():
-            roof_counter += 1
+        for roof_counter, (_, row) in enumerate(roofs_df.iterrows(), start=1):
             tilt = self._convert_roof_tilt(row["tilt"])
             elements.append(EnvelopeElement(
                 id=f"roof_{roof_counter}",
@@ -263,9 +261,7 @@ class LOD2Mapper:
             ))
 
         # --- floors ---
-        floor_counter = 0
-        for _, row in floors_df.iterrows():
-            floor_counter += 1
+        for floor_counter, (_, row) in enumerate(floors_df.iterrows(), start=1):
             elements.append(EnvelopeElement(
                 id=f"floor_{floor_counter}",
                 element_type="floor",

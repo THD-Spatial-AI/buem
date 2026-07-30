@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Integration smoke-test: run the thermal model and check energy output."""
 import os
+import sys
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
@@ -41,11 +42,11 @@ def main():
             print(f"T_m   : min={T_m.min():.1f}  max={T_m.max():.1f}  mean={T_m.mean():.1f} °C")
             print(f"T_ext : min={T_e.min():.1f}  max={T_e.max():.1f}  mean={T_e.mean():.1f} °C")
 
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         print(f"Error: {e}")
         return 1
     return 0
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())

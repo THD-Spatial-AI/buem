@@ -128,7 +128,7 @@ def run_parallel_demo():
         results = demo_parallel_processing()
         logger.info("✅ Parallel processing demonstration completed successfully")
         return results
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as e:
         logger.error(f"❌ Parallel processing demonstration failed: {e}")
         return None
 
@@ -143,7 +143,7 @@ def run_sequential_demo():
         results = demo_sequential_processing()
         logger.info("✅ Sequential processing demonstration completed successfully")
         return results
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as e:
         logger.error(f"❌ Sequential processing demonstration failed: {e}")
         return None
 
@@ -158,7 +158,7 @@ def run_comparison_demo():
         results = demo_performance_comparison()
         logger.info("✅ Performance comparison demonstration completed successfully")
         return results
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as e:
         logger.error(f"❌ Performance comparison demonstration failed: {e}")
         return None
 
@@ -188,7 +188,7 @@ def run_benchmark_demo():
         
         logger.info("✅ Comprehensive benchmark completed successfully")
         return results
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as e:
         logger.error(f"❌ Comprehensive benchmark failed: {e}")
         return None
 
@@ -364,9 +364,9 @@ System specs: {max_cores} logical cores, {system_info['cpu_cores']['physical']} 
 """
     
     is_valid = len(errors) == 0
-    error_msg = "; ".join(errors) if errors else ""
-    
-    return is_valid, recommendations, range_suggestions if not is_valid else ""
+    error_msg = "; ".join(errors)
+
+    return is_valid, recommendations, f"{error_msg}\n{range_suggestions}" if not is_valid else ""
 
 
 def get_system_info() -> dict[str, Any]:
@@ -461,7 +461,7 @@ def run_optimization_tests(building_files: list[Path]) -> dict[str, Any]:
             logger.info(f"   🚀 Rate: {config_result['buildings_per_second']:.2f} buildings/sec")
             logger.info(f"   ✅ Success: {config_result['success_rate']:.1%}")
             
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as e:
             logger.warning(f"   ❌ Test failed: {e}")
             results.append({
                 'config': config,
@@ -518,7 +518,7 @@ def run_enhanced_parallel_demo(workers: int):
         
         logger.info("Enhanced parallel processing demonstration completed successfully")
         return results
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as e:
         logger.error(f"Enhanced parallel processing demonstration failed: {e}")
         return None
 
@@ -559,7 +559,7 @@ def run_worker_scaling_tests():
             
             logger.info(f"   {workers} worker(s): {result['performance']['total_time']:.2f}s, {result['performance']['buildings_per_second']:.2f} buildings/sec")
             
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as e:
             logger.error(f"   {workers} worker(s) failed: {e}")
             results[workers] = {'status': 'failed', 'error': str(e)}
     

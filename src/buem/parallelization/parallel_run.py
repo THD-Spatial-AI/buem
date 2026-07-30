@@ -33,8 +33,9 @@ import json
 import logging
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from multiprocessing import cpu_count
 from pathlib import Path
@@ -96,7 +97,7 @@ def _extract_building_attrs(building_file: str | Path) -> dict[str, Any]:
             attrs.setdefault('longitude', coords[0])
             attrs.setdefault('latitude', coords[1])
         return attrs
-    except Exception:
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
         return {}
 
 
@@ -236,7 +237,7 @@ def process_single_building(building_file: str | Path) -> dict[str, Any]:
             }
         }
         
-    except Exception as e:
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         processing_time = time.time() - start_time
         error_msg = f"Error processing {building_file}: {e!s}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")
@@ -312,8 +313,8 @@ class ParallelBuildingProcessor:
             logger.info(f"System memory: {memory_info.total / (1024**3):.1f} GB available")
     
     def process_buildings(
-        self, 
-        building_files: list[str | Path],
+        self,
+        building_files: Sequence[str | Path],
         save_results: bool = True,
         results_file: str | None = None
     ) -> dict[str, Any]:
@@ -382,7 +383,7 @@ class ParallelBuildingProcessor:
                 for lat, lon, year, provider in locations:
                     try:
                         get_or_fetch_weather(lat, lon, year, provider)
-                    except Exception as exc:
+                    except (ImportError, FileNotFoundError, KeyError, OSError, ValueError) as exc:
                         logger.warning(
                             "Weather pre-warm failed for (lat=%s, lon=%s, year=%s, "
                             "provider=%s): %s -- affected buildings will fall back "
@@ -442,7 +443,8 @@ class ParallelBuildingProcessor:
                         logger.error(f"⏱️ Timeout: {error_result['building_id']}")
                         completed_count += 1
                     
-                    except Exception as e:
+                    except (OSError, ValueError, KeyError, IndexError, TypeError,
+                            AttributeError, BrokenProcessPool) as e:
                         building_file = future_to_file[future]
                         error_result = {
                             'building_id': Path(building_file).stem,
@@ -500,7 +502,7 @@ class ParallelBuildingProcessor:
             if not results_file:
                 results_dir = Path(__file__).resolve().parent.parent / "results"
                 results_dir.mkdir(parents=True, exist_ok=True)
-                results_file = str(results_dir / f"parallel_processing_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                results_file = str(results_dir / f"parallel_processing_results_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json")
             with open(results_file, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
             logger.info(f"Results saved to: {results_file}")

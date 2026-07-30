@@ -242,8 +242,8 @@ class GeoJsonProcessor:
             try:
                 fname = self._save_timeseries(times, heating, cooling, electricity)
                 profile["timeseries_file"] = f"/api/files/{fname}"
-            except Exception as exc:
-                logger.exception(f"Timeseries save failed for {building_id}: {exc}")
+            except Exception:
+                logger.exception(f"Timeseries save failed for {building_id}")
         
         # Attach results
         buem["thermal_load_profile"] = profile
@@ -282,7 +282,7 @@ class GeoJsonProcessor:
             
             return arr
             
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             logger.error(f"Failed to validate array {array_name}: {e}")
             return np.array([], dtype=float)
     

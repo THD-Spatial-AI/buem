@@ -32,7 +32,6 @@ def run_building_model():
          "include_timeseries" in payload else "false")
         )
         include_ts = str(include_ts).lower() == "true"
-        gp = GeoJsonProcessor(payload, include_timeseries=include_ts, db_fetcher=...)
 
         cfgb = CfgBuilding(json.dumps(payload))
         cfg = cfgb.to_cfg_dict()

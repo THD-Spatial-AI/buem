@@ -10,12 +10,15 @@ year) instead of one global key, so repeated buildings at the same site
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 try:
     from weather import get_point_weather  # type: ignore[import]
@@ -77,8 +80,9 @@ def get_or_fetch_weather(
     )
     try:
         df.reset_index().to_feather(path)
-    except Exception:
-        pass  # Non-critical: caching failure should not block model execution
+    except (OSError, ValueError) as exc:
+        # Non-critical: caching failure should not block model execution.
+        logger.warning("Could not write weather cache %s: %s", path, exc)
     return df
 
 

@@ -71,7 +71,7 @@ def get_cached_result(cache_key: str) -> dict[str, Any] | None:
     try:
         with open(path, "rb") as f:
             return pickle.load(f)
-    except Exception as exc:
+    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, ValueError) as exc:
         logger.debug(f"Cache read error for {cache_key}: {exc}")
         return None
 
@@ -85,7 +85,7 @@ def store_result(cache_key: str, result: dict[str, Any]) -> None:
             pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
         dest = CACHE_DIR / f"{cache_key}.pkl"
         os.replace(tmp_path, str(dest))
-    except Exception as exc:
+    except (OSError, pickle.PicklingError, TypeError) as exc:
         logger.debug(f"Cache write error for {cache_key}: {exc}")
         try:
             os.unlink(tmp_path)

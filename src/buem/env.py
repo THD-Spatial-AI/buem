@@ -37,6 +37,7 @@ def load_env() -> None:
         from dotenv import load_dotenv
 
         dotenv_home = os.environ.get("BUEM_HOME")
+        found: Path | None
         if dotenv_home:
             found = Path(dotenv_home) / ".env"
             load_dotenv(found, override=False)

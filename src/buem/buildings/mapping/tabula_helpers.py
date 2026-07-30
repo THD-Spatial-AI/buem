@@ -22,11 +22,16 @@ reference areas.
 from __future__ import annotations
 
 import math
+from typing import overload
 
 import pandas as pd
 
 
-def safe_series_float(row: pd.Series, col: str, default: float) -> float:
+@overload
+def safe_series_float(row: pd.Series, col: str, default: float) -> float: ...
+@overload
+def safe_series_float(row: pd.Series, col: str, default: None) -> float | None: ...
+def safe_series_float(row: pd.Series, col: str, default: float | None) -> float | None:
     """Read a float from a pandas Series, returning *default* on NaN/missing.
 
     Parameters
@@ -35,7 +40,7 @@ def safe_series_float(row: pd.Series, col: str, default: float) -> float:
         A TABULA or building row.
     col : str
         Column / field name.
-    default : float
+    default : float | None
         Value to return when the column is absent, ``None``, or ``NaN``.
     """
     val = row.get(col)

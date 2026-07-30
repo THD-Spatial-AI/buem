@@ -30,6 +30,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from jsonschema import ValidationError
+
 from buem.integration.scripts.debug_utils import BuemDebugger
 from buem.integration.scripts.schema_manager import SchemaVersionManager
 from buem.integration.scripts.schema_validator import BuemSchemaValidator
@@ -60,7 +62,7 @@ class SchemaCLI:
             print(f"\nTotal: {len(versions)} versions")
             return 0
             
-        except Exception as e:
+        except (OSError, ValueError, KeyError, ValidationError) as e:
             print(f"❌ Error listing versions: {e}")
             return 1
     
@@ -87,7 +89,7 @@ class SchemaCLI:
             
             return 0
             
-        except Exception as e:
+        except (OSError, ValueError, KeyError, ValidationError) as e:
             print(f"❌ Error getting version info: {e}")
             return 1
     
@@ -117,7 +119,7 @@ class SchemaCLI:
             
             return 0 if result['overall_valid'] else 1
             
-        except Exception as e:
+        except (OSError, ValueError, KeyError, ValidationError) as e:
             print(f"❌ Validation error: {e}")
             return 1
     
@@ -168,7 +170,7 @@ class SchemaCLI:
             
             return 0 if all_passed else 1
             
-        except Exception as e:
+        except (OSError, ValueError, KeyError, ValidationError) as e:
             print(f"❌ Testing error: {e}")
             return 1
     
@@ -226,11 +228,11 @@ class SchemaCLI:
                 
                 return 0
                 
-            except Exception as validate_error:
+            except (OSError, ValueError, KeyError, ValidationError) as validate_error:
                 print(f"⚠️ Warning: Could not validate imported files: {validate_error}")
                 return 0
             
-        except Exception as e:
+        except (OSError, ValueError, KeyError, ValidationError) as e:
             print(f"❌ Import error: {e}")
             return 1
     
@@ -243,20 +245,20 @@ class SchemaCLI:
             print("=" * 50)
             
             # Comprehensive validation and debugging
-            is_valid = debugger.validate_file(file_path)
-            
+            is_valid, _report = debugger.validate_file(str(file_path))
+
             if not is_valid:
                 print("\n🔍 Running additional diagnostics...")
                 
                 # Test processing
                 try:
-                    debugger.test_processing(file_path)
-                except Exception as e:
+                    debugger.test_processing(str(file_path))
+                except (OSError, ValueError, KeyError, ValidationError) as e:
                     print(f"Processing test failed: {e}")
             
             return 0 if is_valid else 1
             
-        except Exception as e:
+        except (OSError, ValueError, KeyError, ValidationError) as e:
             print(f"❌ Debug error: {e}")
             return 1
 

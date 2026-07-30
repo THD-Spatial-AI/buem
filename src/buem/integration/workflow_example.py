@@ -204,7 +204,7 @@ def demonstrate_processing_pipeline(file_path: Path):
         
         return True
         
-    except Exception as e:
+    except (OSError, ValueError, KeyError, TypeError) as e:
         print(f"❌ Processing failed: {e}")
         return False
 
@@ -270,7 +270,7 @@ def demonstrate_version_switching():
             status = "✅ Valid" if result["overall_valid"] else "❌ Invalid"
             print(f"   Example validation: {status}")
             
-        except Exception as e:
+        except (FileNotFoundError, OSError, ValueError, KeyError) as e:
             print(f"   Could not test version {version}: {e}")
 
 

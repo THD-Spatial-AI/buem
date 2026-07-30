@@ -2,6 +2,7 @@
 Build complete building attributes by merging payload, database, and defaults.
 Generate weather and electricity profiles, and align timeseries indices.
 """
+import logging
 import warnings
 from collections.abc import Callable
 from typing import Any
@@ -19,6 +20,8 @@ try:
     _OCCUPANCY_AVAILABLE = True
 except ImportError:
     _OCCUPANCY_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 class AttributeBuilder:
@@ -49,7 +52,7 @@ class AttributeBuilder:
         self.payload_attrs = payload_attrs
         self.building_id = building_id
         self.db_fetcher = db_fetcher
-        self.merged_attrs = {}
+        self.merged_attrs: dict[str, Any] = {}
         
     def build(self) -> dict[str, Any]:
         """
@@ -97,8 +100,13 @@ class AttributeBuilder:
             try:
                 db_attrs = self.db_fetcher(self.building_id) or {}
                 self.merged_attrs.update(db_attrs)
-            except Exception:
-                pass  # Continue with defaults
+            except (OSError, ValueError, KeyError, RuntimeError) as exc:
+                # Continue with defaults -- db_fetcher is a caller-supplied
+                # callable, so its failure modes aren't fully known here.
+                logger.warning(
+                    "db_fetcher failed for building_id=%r, continuing with defaults: %s",
+                    self.building_id, exc,
+                )
         
         # Overlay payload (highest priority)
         self.merged_attrs.update(self.payload_attrs)
@@ -122,7 +130,7 @@ class AttributeBuilder:
 
         try:
             self.merged_attrs["weather"] = get_or_fetch_weather(lat, lon, year, provider)
-        except Exception as exc:
+        except (ImportError, FileNotFoundError, KeyError, OSError, ValueError) as exc:
             warnings.warn(
                 f"Dynamic weather fetch failed for (lat={lat}, lon={lon}, "
                 f"year={year}, provider={provider!r}); falling back to "
@@ -184,16 +192,22 @@ class AttributeBuilder:
         weather_index = weather_df.index
         
         # Align elecLoad (already done in generate_electricity_profile, but verify)
-        if "elecLoad" in self.merged_attrs and isinstance(self.merged_attrs["elecLoad"], pd.Series):
-            if not self.merged_attrs["elecLoad"].index.equals(weather_index):
-                self.merged_attrs["elecLoad"] = self.merged_attrs["elecLoad"].reindex(
-                    weather_index, method='nearest', fill_value=0.0
-                )
+        if (
+            "elecLoad" in self.merged_attrs
+            and isinstance(self.merged_attrs["elecLoad"], pd.Series)
+            and not self.merged_attrs["elecLoad"].index.equals(weather_index)
+        ):
+            self.merged_attrs["elecLoad"] = self.merged_attrs["elecLoad"].reindex(
+                weather_index, method='nearest', fill_value=0.0
+            )
         
         # Align other profiles (Q_ig, occ_nothome, etc.) if needed
         for key in ("Q_ig", "occ_nothome", "occ_sleeping"):
-            if key in self.merged_attrs and isinstance(self.merged_attrs[key], pd.Series):
-                if not self.merged_attrs[key].index.equals(weather_index):
-                    self.merged_attrs[key] = self.merged_attrs[key].reindex(
-                        weather_index, method='nearest', fill_value=0.0
-                    )
+            if (
+                key in self.merged_attrs
+                and isinstance(self.merged_attrs[key], pd.Series)
+                and not self.merged_attrs[key].index.equals(weather_index)
+            ):
+                self.merged_attrs[key] = self.merged_attrs[key].reindex(
+                    weather_index, method='nearest', fill_value=0.0
+                )

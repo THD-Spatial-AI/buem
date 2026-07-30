@@ -7,9 +7,12 @@ GeoJSON payloads and processing results.
 import json
 import logging
 import sys
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from marshmallow import ValidationError
 
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
 from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
@@ -55,7 +58,7 @@ class BuemDebugger:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 payload = json.load(f)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             return False, f"Failed to load file {file_path}: {e}"
         
         return self.validate_payload(payload, source=file_path)
@@ -91,8 +94,8 @@ class BuemDebugger:
                 print(report)
             
             return result.is_valid, report
-            
-        except Exception as e:
+
+        except (TypeError, KeyError, AttributeError, ValueError, ValidationError) as e:
             error_msg = f"Validation error: {e}"
             if self.verbose:
                 logger.error(error_msg)
@@ -123,19 +126,19 @@ class BuemDebugger:
                 payload = json.load(f)
             
             # Validate first
-            is_valid, report = self.validate_payload(payload, source=file_path)
+            is_valid, _report = self.validate_payload(payload, source=file_path)
             if not is_valid:
                 logger.error("Validation failed, aborting processing test")
                 return None
-            
+
             # Process
             processor = GeoJsonProcessor(payload, include_timeseries=include_timeseries)
-            start_time = datetime.now()
+            start_time = time.monotonic()
             result = processor.process()
-            end_time = datetime.now()
-            
+            end_time = time.monotonic()
+
             # Report results
-            total_time = (end_time - start_time).total_seconds()
+            total_time = end_time - start_time
             features = result.get('features', [])
             successful = len([f for f in features if 'error' not in f.get('properties', {}).get('buem', {})])
             
@@ -152,8 +155,8 @@ class BuemDebugger:
                         logger.error(f"❌ {len(errors)} processing errors")
             
             return result
-            
-        except Exception as e:
+
+        except (OSError, ValueError, KeyError, TypeError) as e:
             error_msg = f"Processing test failed: {e}"
             if self.verbose:
                 logger.error(error_msg)
@@ -221,8 +224,8 @@ class BuemDebugger:
                         report.append("✅ All required thermal profile fields present")
             
             return "\n".join(report)
-            
-        except Exception as e:
+
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
             return f"❌ Comparison failed: {e}"
     
     def create_test_summary(self, test_files: list[str]) -> str:
@@ -240,7 +243,7 @@ class BuemDebugger:
             Test summary report.
         """
         report = ["=== BUEM GEOJSON TEST SUMMARY ===\n"]
-        report.append(f"Test run: {datetime.now().isoformat()}\n")
+        report.append(f"Test run: {datetime.now(UTC).isoformat()}\n")
         
         total_files = len(test_files)
         validation_passed = 0
@@ -258,7 +261,7 @@ class BuemDebugger:
                 else:
                     report.append("  ❌ Validation: FAIL")
                     report.append(f"     {val_report.split('Status: ')[1].split()[0]}")
-            except Exception as e:
+            except (IndexError, AttributeError) as e:
                 report.append(f"  ❌ Validation: ERROR - {e}")
             
             # Processing test
@@ -276,7 +279,7 @@ class BuemDebugger:
                         report.append(f"     Features: {successful}/{total} successful")
                 else:
                     report.append("  ❌ Processing: FAIL")
-            except Exception as e:
+            except (AttributeError, TypeError) as e:
                 report.append(f"  ❌ Processing: ERROR - {e}")
             
             report.append("")
@@ -310,7 +313,7 @@ def main():
     try:
         if args.command == 'validate':
             for file_path in args.files:
-                is_valid, report = debugger.validate_file(file_path)
+                _is_valid, report = debugger.validate_file(file_path)
                 result += f"=== {file_path} ===\n{report}\n\n"
         
         elif args.command == 'test':
@@ -339,7 +342,10 @@ def main():
         else:
             print(result)
     
-    except Exception as e:
+    except OSError as e:
+        # All BuemDebugger methods above already catch their own errors and
+        # return normally; an OSError here can only come from the output
+        # file write below.
         logger.error(f"Command failed: {e}")
         sys.exit(1)
 

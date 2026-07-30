@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
@@ -8,17 +9,22 @@ print("Project root:", project_root)
 
 try:
     print("Testing imports...")
-    print("- pandas: OK")
-    print("- numpy: OK")
-    print("- pvlib: OK")
-    print("- cvxpy: OK")
+    import pandas
+    print(f"- pandas: OK ({pandas.__version__})")
+    import numpy
+    print(f"- numpy: OK ({numpy.__version__})")
+    import pvlib
+    print(f"- pvlib: OK ({pvlib.__version__})")
+    import cvxpy
+    print(f"- cvxpy: OK ({cvxpy.__version__})")
 
     print("\nTesting model import...")
-    print("- ModelBUEM: OK")
+    from buem.thermal.model_buem import ModelBUEM
+    print(f"- ModelBUEM: OK ({ModelBUEM.__module__})")
 
     print("\nAll imports successful!")
 
-except Exception as e:
+except ImportError as e:
     import traceback
     print(f"ERROR: {e}")
     traceback.print_exc()

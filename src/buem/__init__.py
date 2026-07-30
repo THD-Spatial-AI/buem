@@ -4,7 +4,9 @@
 try:
     from setuptools_scm import get_version as _scm_version
     __version__ = _scm_version()
-except Exception:
+except (ImportError, LookupError):
+    # ImportError: setuptools-scm not installed. LookupError: not a git
+    # checkout / no tags found (setuptools-scm's own failure mode).
     try:
         from buem._version import version as __version__
     except ImportError:

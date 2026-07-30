@@ -177,7 +177,8 @@ def main() -> None:
                 f"Starting Gunicorn on http://{args.host}:{args.port}"
                 f" ({args.workers} workers)"
             )
-            sys.exit(subprocess.run(cmd).returncode)
+            # check=False: propagate gunicorn's own exit code below, don't raise on nonzero.
+            sys.exit(subprocess.run(cmd, check=False).returncode)
 
     # ── validate ─────────────────────────────────────────────────────────────
     elif args.command == "validate":

@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any
 
@@ -5,6 +6,8 @@ import numpy as np
 import pandas as pd
 
 from .attribute_types import AttributeCategory, AttributeSpec, AttrType
+
+logger = logging.getLogger(__name__)
 
 # ── Optional external sub-packages (now independent repos in UU-BUEM org) ─────
 # occupancy: https://github.com/UU-BUEM/occupancy
@@ -82,8 +85,9 @@ else:
     # Save processed weather to feather cache for fast reloading by worker processes
     try:
         df_weather.reset_index().to_feather(WEATHER_CACHE)
-    except Exception:
-        pass  # Non-critical: caching failure should not block model execution
+    except (OSError, ValueError) as exc:
+        # Non-critical: caching failure should not block model execution.
+        logger.warning("Could not write weather feather cache %s: %s", WEATHER_CACHE, exc)
 
 main_index = df_weather.index
 n_hours = len(main_index)

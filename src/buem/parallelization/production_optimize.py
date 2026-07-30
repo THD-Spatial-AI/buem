@@ -26,7 +26,7 @@ import multiprocessing
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import psutil
 
@@ -39,7 +39,6 @@ import numpy as np
 
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
 from buem.main import cfg, run_model
-from buem.parallelization.parallel_run import ParallelBuildingProcessor
 
 
 class OptimizedPerformanceAnalyzer:
@@ -60,11 +59,21 @@ class OptimizedPerformanceAnalyzer:
         print(f"💾 NUMEXPR_MAX_THREADS={os.environ.get('NUMEXPR_MAX_THREADS')}")
         print("🚀" * 60)
 
+class WorkerAllocation(TypedDict):
+    main_workers: int
+    strategy: str
+
+
+class WorkerConfig(TypedDict):
+    workers: int
+    name: str
+
+
 class IntelligentWorkerAllocator:
     """Smart worker allocation based on system hardware."""
-    
+
     @staticmethod
-    def calculate_optimal_workers(building_count: int, cpu_cores: int = 22) -> dict[str, int]:
+    def calculate_optimal_workers(building_count: int, cpu_cores: int = 22) -> WorkerAllocation:
         """Calculate optimal worker allocation based on building count and hardware."""
         
         # Reserve 2 threads for system
@@ -240,7 +249,7 @@ def benchmark_single_building_performance() -> dict[str, Any]:
         
         print(f"    Done: {elapsed:.2f}s, {memory_used:.2f}GB peak")
         
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         results = {
             'lp_solver': {
                 'time': float('inf'),
@@ -278,15 +287,15 @@ def test_multibuilding_optimization(building_count: int = 10, max_workers: int =
     print(f"   Main workers: {optimal_config['main_workers']}")
     
     # Test different worker configurations
-    worker_configs = [
+    worker_configs: list[WorkerConfig] = [
         {'workers': 1, 'name': 'single_worker'},
         {'workers': max(1, optimal_config['main_workers'] // 2), 'name': 'half_optimal'},
         {'workers': optimal_config['main_workers'], 'name': 'optimal'},
         {'workers': min(16, optimal_config['main_workers'] * 2), 'name': 'max_workers'}
     ]
     
-    results = {}
-    
+    results: dict[str, Any] = {}
+
     for worker_config in worker_configs:
         print(f"\\n  Testing {worker_config['name']} ({worker_config['workers']} workers)...")
         
@@ -294,11 +303,6 @@ def test_multibuilding_optimization(building_count: int = 10, max_workers: int =
         start_memory = psutil.virtual_memory().used / (1024**3)
         
         try:
-            # Process buildings using optimized configuration
-            processor = ParallelBuildingProcessor(
-                workers=worker_config['workers']
-            )
-            
             processed_buildings = []
             successful_count = 0
             
@@ -317,7 +321,7 @@ def test_multibuilding_optimization(building_count: int = 10, max_workers: int =
                     if (i + 1) % 5 == 0:
                         print(f"    Processed {i + 1}/{building_count} buildings...")
                         
-                except Exception as e:
+                except (OSError, ValueError, KeyError, TypeError) as e:
                     print(f"    Building {i} failed: {e}")
                     continue
             
@@ -340,7 +344,7 @@ def test_multibuilding_optimization(building_count: int = 10, max_workers: int =
             print(f"       Rate: {buildings_per_second:.2f} buildings/sec")
             print(f"       Memory: {memory_used:.2f}GB peak")
             
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError, KeyError, psutil.Error) as e:
             results[worker_config['name']] = {
                 'elapsed': float('inf'),
                 'error': str(e),
@@ -353,8 +357,8 @@ def test_multibuilding_optimization(building_count: int = 10, max_workers: int =
     for geojson_file in geojson_files:
         try:
             geojson_file.unlink()
-        except:
-            pass
+        except OSError as exc:
+            print(f"    Could not remove {geojson_file}: {exc}")
     
     return results
 

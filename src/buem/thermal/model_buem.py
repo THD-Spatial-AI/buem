@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import Any
+from typing import Any, ClassVar
 
 import cvxpy as cp
 import numpy as np
@@ -38,7 +38,7 @@ class ModelBUEM:
       enforce annual-periodic thermal mass temperature without an arbitrary
       initial condition.
     """
-    CONST = {
+    CONST: ClassVar[dict[str, float]] = {
         # specific heat transfer coefficient between internal air and surface [kW/m²K]
         # ISO 13790 §7.2.2.2, h_is = 3.45 W/m²K
         "h_is": 3.45 / 1000,
@@ -141,12 +141,12 @@ class ModelBUEM:
         v = self.cfg[key]
         try:
             return float(v)
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             # allow Series/array -> take mean as fallback ONLY if explicitly a Series
             if hasattr(v, 'mean'):
                 try:
                     return float(v.mean())
-                except Exception:
+                except (TypeError, ValueError):
                     raise ValueError(f"Cannot convert cfg['{key}'] to float: {v}, error: {e}")
             else:
                 raise ValueError(f"Cannot convert cfg['{key}'] to float: {v}, error: {e}")
@@ -222,7 +222,7 @@ class ModelBUEM:
 
         for comp_name, comp_data in comps.items():
             if not isinstance(comp_data, dict):
-                raise ValueError(f"components.{comp_name} must be an object")
+                raise TypeError(f"components.{comp_name} must be an object")
 
             # Ventilation is not a physical surface with U-values per element;
             # its aggregated conductance is computed from infiltration rates below.
@@ -236,7 +236,7 @@ class ModelBUEM:
 
             elems = comp_data.get("elements", [])
             if not isinstance(elems, list):
-                raise ValueError(f"components.{comp_name}.elements must be a list")
+                raise TypeError(f"components.{comp_name}.elements must be a list")
             parsed = []
             for e in elems:
                 if "area" not in e:
@@ -267,7 +267,7 @@ class ModelBUEM:
                         try:
                             e_b = float(e.get("b_transmission", 1.0))
                             total_conductance += float(e["U"]) * float(e["area"]) * e_b
-                        except Exception:
+                        except (TypeError, ValueError):
                             eid = e.get('id', 'unknown')
                             raise ValueError(
                                 f"components.{comp_name}.elements contains "
@@ -285,7 +285,7 @@ class ModelBUEM:
             else:
                 try:
                     self.bU[comp_name] = float(u_val)
-                except Exception:
+                except (TypeError, ValueError):
                     raise ValueError(f"components.{comp_name}.U invalid: {u_val}")
                 self.bH[comp_name] = {"Original": self.bU[comp_name] * total_area * b_trans / 1000.0}
 
@@ -302,10 +302,10 @@ class ModelBUEM:
                 total_area = sum(float(e["area"]) for e in elements if "area" in e and e["area"] is not None)
                 print(f"{comp_name}: {len(elements)} elements, total area: {total_area:.1f} m²")
                 for e in elements[:3]:  # Show first 3 elements
-                    azimuth = e["azimuth"] if "azimuth" in e else "default"
-                    tilt = e["tilt"] if "tilt" in e else "default"
+                    azimuth = e.get("azimuth", "default")
+                    tilt = e.get("tilt", "default")
                     area_val = float(e["area"]) if "area" in e and e["area"] is not None else 0
-                    eid = e['id'] if 'id' in e else 'unknown'
+                    eid = e.get('id', 'unknown')
                     print(f"  - {eid}: {area_val:.1f} m², az: {azimuth}°, tilt: {tilt}°")
                 if len(elements) > 3:
                     print(f"  ... and {len(elements)-3} more")
@@ -427,9 +427,9 @@ class ModelBUEM:
         # Build surface azimuth/tilt dicts from component elements (element ids as keys)
         surf_az = {}
         surf_tilt = {}
-        for comp, elems in self.component_elements.items():
+        for elems in self.component_elements.values():
             for e in elems:
-                eid = e["id"] if "id" in e else None
+                eid = e.get("id", None)
                 if eid is None:
                     continue
                 if "azimuth" in e and e["azimuth"] is not None:
@@ -483,13 +483,13 @@ class ModelBUEM:
         # windows: POA (kW/m2) * area (m2) * g * fractions -> kW
         win_list = []
         for w in self.windows:
-            wid = w["id"] if "id" in w else None
+            wid = w.get("id", None)
             if "area" not in w:
                 raise ValueError(f"Window element {wid} missing area specification")
             area = float(w["area"])
 
             # window may reference a parent surface (e.g., "surface": "Wall_1")
-            surf_ref = w["surface"] if "surface" in w else wid
+            surf_ref = w.get("surface", wid)
             if surf_ref in self._irrad_surf.columns:
                 poa = self._irrad_surf[surf_ref].values  # kW/m2
             elif wid in self._irrad_surf.columns:
@@ -536,7 +536,7 @@ class ModelBUEM:
         wall_q = []
         U_walls_SI = self.bU.get("Walls", 1.0)  # W/m²K stored by _initEnvelop
         for e in self.component_elements.get("Walls", []):
-            eid = e["id"] if "id" in e else None
+            eid = e.get("id", None)
             if "area" not in e:
                 raise ValueError(f"Wall element {eid} missing area specification")
             area = float(e["area"])
@@ -549,7 +549,7 @@ class ModelBUEM:
         # Doors are separate from walls so each uses its own U-value
         U_doors_SI = self.bU.get("Doors", 1.0)
         for e in self.component_elements.get("Doors", []):
-            eid = e["id"] if "id" in e else None
+            eid = e.get("id", None)
             if "area" not in e:
                 raise ValueError(f"Door element {eid} missing area specification")
             area = float(e["area"])
@@ -566,7 +566,7 @@ class ModelBUEM:
         U_roof_SI = self.bU.get("Roof", 1.0)
         roof_q = []
         for e in self.component_elements.get("Roof", []):
-            eid = e["id"] if "id" in e else None
+            eid = e.get("id", None)
             if "area" not in e:
                 raise ValueError(f"Roof element {eid} missing area specification")
             area = float(e["area"])
@@ -993,7 +993,6 @@ class ModelBUEM:
             raise ValueError("Solar/internal gain profiles not initialised. _init5R1C must run first.")
         Q_win_profile = np.asarray(self.profiles["bQ_sol_Windows"])
         Q_opaque_profile = np.asarray(self.profiles["bQ_sol_Opaque"])
-        Q_ig_profile = np.asarray(self.profiles["bQ_ig"])  # noqa: F841
         if "occ_nothome" not in self.profiles or "occ_sleeping" not in self.profiles:
             raise ValueError("Occupancy profiles not set in self.profiles. Call sim_model or _addPara first.")
 
@@ -1089,7 +1088,7 @@ class ModelBUEM:
         # milp_meta: parameter bundle forwarded to _build_and_solve_milp
         try:
             design = max(1.0, float(self.calcDesignHeatLoad()))
-        except Exception:
+        except (TypeError, ValueError, KeyError):
             design = 1000.0
         temp_range = max(0.1, abs(self.bT_comf_ub - self.bT_comf_lb))
         M_array = np.zeros(n)
@@ -1149,7 +1148,7 @@ class ModelBUEM:
             try:
                 load_dotenv(found_env, override=False)
                 print(f"[MILP] Loaded .env: {found_env}")
-            except Exception:
+            except (OSError, ValueError):
                 print("[MILP] Warning: python-dotenv failed to load .env (continuing)")
 
         def clean_path(p):
@@ -1284,7 +1283,7 @@ class ModelBUEM:
         objective = cp.Minimize(cp.sum(Q_heat + Q_cool))
         prob = cp.Problem(objective, constraints)
 
-        solver_enum, cbc_path, glpsol_path = self._ensure_milp_solver()
+        solver_enum, cbc_path, _glpsol_path = self._ensure_milp_solver()
 
         if solver_enum is not None:
             # let cvxpy solve with its solver enum
@@ -1300,7 +1299,7 @@ class ModelBUEM:
             # fallback: use PuLP + cbc executable
             try:
                 import pulp
-            except Exception:
+            except ImportError:
                 raise RuntimeError(
                     "No cvxpy MILP solver available and PuLP"
                     " not installed. Install pulp (pip install pulp)."
@@ -1459,7 +1458,7 @@ class ModelBUEM:
         try:
             prob.solve(solver=cp.CLARABEL, verbose=False)
             solver_used = "CLARABEL"
-        except Exception:
+        except (cp.error.SolverError, ValueError):
             prob.solve(solver=cp.OSQP, eps_abs=1e-6, eps_rel=1e-6, max_iter=10000, verbose=False)
             solver_used = "OSQP"
         print(f"Solver: {solver_used}, status: {prob.status}")
