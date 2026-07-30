@@ -6,17 +6,23 @@ from typing import Any, Dict
 from .attribute_types import AttributeCategory, AttrType, AttributeSpec
 
 # ── Optional external sub-packages (now independent repos in UU-BUEM org) ─────
-# buem-occupancy: https://github.com/UU-BUEM/occupancy
-# buem-weather:   https://github.com/UU-BUEM/weather
-# Install via: pip install buem-occupancy  /  pip install buem-weather
+# occupancy: https://github.com/UU-BUEM/occupancy
+# weather:   https://github.com/UU-BUEM/weather
+# Install via: pip install buem[occupancy,weather]  (or `pip install occupancy` / `pip install weather` directly)
 try:
-    from buem_occupancy.occupancy_profile import OccupancyProfile  # type: ignore[import]
-    from buem_occupancy.electricity_consumption import ElectricityConsumptionProfile  # type: ignore[import]
+    from occupancy import ElectricityConsumptionProfile, HouseholdProfile, to_buem_profiles  # type: ignore[import]
     _OCCUPANCY_AVAILABLE = True
 except ImportError:
     _OCCUPANCY_AVAILABLE = False
-    OccupancyProfile = None  # type: ignore[assignment,misc]
     ElectricityConsumptionProfile = None  # type: ignore[assignment,misc]
+    HouseholdProfile = None  # type: ignore[assignment,misc]
+    to_buem_profiles = None  # type: ignore[assignment,misc]
+
+# Defaults for the built-in household electricity/internal-gains profile below;
+# also used as the "num_persons"/"year"/"seed" AttributeSpec defaults further down.
+DEFAULT_NUM_PERSONS = 4
+DEFAULT_YEAR = 2018
+DEFAULT_SEED = 42
 
 # --- changed code: make weather CSV path configurable via BUEM_WEATHER_DIR env var ---
 # Default to package-local data/weather folder if env var is not set so behavior is backwards-compatible.
@@ -52,6 +58,12 @@ else:
     # Reconstruct DNI and DHI from GHI using pvlib DISC decomposition.
     # COSMO-REA6 stores DNI = (GHI-DHI)/cos(zenith), which diverges near the horizon
     # (observed max: 4951 W/m2, physically impossible).  DISC gives bounded 0..~1000 W/m2.
+    # NOTE: these coordinates are the fixed COSMO-REA6 grid cell this CSV was extracted for
+    # (encoded in the filename's ix_390_650 grid indices), not the "latitude"/"longitude"
+    # AttributeSpec defaults below (52.0/5.0) which describe the building's own location for
+    # solar-gain/shading calculations. They are intentionally independent: swapping in a
+    # different building location does not change which weather-station grid cell this file
+    # represents.
     _solpos = pvlib.solarposition.get_solarposition(_df.index, latitude=52.07, longitude=5.07)
     _dni_extra = pvlib.irradiance.get_extra_radiation(_df.index.dayofyear)
     _disc = pvlib.irradiance.disc(
@@ -79,27 +91,40 @@ ghi_profile = df_weather["GHI"]
 dni_profile = df_weather["DNI"]   # DISC-reconstructed, physically bounded
 dhi_profile = df_weather["DHI"]   # back-computed from GHI - DNI*cos(zenith)
 
-# Generate electricity load profile: use buem-occupancy if available, else sinusoidal fallback.
-# Install the occupancy package: pip install buem-occupancy
+# Generate Q_ig/elecLoad/occ_nothome/occ_sleeping: use occupancy's to_buem_profiles() if
+# available, else a synthetic sinusoidal fallback for all four series.
+# Install the occupancy package: pip install buem[occupancy]
 if _OCCUPANCY_AVAILABLE:
-    _occ = OccupancyProfile(num_persons=4, year=2018, seed=42)
-    _occ.generate()
-    _elec_df = ElectricityConsumptionProfile(occupancy_profile=_occ, seed=42).generate()
-    realistic_elec_load = _elec_df["total_power_kwh"]  # kWh per hour
+    _household = HouseholdProfile(num_persons=DEFAULT_NUM_PERSONS, year=DEFAULT_YEAR, seed=DEFAULT_SEED)
+    _elec = ElectricityConsumptionProfile(occupancy_profile=_household, seed=DEFAULT_SEED)
+    _buem_inputs = to_buem_profiles(_elec.to_result())
+    realistic_elec_load = _buem_inputs["elecLoad"].reindex(main_index, method="nearest", fill_value=0.0)
+    realistic_elec_load.name = "elecLoad"
+    q_ig_profile = _buem_inputs["Q_ig"].reindex(main_index, method="nearest", fill_value=0.0)
+    occ_nothome_profile = _buem_inputs["occ_nothome"].reindex(main_index, method="nearest", fill_value=0.0)
+    occ_sleeping_profile = _buem_inputs["occ_sleeping"].reindex(main_index, method="nearest", fill_value=0.0)
 else:
-    # Fallback: simple sinusoidal daily pattern scaled to ~3.5 kWh/day (avg Dutch household)
+    # Fallback: simple sinusoidal patterns (no external occupancy data available)
     import warnings
     warnings.warn(
-        "buem-occupancy package not found; using sinusoidal electricity load fallback. "
-        "Install it with: pip install buem-occupancy",
+        "occupancy package not found; using synthetic sinusoidal fallback profiles for "
+        "Q_ig/elecLoad/occ_nothome/occ_sleeping. Install it with: pip install buem[occupancy]",
         ImportWarning,
         stacklevel=1,
     )
+    # ~3.5 kWh/day sinusoidal daily pattern (avg Dutch household)
     _t = np.linspace(0, 2 * np.pi, n_hours, endpoint=False)
     realistic_elec_load = pd.Series(
         0.15 + 0.12 * (1 - np.cos(_t)) + 0.04 * (1 - np.cos(2 * _t)),
         index=main_index,
         name="elecLoad",
+    )
+    q_ig_profile = pd.Series([0.1] * n_hours, index=main_index)
+    occ_nothome_profile = pd.Series(
+        0.5 * (1 + np.sin(np.linspace(-np.pi / 2, 3 * np.pi / 2, n_hours))), index=main_index
+    )
+    occ_sleeping_profile = pd.Series(
+        0.5 * (1 - np.cos(np.linspace(0, 2 * np.pi, n_hours))), index=main_index
     )
 
 # Build attribute specs using realistic electricity load
@@ -137,15 +162,15 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
         "Q_ig",
         AttributeCategory.FIXED,
         AttrType.SERIES,
-        default=pd.Series([0.1] * n_hours, index=main_index),
-        doc="Internal gains profile (pd.Series)",
+        default=q_ig_profile,
+        doc="Internal gains profile (pd.Series), kW. From occupancy.to_buem_profiles() when available.",
     ),
     "occ_nothome": AttributeSpec("occ_nothome", AttributeCategory.FIXED, AttrType.SERIES,
-                                 default=pd.Series(0.5 * (1 + np.sin(np.linspace(-np.pi/2, 3*np.pi/2, n_hours))), index=main_index),
-                                 doc="Occupancy away profile"),
+                                 default=occ_nothome_profile,
+                                 doc="Occupancy away profile (fraction not home). From occupancy.to_buem_profiles() when available."),
     "occ_sleeping": AttributeSpec("occ_sleeping", AttributeCategory.FIXED, AttrType.SERIES,
-                                  default=pd.Series(0.5 * (1 - np.cos(np.linspace(0, 2*np.pi, n_hours))), index=main_index),
-                                  doc="Sleeping occupancy profile"),
+                                  default=occ_sleeping_profile,
+                                  doc="Sleeping occupancy profile (fraction asleep). From occupancy.to_buem_profiles() when available."),
     "latitude": AttributeSpec("latitude", AttributeCategory.FIXED, AttrType.FLOAT, 52.0),
     "longitude": AttributeSpec("longitude", AttributeCategory.FIXED, AttrType.FLOAT, 5.0),
     # New structured component tree: component-level U (same for all elements) + element list
@@ -232,10 +257,14 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
     ),
     "ventControl": AttributeSpec("ventControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "control": AttributeSpec("control", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
-    "num_persons": AttributeSpec("num_persons", AttributeCategory.FIXED, AttrType.INT, 4, doc="Default persons for electricity profile generation"),
-    "year": AttributeSpec("year", AttributeCategory.FIXED, AttrType.INT, 2018, doc="Default year for profile generation"),
-    "seed": AttributeSpec("seed", AttributeCategory.FIXED, AttrType.INT, 42, doc="RNG seed for reproducible electricity profiles (default: 42)"),
+    "num_persons": AttributeSpec("num_persons", AttributeCategory.FIXED, AttrType.INT, DEFAULT_NUM_PERSONS, doc="Default persons for electricity profile generation"),
+    "year": AttributeSpec("year", AttributeCategory.FIXED, AttrType.INT, DEFAULT_YEAR, doc="Default year for profile generation"),
+    "seed": AttributeSpec("seed", AttributeCategory.FIXED, AttrType.INT, DEFAULT_SEED, doc="RNG seed for reproducible electricity profiles (default: 42)"),
     "use_provided_elecLoad": AttributeSpec("use_provided_elecLoad", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="If true, keep provided elecLoad even when force=True"),
+    "weather_provider": AttributeSpec("weather_provider", AttributeCategory.FIXED, AttrType.STR, "era5-land",
+                                       doc="Weather source for the dynamic per-location fetch: 'era5-land' (default), 'cosmo-rea6', or 'merra-2'. Only used when the optional weather package is installed."),
+    "use_provided_weather": AttributeSpec("use_provided_weather", AttributeCategory.BOOLEAN, AttrType.BOOL, False,
+                                           doc="If true, keep the provided weather DataFrame instead of dynamically fetching one for (latitude, longitude, year)."),
 }
 
 # Legacy default cfg dict (keeps existing API for other modules)

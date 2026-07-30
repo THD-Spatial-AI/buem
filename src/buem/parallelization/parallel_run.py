@@ -42,6 +42,11 @@ from buem.integration.scripts.geojson_processor import GeoJsonProcessor
 from buem.integration import validate_request_file
 from buem.main import run_model
 from buem.config.cfg_building import CfgBuilding
+from buem.config.weather_cache import (
+    distinct_locations,
+    get_or_fetch_weather,
+    weather_available,
+)
 
 
 def _worker_init():
@@ -53,10 +58,14 @@ def _worker_init():
     BUEM config stack) moves that one-time cost into pool creation rather than into the
     first ``process_single_building`` call.
 
-    The import of ``buem.config.cfg_attribute`` also triggers the weather-data load.
-    Because the main process has already created the feather cache, the workers read
-    the fast binary feather file (~50 ms) instead of parsing the CSV and running the
-    pvlib DISC decomposition (~2-3 s).
+    The import of ``buem.config.cfg_attribute`` also triggers the bundled-CSV
+    weather-data load (the offline fallback default). Because the main process has
+    already created its feather cache, workers read the fast binary feather file
+    (~50 ms) instead of parsing the CSV and running the pvlib DISC decomposition
+    (~2-3 s). Per-building dynamic weather (when the optional ``weather`` package is
+    installed) is resolved separately, per building, inside each worker via
+    ``AttributeBuilder.generate_weather_profile()`` -- see ``process_buildings``'s
+    pre-warm step below for why that no longer assumes a single global location.
     """
     # Heavy numerics / solver
     import numpy          # noqa: F401
@@ -65,6 +74,31 @@ def _worker_init():
 
     # BUEM config stack (triggers weather feather-cache read via cfg_attribute)
     from buem.config import cfg_attribute        # noqa: F401
+
+def _extract_building_attrs(building_file: Union[str, Path]) -> Dict[str, Any]:
+    """Best-effort extraction of latitude/longitude/year/weather_provider
+    from a raw building request JSON file, for weather cache pre-warming.
+
+    Returns an empty dict (falls back to distinct_locations()'s own
+    defaults) on any parse failure -- a malformed file here should not
+    block pre-warming for the rest of the batch; process_single_building
+    still validates and reports errors for that file individually.
+    """
+    try:
+        with Path(building_file).open('r') as f:
+            data = json.load(f)
+        feature = data['features'][0] if 'features' in data else data
+        attrs: Dict[str, Any] = dict(
+            feature.get('properties', {}).get('building_attributes', {})
+        )
+        coords = feature.get('geometry', {}).get('coordinates')
+        if coords and len(coords) >= 2:
+            attrs.setdefault('longitude', coords[0])
+            attrs.setdefault('latitude', coords[1])
+        return attrs
+    except Exception:
+        return {}
+
 
 # Configure logging
 logging.basicConfig(
@@ -325,11 +359,36 @@ class ParallelBuildingProcessor:
             performance_metrics['initial_memory_mb'] = initial_memory
         
         try:
-            # Ensure the feather weather cache exists before spawning workers.
-            # The import triggers cfg_attribute module-level code which either reads
-            # the existing cache or creates it from CSV + pvlib DISC.
+            # Ensure the bundled-CSV feather cache exists before spawning workers
+            # (the offline fallback default -- see cfg_attribute.py). The import
+            # triggers module-level code which either reads the existing cache or
+            # creates it from CSV + pvlib DISC.
             from buem.config import cfg_attribute  # noqa: F401
-            logger.info("Weather feather cache ready — workers will load from cache")
+            logger.info("Bundled weather feather cache ready")
+
+            # Pre-warm the dynamic per-location weather cache for every distinct
+            # (latitude, longitude, year, provider) across this batch, in the main
+            # process, before forking workers. A single building batch can span
+            # many locations, so this replaces the old single-global-cache
+            # assumption above with one cache entry per distinct location.
+            if weather_available():
+                locations = distinct_locations(
+                    _extract_building_attrs(f) for f in building_files
+                )
+                logger.info(
+                    "Pre-warming weather cache for %d distinct location(s)",
+                    len(locations),
+                )
+                for lat, lon, year, provider in locations:
+                    try:
+                        get_or_fetch_weather(lat, lon, year, provider)
+                    except Exception as exc:
+                        logger.warning(
+                            "Weather pre-warm failed for (lat=%s, lon=%s, year=%s, "
+                            "provider=%s): %s -- affected buildings will fall back "
+                            "to the bundled default at processing time.",
+                            lat, lon, year, provider, exc,
+                        )
 
             # Use ProcessPoolExecutor for better control over process lifecycle.
             # _worker_init pre-imports heavy modules (cvxpy, numpy, pandas, buem model

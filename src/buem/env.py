@@ -52,7 +52,8 @@ def load_env() -> None:
         if found and found.is_file():
             _root = found.parent
             for _var in (
-                "BUEM_WEATHER_DIR", "BUEM_RESULTS_DIR", "BUEM_LOG_DIR",
+                "BUEM_WEATHER_DIR", "BUEM_WEATHER_DATA_DIR",
+                "BUEM_RESULTS_DIR", "BUEM_LOG_DIR",
                 "BUEM_CBC_EXE", "BUEM_LOG_FILE",
             ):
                 _val = os.environ.get(_var)
@@ -63,6 +64,12 @@ def load_env() -> None:
 
     # 2. Apply defaults relative to the package directory so that an
     #    installed package (or editable install) works out of the box.
+    #    BUEM_WEATHER_DIR holds the bundled offline-fallback CSV and also
+    #    roots the dynamic per-location weather cache (see
+    #    buem.config.weather_cache). BUEM_WEATHER_DATA_DIR (no default
+    #    here) points at the `weather` package's own pre-processed
+    #    provider archives; when unset, weather.get_point_weather() falls
+    #    back to its own data_root() convention.
     _pkg = Path(__file__).parent
     os.environ.setdefault("BUEM_WEATHER_DIR", str(_pkg / "data" / "weather"))
     os.environ.setdefault("BUEM_RESULTS_DIR", str(_pkg / "results"))

@@ -52,8 +52,10 @@ function Show-Help {
     Write-Host "Usage:  .\setup.ps1 <command> [options]" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Environment Setup:" -ForegroundColor Green
-    Write-Host "  install          Install BUEM into the conda environment (conda develop src)"
-    Write-Host "  install-dev      Install BUEM + dev extras (pytest, ruff, mypy)"
+    Write-Host "  env-update       Create/update the conda env from $EnvFile"
+    Write-Host "                   (pulls in the latest occupancy/weather, tracked @main)"
+    Write-Host "  install          env-update + install BUEM (conda develop src)"
+    Write-Host "  install-dev      install + dev extras (pytest, ruff, mypy)"
     Write-Host "  validate         Verify installation and environment paths"
     Write-Host "  version          Print the installed BuEM version"
     Write-Host ""
@@ -109,7 +111,26 @@ function Show-Help {
         -ForegroundColor DarkGray
 }
 
+$EnvFile = "infrastructure/env/buem_env.yml"
+
+function Invoke-EnvUpdate {
+    # Create the conda env if it doesn't exist yet, otherwise update it in
+    # place (--prune removes anything no longer listed). This is what
+    # actually pulls in the latest occupancy/weather (tracked @main in
+    # $EnvFile) -- re-run this after every `git pull` to stay current.
+    $envExists = (conda env list) -match "^\s*$CondaEnv\s"
+    if ($envExists) {
+        Write-Host "Updating conda environment '$CondaEnv' from $EnvFile ..." -ForegroundColor Blue
+        conda env update -n $CondaEnv -f $EnvFile --prune
+    }
+    else {
+        Write-Host "Creating conda environment '$CondaEnv' from $EnvFile ..." -ForegroundColor Blue
+        conda env create -f $EnvFile
+    }
+}
+
 function Invoke-Install {
+    Invoke-EnvUpdate
     Write-Host "Installing BUEM into the conda environment..." -ForegroundColor Blue
     Write-Host "  Running: conda develop src" -ForegroundColor DarkGray
     conda develop src
@@ -117,6 +138,7 @@ function Invoke-Install {
 }
 
 function Invoke-InstallDev {
+    Invoke-EnvUpdate
     Write-Host "Installing BUEM + dev extras into the conda environment..." -ForegroundColor Blue
     conda develop src
     conda install --name $CondaEnv --yes pytest pytest-cov ruff mypy
@@ -143,28 +165,30 @@ function Invoke-Multibuilding {
     Invoke-Buem @(@("multibuilding") + $Rest)
 }
 
+$ComposeFile = "infrastructure/container/docker-compose.yml"
+
 function Invoke-DockerBuild {
     Write-Host "Building Docker image..." -ForegroundColor Blue
-    docker compose build
+    docker compose -f $ComposeFile build
 }
 
 function Invoke-DockerUp {
     Write-Host "Starting containers..." -ForegroundColor Blue
-    docker compose up -d
+    docker compose -f $ComposeFile up -d
     Write-Host "API available at http://localhost:5000" -ForegroundColor Green
 }
 
 function Invoke-DockerDown {
     Write-Host "Stopping containers..." -ForegroundColor Blue
-    docker compose down
+    docker compose -f $ComposeFile down
 }
 
 function Invoke-DockerLogs {
-    docker compose logs -f
+    docker compose -f $ComposeFile logs -f
 }
 
 function Invoke-DockerStatus {
-    docker compose ps
+    docker compose -f $ComposeFile ps
 }
 
 function Invoke-DockerShell {
@@ -195,7 +219,7 @@ function Invoke-TestCoverage {
 
 function Invoke-Clean {
     Write-Host "Cleaning build artefacts and stopping containers..." -ForegroundColor Blue
-    docker compose down 2>$null
+    docker compose -f $ComposeFile down 2>$null
     Remove-Item -Recurse -Force "src\buem.egg-info" -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force "src\buem\__pycache__" -ErrorAction SilentlyContinue
     Get-ChildItem -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
@@ -204,13 +228,14 @@ function Invoke-Clean {
 
 function Invoke-CleanAll {
     Write-Host "Removing containers, volumes, and Docker image..." -ForegroundColor Blue
-    docker compose down -v --rmi all 2>$null
+    docker compose -f $ComposeFile down -v --rmi all 2>$null
     Invoke-Clean
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 switch ($Command.ToLower()) {
     "help"          { Show-Help }
+    "env-update"    { Invoke-EnvUpdate }
     "install"       { Invoke-Install }
     "install-dev"   { Invoke-InstallDev }
     "validate"      { Invoke-Validate }

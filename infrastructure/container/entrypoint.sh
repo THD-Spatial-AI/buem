@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# ...existing code...
 # Simple entrypoint to switch runtime based on RUN_MODE env var.
 # RUN_MODE=api    -> run gunicorn serving buem.apis.api_server:create_app()
 # RUN_MODE=worker -> run python -m buem.main
+#
+# NOTE: not currently wired into infrastructure/container/Dockerfile (which
+# uses a direct CMD instead); kept here in case a future image wants
+# RUN_MODE-based dispatch, matching weather's ENTRYPOINT pattern.
 set -e
 
 RUN_MODE="${RUN_MODE:-worker}"   # default to worker if not set
