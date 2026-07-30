@@ -13,22 +13,16 @@ Usage:
   python test_geojson_integration.py --verbose
   python test_geojson_integration.py --test-files path/to/additional/files/*.geojson
 """
-import sys
-import json
 import argparse
-from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Any
+import json
 import logging
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from buem.integration.scripts.geojson_validator import (
-    validate_geojson_request, 
-    create_validation_report,
-    ValidationLevel,
-    GeoJsonValidator
-)
-from buem.integration.scripts.debug_utils import BuemDebugger
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from buem.integration.scripts.geojson_validator import ValidationLevel, validate_geojson_request
 
 
 class GeoJsonTestSuite:
@@ -54,7 +48,7 @@ class GeoJsonTestSuite:
         if self.verbose:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
     
-    def test_schema_validation(self) -> Dict[str, Any]:
+    def test_schema_validation(self) -> dict[str, Any]:
         """Test schema validation functionality."""
         self.log("Testing schema validation...")
         
@@ -98,7 +92,7 @@ class GeoJsonTestSuite:
         self.results['validation_tests'] = results
         return results
     
-    def test_format_conversion(self) -> Dict[str, Any]:
+    def test_format_conversion(self) -> dict[str, Any]:
         """Test hybrid format conversion (child_components to nested components)."""
         self.log("Testing format conversion...")
         
@@ -129,7 +123,7 @@ class GeoJsonTestSuite:
         self.results['format_conversion_tests'] = results
         return results
     
-    def test_processing_pipeline(self) -> Dict[str, Any]:
+    def test_processing_pipeline(self) -> dict[str, Any]:
         """Test complete processing pipeline."""
         self.log("Testing processing pipeline...")
         
@@ -163,7 +157,7 @@ class GeoJsonTestSuite:
         self.results['processing_tests'] = results
         return results
     
-    def test_response_schema_compliance(self) -> Dict[str, Any]:
+    def test_response_schema_compliance(self) -> dict[str, Any]:
         """Test that responses comply with response schema."""
         self.log("Testing response schema compliance...")
         
@@ -187,7 +181,7 @@ class GeoJsonTestSuite:
         self.results['schema_compliance_tests'] = results
         return results
     
-    def _test_single_validation(self, file_path: Path, should_pass: bool = True) -> Dict[str, Any]:
+    def _test_single_validation(self, file_path: Path, should_pass: bool = True) -> dict[str, Any]:
         """Test validation of a single file."""
         try:
             with file_path.open('r') as f:
@@ -218,7 +212,7 @@ class GeoJsonTestSuite:
                 'message': f"Validation test failed with exception: {e}"
             }
     
-    def _test_validation_payload(self, payload: Dict[str, Any], name: str, should_pass: bool = True) -> Dict[str, Any]:
+    def _test_validation_payload(self, payload: dict[str, Any], name: str, should_pass: bool = True) -> dict[str, Any]:
         """Test validation of a payload."""
         try:
             result = validate_geojson_request(payload)
@@ -246,7 +240,7 @@ class GeoJsonTestSuite:
                 'message': f"Validation test failed with exception: {e}"
             }
     
-    def _test_format_conversion(self, payload: Dict[str, Any], name: str) -> Dict[str, Any]:
+    def _test_format_conversion(self, payload: dict[str, Any], name: str) -> dict[str, Any]:
         """Test format conversion functionality."""
         try:
             result = validate_geojson_request(payload)
@@ -295,7 +289,7 @@ class GeoJsonTestSuite:
                 'message': f"Format conversion test failed: {e}"
             }
     
-    def _test_processing_pipeline(self, file_path: Path) -> Dict[str, Any]:
+    def _test_processing_pipeline(self, file_path: Path) -> dict[str, Any]:
         """Test complete processing pipeline (validation + processing)."""
         try:
             with file_path.open('r') as f:
@@ -336,7 +330,7 @@ class GeoJsonTestSuite:
                 'message': f"Processing pipeline test failed: {e}"
             }
     
-    def _test_response_compliance(self, file_path: Path) -> Dict[str, Any]:
+    def _test_response_compliance(self, file_path: Path) -> dict[str, Any]:
         """Test response schema compliance (structure check)."""
         try:
             # Create expected response structure and check compliance
@@ -429,7 +423,7 @@ class GeoJsonTestSuite:
                 'message': f"Response compliance test failed: {e}"
             }
     
-    def _create_invalid_samples(self) -> List[Dict[str, Any]]:
+    def _create_invalid_samples(self) -> list[dict[str, Any]]:
         """Create invalid sample payloads for testing."""
         return [
             # Missing required fields
@@ -458,7 +452,7 @@ class GeoJsonTestSuite:
             }
         ]
     
-    def _create_child_components_sample(self) -> Dict[str, Any]:
+    def _create_child_components_sample(self) -> dict[str, Any]:
         """Create sample with child_components format."""
         return {
             "type": "FeatureCollection",
@@ -497,7 +491,7 @@ class GeoJsonTestSuite:
             }]
         }
     
-    def _create_hybrid_format_sample(self) -> Dict[str, Any]:
+    def _create_hybrid_format_sample(self) -> dict[str, Any]:
         """Create sample with both formats (should prefer nested)."""
         return {
             "type": "FeatureCollection", 
@@ -533,7 +527,7 @@ class GeoJsonTestSuite:
             }]
         }
     
-    def run_all_tests(self) -> Dict[str, Any]:
+    def run_all_tests(self) -> dict[str, Any]:
         """Run all test suites."""
         self.log("Starting comprehensive GeoJSON test suite...")
         
@@ -575,7 +569,7 @@ class GeoJsonTestSuite:
         
         return summary
     
-    def print_summary(self, summary: Dict[str, Any]):
+    def print_summary(self, summary: dict[str, Any]):
         """Print test summary."""
         print("\n" + "="*60)
         print("BUEM GEOJSON TEST SUITE RESULTS")

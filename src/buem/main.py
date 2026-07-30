@@ -1,11 +1,13 @@
-import time
 import logging
-from buem.thermal.model_buem import ModelBUEM
-from buem.results.standard_plots import PlotVariables as pvar
+import sys
+import time
+
+import numpy as np
+
 from buem.config.cfg_attribute import cfg
 from buem.config.validator import validate_cfg
-import numpy as np
-import sys
+from buem.results.standard_plots import PlotVariables as pvar
+from buem.thermal.model_buem import ModelBUEM
 
 logger = logging.getLogger(__name__)
 

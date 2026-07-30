@@ -3,7 +3,9 @@ Build complete building attributes by merging payload, database, and defaults.
 Generate weather and electricity profiles, and align timeseries indices.
 """
 import warnings
-from typing import Dict, Any, Optional, Callable
+from collections.abc import Callable
+from typing import Any
+
 import pandas as pd
 
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS
@@ -28,9 +30,9 @@ class AttributeBuilder:
     
     def __init__(
         self,
-        payload_attrs: Dict[str, Any],
-        building_id: Optional[str] = None,
-        db_fetcher: Optional[Callable[[str], Dict[str, Any]]] = None
+        payload_attrs: dict[str, Any],
+        building_id: str | None = None,
+        db_fetcher: Callable[[str], dict[str, Any]] | None = None
     ):
         """
         Initialize attribute builder.
@@ -49,7 +51,7 @@ class AttributeBuilder:
         self.db_fetcher = db_fetcher
         self.merged_attrs = {}
         
-    def build(self) -> Dict[str, Any]:
+    def build(self) -> dict[str, Any]:
         """
         Build complete attribute dictionary.
         

@@ -2,14 +2,13 @@
 import json
 from pathlib import Path
 
-import pandas as pd
 import numpy as np
-import pytest
+import pandas as pd
 
-from buem.integration.scripts.attribute_builder import AttributeBuilder
 from buem.config.cfg_building import CfgBuilding
-from buem.integration.scripts.result_cache import compute_cfg_hash
+from buem.integration.scripts.attribute_builder import AttributeBuilder
 from buem.integration.scripts.geojson_validator import validate_geojson_request
+from buem.integration.scripts.result_cache import compute_cfg_hash
 
 BUILDING_FILE = Path(__file__).resolve().parent.parent / "src" / "buem" / "data" / "buildings" / "dummy" / "building_01_small_residential.json"
 

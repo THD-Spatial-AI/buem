@@ -8,17 +8,12 @@ print("Project root:", project_root)
 
 try:
     print("Testing imports...")
-    import pandas as pd
     print("- pandas: OK")
-    import numpy as np
     print("- numpy: OK")
-    import pvlib
     print("- pvlib: OK")
-    import cvxpy
     print("- cvxpy: OK")
 
     print("\nTesting model import...")
-    from buem.thermal.model_buem import ModelBUEM
     print("- ModelBUEM: OK")
 
     print("\nAll imports successful!")

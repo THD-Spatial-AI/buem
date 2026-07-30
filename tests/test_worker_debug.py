@@ -1,11 +1,10 @@
 """Debug: test worker init and process_single_building in pool."""
-from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 
 # Ensure feather cache
 from buem.config import cfg_attribute  # noqa: F401
-
-from buem.parallelization.parallel_run import process_single_building, _worker_init
+from buem.parallelization.parallel_run import _worker_init, process_single_building
 
 building = Path(__file__).resolve().parent.parent / "src" / "buem" / "data" / "buildings" / "dummy" / "building_01_small_residential.json"
 

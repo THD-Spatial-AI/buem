@@ -1,27 +1,24 @@
 """
 Process GeoJSON payloads: extract attributes, run thermal model, return results.
 """
-from typing import Any, Callable, Dict, List, Optional
-from datetime import datetime, timezone
-from pathlib import Path
+import gzip
+import json
+import logging
 import time
 import uuid
-import json
-import gzip
-import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from flask import current_app
 
-from buem.integration.scripts.attribute_builder import AttributeBuilder
-from buem.integration.scripts.geojson_validator import (
-    validate_geojson_request, 
-    create_validation_report,
-    ValidationLevel
-)
 from buem.config.cfg_building import CfgBuilding
-from buem.main import run_model
+from buem.integration.scripts.attribute_builder import AttributeBuilder
+from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
 from buem.integration.scripts.result_cache import compute_cfg_hash, get_cached_result, store_result
+from buem.main import run_model
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +49,10 @@ class GeoJsonProcessor:
     
     def __init__(
         self,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         include_timeseries: bool = False,
-        db_fetcher: Optional[Callable[[str], Dict[str, Any]]] = None,
-        result_save_dir: Optional[str] = None,
+        db_fetcher: Callable[[str], dict[str, Any]] | None = None,
+        result_save_dir: str | None = None,
     ):
         self.payload = payload
         self.include_timeseries = include_timeseries
@@ -69,7 +66,7 @@ class GeoJsonProcessor:
             default_dir = Path(__file__).resolve().parents[1] / "results"
             self.result_save_dir = Path(os.environ.get("BUEM_RESULTS_DIR", str(default_dir)))
     
-    def process(self) -> Dict[str, Any]:
+    def process(self) -> dict[str, Any]:
         """
         Process all features and return GeoJSON FeatureCollection with results.
         
@@ -131,7 +128,7 @@ class GeoJsonProcessor:
                     "type": "processing_error",
                     "message": str(exc),
                     "feature_id": feat.get('id'),
-                    "timestamp": datetime.now(timezone.utc).isoformat()
+                    "timestamp": datetime.now(UTC).isoformat()
                 }
                 out_features.append(feat)
         
@@ -139,7 +136,7 @@ class GeoJsonProcessor:
         response = {
             "type": "FeatureCollection",
             "features": out_features,
-            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "processed_at": datetime.now(UTC).isoformat(),
             "processing_elapsed_s": round(time.time() - start_time, 3),
             "metadata": {
                 "total_features": len(features),
@@ -158,7 +155,7 @@ class GeoJsonProcessor:
         
         return response
     
-    def _process_single_feature(self, feature: Dict[str, Any], validation_result) -> Dict[str, Any]:
+    def _process_single_feature(self, feature: dict[str, Any], validation_result) -> dict[str, Any]:
         """
         Process single GeoJSON feature: build attributes, run model, add results.
         
@@ -292,7 +289,7 @@ class GeoJsonProcessor:
     def _build_thermal_load_profile(
         self, times, heating, cooling, electricity, elapsed, 
         start_time, end_time, resolution, resolution_unit
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Build comprehensive thermal load profile matching response schema.
         

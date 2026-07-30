@@ -9,7 +9,7 @@ This decouples ingestion from computation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from buem.buildings.components.base import EnvelopeElement
 
@@ -44,7 +44,7 @@ class BuildingIdentity:
     country: str = "DE"
     building_type: str = "SFH"
     construction_period: str = ""
-    tabula_variant_code: Optional[str] = None
+    tabula_variant_code: str | None = None
     n_storeys: int = 1
     neighbour_status: str = "B_Alone"
     latitude: float = 52.0
@@ -109,8 +109,8 @@ class ThermalProperties:
     F_f: float = 0.20
     F_w: float = 1.0
     h_room: float = 2.5
-    phi_int: Optional[float] = None
-    q_w_nd: Optional[float] = None
+    phi_int: float | None = None
+    q_w_nd: float | None = None
     F_red_htr: float = 1.0
 
 
@@ -142,33 +142,33 @@ class Building:
     """
 
     identity: BuildingIdentity
-    elements: List[EnvelopeElement] = field(default_factory=list)
+    elements: list[EnvelopeElement] = field(default_factory=list)
     thermal: ThermalProperties = field(default_factory=ThermalProperties)
     A_ref: float = 0.0
 
     # ── element accessors ────────────────────────────────────────────────────
 
-    def walls(self) -> List[EnvelopeElement]:
+    def walls(self) -> list[EnvelopeElement]:
         """Return all wall elements."""
         return [e for e in self.elements if e.element_type == "wall"]
 
-    def roofs(self) -> List[EnvelopeElement]:
+    def roofs(self) -> list[EnvelopeElement]:
         """Return all roof elements."""
         return [e for e in self.elements if e.element_type == "roof"]
 
-    def floors(self) -> List[EnvelopeElement]:
+    def floors(self) -> list[EnvelopeElement]:
         """Return all floor elements."""
         return [e for e in self.elements if e.element_type == "floor"]
 
-    def windows(self) -> List[EnvelopeElement]:
+    def windows(self) -> list[EnvelopeElement]:
         """Return all window elements."""
         return [e for e in self.elements if e.element_type == "window"]
 
-    def doors(self) -> List[EnvelopeElement]:
+    def doors(self) -> list[EnvelopeElement]:
         """Return all door elements."""
         return [e for e in self.elements if e.element_type == "door"]
 
-    def ventilation_elements(self) -> List[EnvelopeElement]:
+    def ventilation_elements(self) -> list[EnvelopeElement]:
         """Return all ventilation elements."""
         return [e for e in self.elements if e.element_type == "ventilation"]
 
@@ -182,7 +182,7 @@ class Building:
 
     # ── serialisation ────────────────────────────────────────────────────────
 
-    def to_v3_geojson_feature(self) -> Dict[str, Any]:
+    def to_v3_geojson_feature(self) -> dict[str, Any]:
         """Serialise to a v3-schema-compliant GeoJSON Feature dict.
 
         Returns
@@ -197,12 +197,12 @@ class Building:
         a_ref = self.computed_A_ref()
 
         # --- envelope node (inside building, with inline thermal props) ---
-        envelope_elements: List[Dict[str, Any]] = []
+        envelope_elements: list[dict[str, Any]] = []
         for elem in self.elements:
             envelope_elements.append(elem.to_element_dict())
 
         # --- thermal node (inside building, bulk properties only) ---
-        thermal_node: Dict[str, Any] = {
+        thermal_node: dict[str, Any] = {
             "n_air_infiltration": {"value": round(th.n_air_infiltration, 4), "unit": "1/h"},
             "n_air_use": {"value": round(th.n_air_use, 4), "unit": "1/h"},
             "c_m": {"value": round(th.c_m, 2), "unit": "kJ/(m2K)"},
@@ -223,7 +223,7 @@ class Building:
             thermal_node["q_w_nd"] = {"value": round(th.q_w_nd, 2), "unit": "kWh/(m2a)"}
 
         # --- building node (envelope + thermal nested inside) ---
-        building_node: Dict[str, Any] = {
+        building_node: dict[str, Any] = {
             "building_type": ident.building_type,
             "construction_period": ident.construction_period,
             "country": ident.country,

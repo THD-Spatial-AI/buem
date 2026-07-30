@@ -1,13 +1,14 @@
-from flask import Flask, jsonify, send_from_directory
-from flask_swagger_ui import get_swaggerui_blueprint
-from buem.env import load_env
-from pathlib import Path
 import logging
 import os
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-from buem.apis.model_api import bp as model_bp
+from flask import Flask, jsonify, send_from_directory
+from flask_swagger_ui import get_swaggerui_blueprint
+
 from buem.apis.files_api import bp as files_bp
+from buem.apis.model_api import bp as model_bp
+from buem.env import load_env
 
 # load .env and apply defaults (no-op if already done)
 load_env()

@@ -21,29 +21,26 @@ Key Performance Optimizations:
 """
 
 import argparse
-import time
-import sys
-import os
 import json
 import multiprocessing
-import psutil
-import threading
+import os
+import time
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-import math
+from typing import Any
+
+import psutil
 
 # Optimize environment
 os.environ['OMP_NUM_THREADS'] = '4'
 os.environ['MKL_NUM_THREADS'] = '4'
 os.environ['NUMEXPR_MAX_THREADS'] = '8'
 
-import pandas as pd
 import numpy as np
 
-from buem.main import run_model, cfg
-from buem.parallelization.parallel_run import ParallelBuildingProcessor
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from buem.main import cfg, run_model
+from buem.parallelization.parallel_run import ParallelBuildingProcessor
+
 
 class OptimizedPerformanceAnalyzer:
     """Advanced performance analyzer with Intel Core Ultra 7 165H optimizations."""
@@ -67,7 +64,7 @@ class IntelligentWorkerAllocator:
     """Smart worker allocation based on system hardware."""
     
     @staticmethod
-    def calculate_optimal_workers(building_count: int, cpu_cores: int = 22) -> Dict[str, int]:
+    def calculate_optimal_workers(building_count: int, cpu_cores: int = 22) -> dict[str, int]:
         """Calculate optimal worker allocation based on building count and hardware."""
         
         # Reserve 2 threads for system
@@ -95,7 +92,7 @@ class OptimizedBuildingGenerator:
     """Generate realistic building configurations for optimization testing."""
     
     @staticmethod
-    def create_building_portfolio(count: int, complexity_range: str = 'mixed') -> List[Dict]:
+    def create_building_portfolio(count: int, complexity_range: str = 'mixed') -> list[dict]:
         """Generate diverse building portfolio for testing."""
         print(f"🏗️  Generating {count} optimized building configurations...")
         
@@ -169,7 +166,7 @@ class OptimizedBuildingGenerator:
         
         return buildings
 
-def create_optimized_geojson_files(buildings: List[Dict], output_dir: Path) -> List[Path]:
+def create_optimized_geojson_files(buildings: list[dict], output_dir: Path) -> list[Path]:
     """Create optimized GeoJSON files for testing."""
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
@@ -207,7 +204,7 @@ def create_optimized_geojson_files(buildings: List[Dict], output_dir: Path) -> L
     print(f"✅ Created {len(geojson_files)} GeoJSON files")
     return geojson_files
 
-def benchmark_single_building_performance() -> Dict[str, Any]:
+def benchmark_single_building_performance() -> dict[str, Any]:
     """Benchmark single building performance as baseline."""
     print("\\n🏢 SINGLE BUILDING BASELINE BENCHMARK")
     print("=" * 50)
@@ -255,7 +252,7 @@ def benchmark_single_building_performance() -> Dict[str, Any]:
     
     return results
 
-def test_multibuilding_optimization(building_count: int = 10, max_workers: int = 16) -> Dict[str, Any]:
+def test_multibuilding_optimization(building_count: int = 10, max_workers: int = 16) -> dict[str, Any]:
     """Test optimized multi-building processing."""
     print(f"\\n👥 MULTI-BUILDING OPTIMIZATION TEST ({building_count} buildings)")
     print("=" * 50)
@@ -361,7 +358,7 @@ def test_multibuilding_optimization(building_count: int = 10, max_workers: int =
     
     return results
 
-def estimate_large_portfolio_performance(results: Dict[str, Any], target_buildings: int = 50) -> None:
+def estimate_large_portfolio_performance(results: dict[str, Any], target_buildings: int = 50) -> None:
     """Estimate performance for large building portfolios."""
     print(f"\\n📊 LARGE PORTFOLIO ESTIMATION ({target_buildings} buildings)")
     print("=" * 50)
@@ -384,7 +381,7 @@ def estimate_large_portfolio_performance(results: Dict[str, Any], target_buildin
         print(f"💾 Estimated memory usage: {estimated_memory_gb:.1f}GB")
         
         # Optimization recommendations
-        print(f"\\n💡 OPTIMIZATION RECOMMENDATIONS:")
+        print("\\n💡 OPTIMIZATION RECOMMENDATIONS:")
         if estimated_time_minutes > 30:
             print("   ⚡ Consider enabling chunked processing for memory efficiency")
             print("   🚀 Use NVMe SSD for result file I/O")
@@ -436,7 +433,7 @@ def main():
     estimate_large_portfolio_performance(multibuilding_results, args.estimate_large)
     
     # Final optimization summary
-    print(f"\\n🎯 PRODUCTION OPTIMIZATION SUMMARY")
+    print("\\n🎯 PRODUCTION OPTIMIZATION SUMMARY")
     print("=" * 50)
     
     if 'baseline' in all_results:

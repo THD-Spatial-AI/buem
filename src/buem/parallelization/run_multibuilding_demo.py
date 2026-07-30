@@ -37,12 +37,12 @@ Output:
 """
 
 import argparse
-import sys
-import time
 import logging
 import multiprocessing
+import sys
+import time
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Any
 
 try:
     import psutil
@@ -57,9 +57,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from buem.parallelization.parallel_run import ParallelBuildingProcessor, demo_parallel_processing
-from buem.parallelization.sequence_run import SequentialBuildingProcessor, demo_sequential_processing
+from buem.parallelization.parallel_run import demo_parallel_processing
 from buem.parallelization.performance_comparison import PerformanceComparator, demo_performance_comparison
+from buem.parallelization.sequence_run import demo_sequential_processing
 
 
 def print_banner():
@@ -100,7 +100,7 @@ def check_dependencies():
     return True
 
 
-def check_dummy_buildings() -> List[Path]:
+def check_dummy_buildings() -> list[Path]:
     """Check for dummy building files and create them if missing."""
     dummy_dir = Path(__file__).parent.parent / "data/buildings/dummy"
     building_files = list(dummy_dir.glob("*.json"))
@@ -317,7 +317,7 @@ def generate_summary_report(results):
     print("="*80)
 
 
-def validate_system_parameters(cores: Optional[int] = None, workers: Optional[int] = None) -> Tuple[bool, Dict[str, Any], str]:
+def validate_system_parameters(cores: int | None = None, workers: int | None = None) -> tuple[bool, dict[str, Any], str]:
     """Validate system parameters and provide recommendations."""
     system_info = get_system_info()
     max_cores = system_info['cpu_cores']['logical']
@@ -369,7 +369,7 @@ System specs: {max_cores} logical cores, {system_info['cpu_cores']['physical']} 
     return is_valid, recommendations, range_suggestions if not is_valid else ""
 
 
-def get_system_info() -> Dict[str, Any]:
+def get_system_info() -> dict[str, Any]:
     """Get detailed system information for optimization."""
     cpu_logical = multiprocessing.cpu_count()
     
@@ -408,7 +408,7 @@ def get_system_info() -> Dict[str, Any]:
         }
 
 
-def run_optimization_tests(building_files: List[Path]) -> Dict[str, Any]:
+def run_optimization_tests(building_files: list[Path]) -> dict[str, Any]:
     """Run comprehensive optimization tests with different configurations."""
     logger.info("\\n🔬 Starting Optimization Tests...")
     
@@ -477,7 +477,7 @@ def run_optimization_tests(building_files: List[Path]) -> Dict[str, Any]:
         optimal_config = max(successful_results, 
                            key=lambda x: x['buildings_per_second'] * x['success_rate'])
         
-        logger.info(f"\\n🏆 Optimal Configuration Found:")
+        logger.info("\\n🏆 Optimal Configuration Found:")
         logger.info(f"   📋 Config: {optimal_config['config']['desc']}")
         logger.info(f"   🚀 Performance: {optimal_config['buildings_per_second']:.2f} buildings/sec")
         logger.info(f"   ✅ Success Rate: {optimal_config['success_rate']:.1%}")
@@ -499,7 +499,7 @@ def run_optimization_tests(building_files: List[Path]) -> Dict[str, Any]:
 def run_enhanced_parallel_demo(workers: int):
     """Run parallel demo with specified worker count."""
     print("\\n" + "🚀" * 20)
-    print(f"ENHANCED PARALLEL PROCESSING DEMONSTRATION")
+    print("ENHANCED PARALLEL PROCESSING DEMONSTRATION")
     print(f"Workers: {workers}")
     print("🚀" * 20)
     
@@ -650,19 +650,19 @@ Examples:
         print("=" * 40)
         
         system_info = get_system_info()
-        print(f"\\nSystem Specifications:")
+        print("\\nSystem Specifications:")
         print(f"   CPU Cores: {system_info['cpu_cores']['logical']} logical, {system_info['cpu_cores']['physical']} physical")
         print(f"   Memory: {system_info['memory']['total_gb']} GB total, {system_info['memory']['available_gb']} GB available")
         if system_info.get('psutil_available'):
             print(f"   Memory Usage: {system_info['memory']['percent_used']:.1f}% used")
         
         if is_valid:
-            print(f"\\nConfiguration is valid!")
-            print(f"\\nRecommended settings:")
+            print("\\nConfiguration is valid!")
+            print("\\nRecommended settings:")
             print(f"   --cores {recommendations['cores']}")
             print(f"   --workers {recommendations['workers']}")
         else:
-            print(f"\\nConfiguration issues found:")
+            print("\\nConfiguration issues found:")
             print(f"{range_info}")
         
         sys.exit(0 if is_valid else 1)
@@ -710,7 +710,7 @@ Examples:
     
     total_time = time.time() - start_time
     
-    print(f"\\n" + "⏱️" * 20)
+    print("\\n" + "⏱️" * 20)
     print(f"TOTAL EXECUTION TIME: {total_time:.2f} seconds")
     print("⏱️" * 20)
     

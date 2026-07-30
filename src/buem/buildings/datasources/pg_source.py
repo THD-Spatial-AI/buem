@@ -20,7 +20,6 @@ Requirements
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -83,7 +82,7 @@ class PostgresBuildingSource:
             "user": user,
             "password": password,
         }
-        self._cache: Dict[str, pd.DataFrame] = {}
+        self._cache: dict[str, pd.DataFrame] = {}
 
     def _get_connection(self):
         """Create a new database connection."""
@@ -119,7 +118,7 @@ class PostgresBuildingSource:
 
     # ── filtered accessors ───────────────────────────────────────────────────
 
-    def get_building_ids(self, limit: Optional[int] = None) -> List[int]:
+    def get_building_ids(self, limit: int | None = None) -> list[int]:
         """Return a list of ``building_feature_id`` values."""
         ids = self.buildings["building_feature_id"].tolist()
         if limit is not None:
@@ -132,7 +131,7 @@ class PostgresBuildingSource:
             self.surfaces["building_feature_id"] == building_feature_id
         ]
 
-    def get_tabula_row(self, tabula_id: float) -> Optional[pd.Series]:
+    def get_tabula_row(self, tabula_id: float) -> pd.Series | None:
         """Look up a single TABULA row by ``id``."""
         if pd.isna(tabula_id):
             return None

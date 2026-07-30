@@ -1,23 +1,24 @@
 # ...existing code...
-from typing import Any, Dict, Optional
-import json
 import copy
+import json
+from typing import Any
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from buem.config.cfg_attribute import cfg as DEFAULT_CFG, ATTRIBUTE_SPECS
-from buem.config.attribute_types import AttributeSpec, AttrType, AttributeCategory
+from buem.config.attribute_types import AttributeCategory, AttributeSpec, AttrType
+from buem.config.cfg_attribute import ATTRIBUTE_SPECS
+from buem.config.cfg_attribute import cfg as DEFAULT_CFG
 
 
-def _series_to_list(s: Optional[pd.Series]) -> Optional[list]:
+def _series_to_list(s: pd.Series | None) -> list | None:
     """Convert pandas Series to list or return None."""
     if s is None:
         return None
     return list(s.values)
 
 
-def _df_to_serializable(df: Optional[pd.DataFrame]) -> Optional[Dict[str, Any]]:
+def _df_to_serializable(df: pd.DataFrame | None) -> dict[str, Any] | None:
     """Convert DataFrame to serializable dict with ISO timestamps and column lists."""
     if df is None:
         return None
@@ -26,7 +27,7 @@ def _df_to_serializable(df: Optional[pd.DataFrame]) -> Optional[Dict[str, Any]]:
         **{col: list(df[col].values) for col in df.columns},
     }
 
-def _get_spec_keys_by_category(category: AttributeCategory) -> Dict[str, AttributeSpec]:
+def _get_spec_keys_by_category(category: AttributeCategory) -> dict[str, AttributeSpec]:
     """Return subset of ATTRIBUTE_SPECS for a category."""
     return {k: v for k, v in ATTRIBUTE_SPECS.items() if v.category == category}
 
@@ -44,7 +45,7 @@ class WeatherConfig:
       df: pandas.DataFrame or None
     """
 
-    def __init__(self, value: Optional[Any]):
+    def __init__(self, value: Any | None):
         if isinstance(value, pd.DataFrame):
             self.df = value.copy()
             return
@@ -74,7 +75,7 @@ class WeatherConfig:
         self.df = copy.deepcopy(default_weather) if default_weather is not None else None
 
     @property
-    def index(self) -> Optional[pd.DatetimeIndex]:
+    def index(self) -> pd.DatetimeIndex | None:
         """Return datetime index or None."""
         return None if self.df is None else self.df.index
 
@@ -83,7 +84,7 @@ class WeatherConfig:
         """Number of rows in weather timeseries (0 if none)."""
         return 0 if self.df is None else len(self.df)
 
-    def to_serializable(self) -> Optional[Dict[str, Any]]:
+    def to_serializable(self) -> dict[str, Any] | None:
         """Return a JSON-serializable representation of the weather timeseries."""
         return _df_to_serializable(self.df)
 
@@ -96,8 +97,8 @@ class BooleanConfig:
     New boolean keys supplied by the caller are preserved.
     """
 
-    def __init__(self, value: Optional[Dict[str, Any]]):
-        self._data: Dict[str, bool] = {}
+    def __init__(self, value: dict[str, Any] | None):
+        self._data: dict[str, bool] = {}
         bool_specs = _get_spec_keys_by_category(AttributeCategory.BOOLEAN)
         # start from DEFAULT_CFG booleans
         for k, spec in bool_specs.items():
@@ -108,11 +109,11 @@ class BooleanConfig:
                 if k in bool_specs:
                     self._data[k] = bool(v)
 
-    def as_dict(self) -> Dict[str, bool]:
+    def as_dict(self) -> dict[str, bool]:
         """Return a plain dict of booleans."""
         return dict(self._data)
 
-    def update(self, d: Dict[str, Any]):
+    def update(self, d: dict[str, Any]):
         """Shallow update boolean values from a dict."""
         for k, v in d.items():
             if k in self._data:
@@ -128,9 +129,9 @@ class FixedConfig:
     matching length to the weather index, the list is converted to pandas.Series.
     """
 
-    def __init__(self, value: Optional[Dict[str, Any]], weather_index: Optional[pd.DatetimeIndex]):
+    def __init__(self, value: dict[str, Any] | None, weather_index: pd.DatetimeIndex | None):
         # copy defaults except weather
-        self._data: Dict[str, Any] = {}
+        self._data: dict[str, Any] = {}
         fixed_specs = _get_spec_keys_by_category(AttributeCategory.FIXED)
 
         # Initialize defaults
@@ -157,13 +158,13 @@ class FixedConfig:
                     continue
                 self._data[k] = copy.deepcopy(v)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """Return fixed parameters preserving pandas objects."""
         return dict(self._data)
 
-    def to_serializable(self) -> Dict[str, Any]:
+    def to_serializable(self) -> dict[str, Any]:
         """Return JSON-serializable representation: Series->lists, numpy scalars->py scalars."""
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for k, v in self._data.items():
             if isinstance(v, pd.Series):
                 out[k] = _series_to_list(v)
@@ -179,7 +180,7 @@ class FixedConfig:
                     out[k] = str(v)
         return out
 
-    def update(self, d: Dict[str, Any], weather_index: Optional[pd.DatetimeIndex]):
+    def update(self, d: dict[str, Any], weather_index: pd.DatetimeIndex | None):
         """Update fixed params with same conversion rules as initializer."""
         if not isinstance(d, dict):
             return
@@ -246,7 +247,7 @@ class CfgBuilding:
         # internal merged cfg (kept up-to-date by _build_internal_cfg)
         self._build_internal_cfg()
 
-    def _ensure_and_normalize_input(self, data: Any) -> Dict[str, Any]:
+    def _ensure_and_normalize_input(self, data: Any) -> dict[str, Any]:
         """
         Ensure all attributes (from ATTRIBUTE_SPECS) exist in the input dict. Missing attributes
         are injected from defaults. For pandas objects in defaults, convert them to serializable
@@ -274,7 +275,7 @@ class CfgBuilding:
 
     def _build_internal_cfg(self):
         """Merge weather, boolean, fixed and other attributes into a single internal dict."""
-        cfg: Dict[str, Any] = {}
+        cfg: dict[str, Any] = {}
         # weather as DataFrame
         cfg["weather"] = self.weather.df
         # booleans and fixed attributes
@@ -297,7 +298,7 @@ class CfgBuilding:
         # leave _cfg on the instance
         self._cfg = cfg
 
-    def to_cfg_dict(self) -> Dict[str, Any]:
+    def to_cfg_dict(self) -> dict[str, Any]:
         """
         Return configuration dict using the canonical structured representation.
 
@@ -339,7 +340,7 @@ class CfgBuilding:
         Series/DataFrame are converted to lists/serializable dicts.
         """
         self._build_internal_cfg()
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         out["weather"] = _df_to_serializable(self._cfg.get("weather"))
         for k, v in self._cfg.items():
             if k == "weather":
@@ -358,7 +359,7 @@ class CfgBuilding:
                     out[k] = str(v)
         return json.dumps(out, indent=2)
 
-    def update_from_dict(self, d: Dict[str, Any]):
+    def update_from_dict(self, d: dict[str, Any]):
         """
         Update configuration from a dict. Supports nested {'weather':..., 'booleans':..., 'fixed':...}
         or flat mapping. Missing attributes are left unchanged. Defaults remain available for
@@ -379,7 +380,7 @@ class CfgBuilding:
         self._build_internal_cfg()
 
     @classmethod
-    def from_json_file(cls, path: str) -> "CfgBuilding":
+    def from_json_file(cls, path: str) -> CfgBuilding:
         """Construct CfgBuilding from a JSON file path."""
         with open(path, "r", encoding="utf-8") as fh:
             s = fh.read()

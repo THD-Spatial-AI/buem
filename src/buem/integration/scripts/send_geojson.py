@@ -9,13 +9,14 @@ Usage:
 import argparse
 import json
 import sys
-import requests
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import requests
 
 # Import validation if available
 try:
-    from buem.integration.scripts.geojson_validator import validate_geojson_request, create_validation_report
+    from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
     VALIDATION_AVAILABLE = True
 except ImportError:
     VALIDATION_AVAILABLE = False
@@ -77,7 +78,7 @@ def format_response(response: requests.Response, verbose: bool = True) -> None:
             # Display summary info
             if 'metadata' in data:
                 metadata = data['metadata']
-                print(f"\n📊 Processing Summary:")
+                print("\n📊 Processing Summary:")
                 print(f"   - Total features: {metadata.get('total_features', 'unknown')}")
                 print(f"   - Successful: {metadata.get('successful_features', 'unknown')}")
                 print(f"   - Failed: {metadata.get('failed_features', 'unknown')}")
@@ -106,7 +107,7 @@ def format_response(response: requests.Response, verbose: bool = True) -> None:
         
         # Full response output
         if verbose:
-            print(f"\n📄 Full Response:")
+            print("\n📄 Full Response:")
             print(json.dumps(data, indent=2))
         else:
             # Just show the JSON without extra formatting
@@ -164,7 +165,7 @@ Examples:
     verbose = not args.quiet
     
     if verbose:
-        print(f"🚀 BUEM API Client")
+        print("🚀 BUEM API Client")
         print(f"📁 File: {args.file}")
         print(f"🌐 URL: {args.url}")
     
@@ -191,7 +192,7 @@ Examples:
     # Send request
     try:
         if verbose:
-            print(f"\n📡 Sending request...")
+            print("\n📡 Sending request...")
             start_time = datetime.now()
         
         response = requests.post(

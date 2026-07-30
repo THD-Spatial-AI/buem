@@ -5,18 +5,14 @@ This module provides utilities for testing, debugging, and validating
 GeoJSON payloads and processing results.
 """
 import json
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime
 import logging
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from buem.integration.scripts.geojson_validator import (
-    validate_geojson_request, 
-    create_validation_report,
-    ValidationLevel
-)
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +38,7 @@ class BuemDebugger:
         if verbose:
             logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     
-    def validate_file(self, file_path: str) -> Tuple[bool, str]:
+    def validate_file(self, file_path: str) -> tuple[bool, str]:
         """
         Validate a GeoJSON file.
         
@@ -64,7 +60,7 @@ class BuemDebugger:
         
         return self.validate_payload(payload, source=file_path)
     
-    def validate_payload(self, payload: Dict[str, Any], source: str = "payload") -> Tuple[bool, str]:
+    def validate_payload(self, payload: dict[str, Any], source: str = "payload") -> tuple[bool, str]:
         """
         Validate a GeoJSON payload.
         
@@ -102,7 +98,7 @@ class BuemDebugger:
                 logger.error(error_msg)
             return False, error_msg
     
-    def test_processing(self, file_path: str, include_timeseries: bool = False) -> Optional[Dict[str, Any]]:
+    def test_processing(self, file_path: str, include_timeseries: bool = False) -> dict[str, Any] | None:
         """
         Test complete GeoJSON processing pipeline.
         
@@ -229,7 +225,7 @@ class BuemDebugger:
         except Exception as e:
             return f"❌ Comparison failed: {e}"
     
-    def create_test_summary(self, test_files: List[str]) -> str:
+    def create_test_summary(self, test_files: list[str]) -> str:
         """
         Create a comprehensive test summary for multiple files.
         

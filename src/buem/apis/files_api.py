@@ -1,5 +1,6 @@
-from flask import Blueprint, send_from_directory, current_app, jsonify
 import os
+
+from flask import Blueprint, current_app, jsonify, send_from_directory
 
 bp = Blueprint("files_api", __name__, url_prefix="/api/files")
 

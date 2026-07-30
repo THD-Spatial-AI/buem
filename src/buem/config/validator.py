@@ -10,7 +10,8 @@ Checks performed:
   - element areas > 0 and unique element ids if 'components' provided
   - weather timeseries length consistent when series provided
 """
-from typing import Dict, List, Any, Set
+from typing import Any
+
 
 def _is_number(v) -> bool:
     try:
@@ -19,8 +20,8 @@ def _is_number(v) -> bool:
     except Exception:
         return False
 
-def validate_cfg(cfg: Dict[str, Any]) -> List[str]:
-    issues: List[str] = []
+def validate_cfg(cfg: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
 
     # Require structured 'components' tree
     comps = cfg.get("components")
@@ -28,7 +29,7 @@ def validate_cfg(cfg: Dict[str, Any]) -> List[str]:
         issues.append("components missing or not an object (required)")
         return issues
 
-    seen_ids: Set[str] = set()
+    seen_ids: set[str] = set()
     for comp in ("Walls", "Windows", "Roof", "Floor", "Doors"):
         c = comps.get(comp)
         if c is None:

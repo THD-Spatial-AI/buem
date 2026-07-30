@@ -26,15 +26,13 @@ Usage Examples:
 """
 
 import argparse
-import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
-from buem.integration.scripts.schema_validator import BuemSchemaValidator
-from buem.integration.scripts.schema_manager import SchemaVersionManager
 from buem.integration.scripts.debug_utils import BuemDebugger
+from buem.integration.scripts.schema_manager import SchemaVersionManager
+from buem.integration.scripts.schema_validator import BuemSchemaValidator
 
 
 class SchemaCLI:
@@ -66,7 +64,7 @@ class SchemaCLI:
             print(f"❌ Error listing versions: {e}")
             return 1
     
-    def show_info(self, version: Optional[str] = None) -> int:
+    def show_info(self, version: str | None = None) -> int:
         """Show detailed information about a schema version."""
         try:
             info = self.schema_manager.get_version_info(version)
@@ -93,7 +91,7 @@ class SchemaCLI:
             print(f"❌ Error getting version info: {e}")
             return 1
     
-    def validate_file(self, file_path: Path, version: Optional[str] = None, 
+    def validate_file(self, file_path: Path, version: str | None = None, 
                      json_only: bool = False, buem_only: bool = False,
                      quiet: bool = False) -> int:
         """Validate a JSON file against schemas."""
@@ -123,7 +121,7 @@ class SchemaCLI:
             print(f"❌ Validation error: {e}")
             return 1
     
-    def test_all_examples(self, version: Optional[str] = None) -> int:
+    def test_all_examples(self, version: str | None = None) -> int:
         """Test all example files for a version."""
         try:
             target_version = version or self.schema_manager.get_latest_version()

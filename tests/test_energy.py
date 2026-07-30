@@ -6,8 +6,8 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 os.environ.setdefault("BUEM_WEATHER_DIR", str(project_root / "src" / "buem" / "data" / "weather"))
 
-from buem.main import run_model
 from buem.config.cfg_attribute import cfg
+from buem.main import run_model
 
 
 def main():
@@ -18,7 +18,7 @@ def main():
         heating = res["heating"].sum()
         cooling = res["cooling"].sum()
 
-        print(f"\n=== ENERGY RESULTS ===")
+        print("\n=== ENERGY RESULTS ===")
         print(f"Heating: {heating:.0f} kWh/year")
         print(f"Cooling: {cooling:.0f} kWh/year")
         print(f"Total: {abs(heating) + abs(cooling):.0f} kWh/year")
@@ -35,7 +35,7 @@ def main():
             T_sur = np.asarray(mh.T_sur)
             T_m = np.asarray(mh.T_m)
             T_e = mh.cfg["weather"]["T"].values
-            print(f"\n=== TEMPERATURE STATS (heating model) ===")
+            print("\n=== TEMPERATURE STATS (heating model) ===")
             print(f"T_air : min={T_air.min():.1f}  max={T_air.max():.1f}  mean={T_air.mean():.1f} °C")
             print(f"T_sur : min={T_sur.min():.1f}  max={T_sur.max():.1f}  mean={T_sur.mean():.1f} °C")
             print(f"T_m   : min={T_m.min():.1f}  max={T_m.max():.1f}  mean={T_m.mean():.1f} °C")

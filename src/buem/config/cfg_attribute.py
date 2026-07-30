@@ -1,9 +1,10 @@
-import pandas as pd
-import numpy as np
 import os
-from typing import Any, Dict
+from typing import Any
 
-from .attribute_types import AttributeCategory, AttrType, AttributeSpec
+import numpy as np
+import pandas as pd
+
+from .attribute_types import AttributeCategory, AttributeSpec, AttrType
 
 # ── Optional external sub-packages (now independent repos in UU-BUEM org) ─────
 # occupancy: https://github.com/UU-BUEM/occupancy
@@ -128,7 +129,7 @@ else:
     )
 
 # Build attribute specs using realistic electricity load
-ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
+ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
     "weather": AttributeSpec(
         name="weather",
         category=AttributeCategory.WEATHER,
@@ -268,6 +269,6 @@ ATTRIBUTE_SPECS: Dict[str, AttributeSpec] = {
 }
 
 # Legacy default cfg dict (keeps existing API for other modules)
-cfg: Dict[str, Any] = {spec.name: spec.default for spec in ATTRIBUTE_SPECS.values()}
+cfg: dict[str, Any] = {spec.name: spec.default for spec in ATTRIBUTE_SPECS.values()}
 # Ensure the DataFrame is the actual DataFrame object (already set in spec defaults)
 cfg["weather"] = ATTRIBUTE_SPECS["weather"].default

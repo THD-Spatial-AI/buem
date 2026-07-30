@@ -40,13 +40,15 @@ Performance Insights:
 """
 
 import json
-import time
 import logging
-import psutil
 import statistics
+import time
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union, Tuple
-from datetime import datetime, timezone
+from typing import Any
+
+import psutil
+
 from buem.parallelization.parallel_run import ParallelBuildingProcessor
 from buem.parallelization.sequence_run import SequentialBuildingProcessor
 
@@ -59,8 +61,8 @@ logger = logging.getLogger(__name__)
 
 # Optional imports for visualization
 try:
-    import matplotlib.pyplot as plt
     import matplotlib
+    import matplotlib.pyplot as plt
     matplotlib.use('Agg')  # Use non-interactive backend
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
@@ -90,7 +92,7 @@ class PerformanceComparator:
     
     def __init__(
         self,
-        test_scenarios: List[str] = None,
+        test_scenarios: list[str] = None,
         max_workers: int = None,
         visualize_results: bool = True,
         save_detailed_report: bool = True,
@@ -124,13 +126,13 @@ class PerformanceComparator:
         # System information
         self.system_info = self._collect_system_info()
         
-        logger.info(f"Initialized PerformanceComparator")
+        logger.info("Initialized PerformanceComparator")
         logger.info(f"Test scenarios: {self.test_scenarios}")
         logger.info(f"Max workers: {self.max_workers}")
         logger.info(f"CPU cores: {psutil.cpu_count()} (logical: {psutil.cpu_count(logical=True)})")
         logger.info(f"Available memory: {psutil.virtual_memory().total / (1024**3):.1f} GB")
     
-    def _collect_system_info(self) -> Dict[str, Any]:
+    def _collect_system_info(self) -> dict[str, Any]:
         """Collect system information for benchmarking context."""
         try:
             sys_info = {
@@ -140,7 +142,7 @@ class PerformanceComparator:
                 'memory_total_gb': psutil.virtual_memory().total / (1024**3),
                 'platform': sys.platform,
                 'python_version': sys.version,
-                'timestamp': datetime.now(timezone.utc).isoformat()
+                'timestamp': datetime.now(UTC).isoformat()
             }
             return sys_info
         except Exception as e:
@@ -149,9 +151,9 @@ class PerformanceComparator:
     
     def compare_processing_methods(
         self,
-        building_files: List[Union[str, Path]],
-        worker_counts: List[int] = None
-    ) -> Dict[str, Any]:
+        building_files: list[str | Path],
+        worker_counts: list[int] = None
+    ) -> dict[str, Any]:
         """
         Compare parallel and sequential processing on the same dataset.
         
@@ -180,7 +182,7 @@ class PerformanceComparator:
             'test_info': {
                 'building_count': len(building_files),
                 'worker_counts_tested': worker_counts,
-                'test_timestamp': datetime.now(timezone.utc).isoformat()
+                'test_timestamp': datetime.now(UTC).isoformat()
             },
             'system_info': self.system_info,
             'results': {}
@@ -213,7 +215,7 @@ class PerformanceComparator:
         parallel_results = {}
         
         for worker_count in worker_counts:
-            logger.info(f"\\n" + "="*50)
+            logger.info("\\n" + "="*50)
             logger.info(f"RUNNING PARALLEL PROCESSING ({worker_count} WORKERS)")
             logger.info("="*50)
             
@@ -260,9 +262,9 @@ class PerformanceComparator:
     
     def run_comprehensive_benchmark(
         self,
-        building_files: List[Union[str, Path]] = None,
+        building_files: list[str | Path] = None,
         scaling_test: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run comprehensive benchmarking across multiple scenarios.
         
@@ -295,7 +297,7 @@ class PerformanceComparator:
                 'scenarios_tested': self.test_scenarios,
                 'total_building_files': len(building_files),
                 'scaling_test_enabled': scaling_test,
-                'benchmark_timestamp': datetime.now(timezone.utc).isoformat()
+                'benchmark_timestamp': datetime.now(UTC).isoformat()
             },
             'system_info': self.system_info,
             'scenario_results': {}
@@ -322,7 +324,7 @@ class PerformanceComparator:
             else:
                 test_files = building_files[:config['count']]
             
-            logger.info(f"\\n" + "-"*40)
+            logger.info("\\n" + "-"*40)
             logger.info(f"TESTING SCENARIO: {scenario.upper()} ({len(test_files)} buildings)")
             logger.info("-"*40)
             
@@ -350,7 +352,7 @@ class PerformanceComparator:
         
         return benchmark_results
     
-    def _find_best_configuration(self, comparison_results: Dict[str, Any]) -> Dict[str, Any]:
+    def _find_best_configuration(self, comparison_results: dict[str, Any]) -> dict[str, Any]:
         """Analyze results and recommend best configuration."""
         sequential_time = comparison_results['results']['sequential']['actual_total_time']
         parallel_results = comparison_results['results']['parallel']
@@ -398,7 +400,7 @@ class PerformanceComparator:
             return ("Parallel processing provides good speedup but with diminishing returns. "
                    "Consider reducing worker count for better efficiency.")
     
-    def _generate_performance_summary(self, comparison_results: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_performance_summary(self, comparison_results: dict[str, Any]) -> dict[str, Any]:
         """Generate human-readable performance summary."""
         sequential = comparison_results['results']['sequential']
         parallel_results = comparison_results['results']['parallel']
@@ -441,7 +443,7 @@ class PerformanceComparator:
         
         return summary
     
-    def _analyze_benchmark_results(self, benchmark_results: Dict[str, Any]) -> Dict[str, Any]:
+    def _analyze_benchmark_results(self, benchmark_results: dict[str, Any]) -> dict[str, Any]:
         """Analyze benchmark results across all scenarios."""
         analysis = {
             'scaling_characteristics': {},
@@ -473,7 +475,7 @@ class PerformanceComparator:
         
         return analysis
     
-    def _save_comparison_report(self, comparison_results: Dict[str, Any]):
+    def _save_comparison_report(self, comparison_results: dict[str, Any]):
         """Save detailed comparison report to file."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         report_file = self.output_dir / f"performance_comparison_{timestamp}.json"
@@ -483,7 +485,7 @@ class PerformanceComparator:
         
         logger.info(f"Performance comparison report saved: {report_file}")
     
-    def _save_benchmark_report(self, benchmark_results: Dict[str, Any]):
+    def _save_benchmark_report(self, benchmark_results: dict[str, Any]):
         """Save comprehensive benchmark report to file."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         report_file = self.output_dir / f"comprehensive_benchmark_{timestamp}.json"
@@ -493,7 +495,7 @@ class PerformanceComparator:
         
         logger.info(f"Comprehensive benchmark report saved: {report_file}")
     
-    def _create_performance_visualizations(self, comparison_results: Dict[str, Any]):
+    def _create_performance_visualizations(self, comparison_results: dict[str, Any]):
         """Create performance visualization charts."""
         if not MATPLOTLIB_AVAILABLE:
             logger.warning("matplotlib not available - skipping visualizations")
@@ -572,7 +574,7 @@ class PerformanceComparator:
         except Exception as e:
             logger.error(f"Error creating visualizations: {e}")
     
-    def _create_benchmark_visualizations(self, benchmark_results: Dict[str, Any]):
+    def _create_benchmark_visualizations(self, benchmark_results: dict[str, Any]):
         """Create comprehensive benchmark visualization charts."""
         if not MATPLOTLIB_AVAILABLE:
             logger.warning("matplotlib not available - skipping benchmark visualizations")
@@ -688,12 +690,12 @@ def demo_performance_comparison():
     analysis = comparison_results['analysis_summary']
     sequential_perf = analysis['sequential_performance']
     
-    print(f"\\n📊 Sequential Performance:")
+    print("\\n📊 Sequential Performance:")
     print(f"   ⏱️  Total time: {sequential_perf['total_time']:.2f} seconds")
     print(f"   🏢 Rate: {sequential_perf['buildings_per_second']:.2f} buildings/sec")
     print(f"   ✅ Success rate: {sequential_perf['success_rate']:.1f}%")
     
-    print(f"\\n📊 Parallel Performance Comparison:")
+    print("\\n📊 Parallel Performance Comparison:")
     for config, perf in analysis['parallel_performance'].items():
         print(f"   {config}: {perf['workers']} workers")
         print(f"      🚀 Speedup: {perf['speedup']:.2f}x")

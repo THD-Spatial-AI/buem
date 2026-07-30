@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Test the schema_validator CLI (--help exits with code 0)."""
-import pytest
 
 
 def test_schema_cli():

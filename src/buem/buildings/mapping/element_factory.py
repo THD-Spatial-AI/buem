@@ -16,7 +16,7 @@ Ventilation opening sizes
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 from buem.buildings.components.base import EnvelopeElement
 
@@ -33,8 +33,8 @@ MIN_WALL_AREA_FOR_WINDOWS = 5.0  # m² — walls smaller than this do not receiv
 
 
 def assign_vent_areas(
-    front_wall: Optional["_WallInfo"],
-    back_wall: Optional["_WallInfo"],
+    front_wall: _WallInfo | None,
+    back_wall: _WallInfo | None,
 ) -> None:
     """Assign ventilation opening areas to front and back walls in-place.
 
@@ -50,10 +50,10 @@ def assign_vent_areas(
 
 
 def create_windows(
-    exposed_walls: List["_WallInfo"],
+    exposed_walls: list[_WallInfo],
     window_U: float,
     window_g_gl: float,
-) -> List[EnvelopeElement]:
+) -> list[EnvelopeElement]:
     """Create window elements from pre-computed proportional areas.
 
     Each exposed wall already has ``window_area`` set via the ratio
@@ -72,7 +72,7 @@ def create_windows(
     list of EnvelopeElement
         One window per exposed wall with meaningful window area.
     """
-    windows: List[EnvelopeElement] = []
+    windows: list[EnvelopeElement] = []
     for w in exposed_walls:
         if w.area < MIN_WALL_AREA_FOR_WINDOWS:
             continue
@@ -92,9 +92,9 @@ def create_windows(
 
 
 def create_door(
-    front_wall: Optional["_WallInfo"],
+    front_wall: _WallInfo | None,
     door_U: float,
-) -> Optional[EnvelopeElement]:
+) -> EnvelopeElement | None:
     """Create a door element on the front wall.
 
     Returns ``None`` if there is no front wall or the door area is zero.
@@ -114,10 +114,10 @@ def create_door(
 
 
 def create_ventilation(
-    front_wall: Optional["_WallInfo"],
-    back_wall: Optional["_WallInfo"],
+    front_wall: _WallInfo | None,
+    back_wall: _WallInfo | None,
     n_air_use: float,
-) -> List[EnvelopeElement]:
+) -> list[EnvelopeElement]:
     """Create ventilation elements on the front and back walls.
 
     Each element carries a physical opening area (already assigned to the
@@ -141,7 +141,7 @@ def create_ventilation(
             air_changes=n_air_use,
         )]
 
-    elements: List[EnvelopeElement] = []
+    elements: list[EnvelopeElement] = []
 
     if back_wall is not None and back_wall.wall_id != front_wall.wall_id:
         # Cross-ventilation: split air changes equally

@@ -48,15 +48,16 @@ Note:
 """
 
 # Always available - core validation modules (no full BUEM infrastructure required)
-from buem.integration.scripts.schema_validator import BuemSchemaValidator
-from buem.integration.scripts.schema_manager import SchemaVersionManager, schema_manager
 from buem.integration.scripts.geojson_validator import (
-    validate_geojson_request,
-    create_validation_report,
+    GeoJsonValidator,
     ValidationLevel,
     ValidationResult,
-    GeoJsonValidator
+    create_validation_report,
+    validate_geojson_request,
 )
+from buem.integration.scripts.schema_manager import SchemaVersionManager, schema_manager
+from buem.integration.scripts.schema_validator import BuemSchemaValidator
+
 
 # Lazy imports for infrastructure-dependent modules 
 def _get_geojson_processor():

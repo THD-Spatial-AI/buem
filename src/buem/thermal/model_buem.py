@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-from typing import Any
-
-import pvlib
-import cvxpy as cp
-from scipy.sparse import lil_matrix, vstack
-import pandas as pd
-import numpy as np
 import os
 import shutil
+from typing import Any
+
+import cvxpy as cp
+import numpy as np
+import pandas as pd
+import pvlib
 from dotenv import load_dotenv
+from scipy.sparse import lil_matrix, vstack
+
 from buem.config.validator import validate_cfg
 
 
-class ModelBUEM(object):
+class ModelBUEM:
     """
     ISO 13790 simplified hourly 5R1C building energy model.
 
@@ -1369,7 +1370,6 @@ class ModelBUEM(object):
         self.cooling_load = -np.maximum(0.0, self.Q_cool)
 
         self._readResults()
-        return
 
     def sim_model(self, use_milp: bool = False):
         """

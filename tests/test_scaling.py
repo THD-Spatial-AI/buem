@@ -2,20 +2,18 @@
 Worker count scaling test: run 15 buildings with different worker counts
 to find the optimal configuration for the 22-core system.
 """
-import json, time
-
+import time
 from pathlib import Path
-from buem.integration.scripts.result_cache import clear_cache
 
 # Ensure feather cache exists by importing cfg_attribute first
 from buem.config import cfg_attribute  # noqa: F401
+from buem.integration.scripts.result_cache import clear_cache
 
 dummy_dir = Path(__file__).parent.parent / "src" / "buem" / "data" / "buildings" / "dummy"
 building_files = sorted(dummy_dir.glob("*.json"))
 
 # Import after ensuring weather cache
 from buem.parallelization.parallel_run import ParallelBuildingProcessor
-
 
 if __name__ == "__main__":
     print(f"Found {len(building_files)} building files")

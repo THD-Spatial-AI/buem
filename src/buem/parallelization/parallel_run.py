@@ -30,23 +30,23 @@ Requirements:
 """
 
 import json
-import time
 import logging
+import time
 import traceback
-from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any, Union
-from datetime import datetime, timezone
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
+from datetime import UTC, datetime
 from multiprocessing import cpu_count
-from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
-from buem.integration.scripts.geojson_processor import GeoJsonProcessor
-from buem.integration import validate_request_file
-from buem.main import run_model
-from buem.config.cfg_building import CfgBuilding
+from pathlib import Path
+from typing import Any
+
 from buem.config.weather_cache import (
     distinct_locations,
     get_or_fetch_weather,
     weather_available,
 )
+from buem.integration import validate_request_file
+from buem.integration.scripts.geojson_processor import GeoJsonProcessor
 
 
 def _worker_init():
@@ -68,14 +68,14 @@ def _worker_init():
     pre-warm step below for why that no longer assumes a single global location.
     """
     # Heavy numerics / solver
-    import numpy          # noqa: F401
-    import pandas         # noqa: F401
-    import cvxpy          # noqa: F401
+    import cvxpy  # noqa: F401
+    import numpy  # noqa: F401
+    import pandas  # noqa: F401
 
     # BUEM config stack (triggers weather feather-cache read via cfg_attribute)
-    from buem.config import cfg_attribute        # noqa: F401
+    from buem.config import cfg_attribute  # noqa: F401
 
-def _extract_building_attrs(building_file: Union[str, Path]) -> Dict[str, Any]:
+def _extract_building_attrs(building_file: str | Path) -> dict[str, Any]:
     """Best-effort extraction of latitude/longitude/year/weather_provider
     from a raw building request JSON file, for weather cache pre-warming.
 
@@ -88,7 +88,7 @@ def _extract_building_attrs(building_file: Union[str, Path]) -> Dict[str, Any]:
         with Path(building_file).open('r') as f:
             data = json.load(f)
         feature = data['features'][0] if 'features' in data else data
-        attrs: Dict[str, Any] = dict(
+        attrs: dict[str, Any] = dict(
             feature.get('properties', {}).get('building_attributes', {})
         )
         coords = feature.get('geometry', {}).get('coordinates')
@@ -116,7 +116,7 @@ except ImportError:
     logger.warning("psutil not available - system monitoring will be limited")
 
 
-def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
+def process_single_building(building_file: str | Path) -> dict[str, Any]:
     """
     Process a single building file and return results.
     
@@ -150,7 +150,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
             building_data = json.load(f)
         
         # Extract building ID
-        if 'features' in building_data and building_data['features']:
+        if building_data.get('features'):
             building_id = building_data['features'][0].get('id', building_file.stem)
         else:
             building_id = building_file.stem
@@ -193,7 +193,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
                 'processing_time': processing_time,
                 'file_path': str(building_file),
                 'metadata': {
-                    'processed_at': datetime.now(timezone.utc).isoformat(),
+                    'processed_at': datetime.now(UTC).isoformat(),
                     'validation_passed': validation_result,
                     'failed_features': failed_features,
                     'total_features': total_features
@@ -203,7 +203,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
         # Extract summary results
         summary_stats = {}
         thermal_breakdown = {}
-        if 'features' in response and response['features']:
+        if response.get('features'):
             feature = response['features'][0]
             if 'properties' in feature and 'buem' in feature['properties']:
                 thermal_profile = feature['properties']['buem'].get('thermal_load_profile', {})
@@ -229,7 +229,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
             'processing_time': processing_time,
             'file_path': str(building_file),
             'metadata': {
-                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'validation_passed': validation_result,
                 'failed_features': failed_features,
                 'total_features': total_features
@@ -238,7 +238,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
         
     except Exception as e:
         processing_time = time.time() - start_time
-        error_msg = f"Error processing {building_file}: {str(e)}"
+        error_msg = f"Error processing {building_file}: {e!s}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")
         
         return {
@@ -248,7 +248,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
             'processing_time': processing_time,
             'file_path': str(building_file),
             'metadata': {
-                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'validation_passed': False,
                 'traceback': traceback.format_exc()
             }
@@ -276,10 +276,10 @@ class ParallelBuildingProcessor:
     
     def __init__(
         self,
-        workers: Optional[int] = None,
+        workers: int | None = None,
         chunk_size: int = 5,
         timeout: float = 300.0,
-        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ):
         """
         Initialize the parallel processor.
@@ -313,10 +313,10 @@ class ParallelBuildingProcessor:
     
     def process_buildings(
         self, 
-        building_files: List[Union[str, Path]],
+        building_files: list[str | Path],
         save_results: bool = True,
-        results_file: Optional[str] = None
-    ) -> Dict[str, Any]:
+        results_file: str | None = None
+    ) -> dict[str, Any]:
         """
         Process multiple buildings in parallel.
         
@@ -447,16 +447,16 @@ class ParallelBuildingProcessor:
                         error_result = {
                             'building_id': Path(building_file).stem,
                             'success': False,
-                            'error': f"Unexpected error: {str(e)}",
+                            'error': f"Unexpected error: {e!s}",
                             'processing_time': 0,
                             'file_path': str(building_file)
                         }
                         failed_buildings.append(error_result)
-                        logger.error(f"💥 Error: {error_result['building_id']} - {str(e)}")
+                        logger.error(f"💥 Error: {error_result['building_id']} - {e!s}")
                         completed_count += 1
         
         except Exception as e:
-            logger.error(f"Critical error in parallel processing: {str(e)}")
+            logger.error(f"Critical error in parallel processing: {e!s}")
             raise
         
         # Calculate performance metrics
@@ -486,7 +486,7 @@ class ParallelBuildingProcessor:
                 'failed': failed_count,
                 'success_rate_percent': performance_metrics['success_rate'] * 100,
                 'total_processing_time': total_time,
-                'processed_at': datetime.now(timezone.utc).isoformat()
+                'processed_at': datetime.now(UTC).isoformat()
             },
             'buildings': {
                 'successful': completed_buildings,
@@ -507,7 +507,7 @@ class ParallelBuildingProcessor:
             results['results_file'] = results_file
         
         # Log summary
-        logger.info(f"🎯 Processing Summary:")
+        logger.info("🎯 Processing Summary:")
         logger.info(f"   Total buildings: {total_buildings}")
         logger.info(f"   ✅ Successful: {successful_count}")
         logger.info(f"   ❌ Failed: {failed_count}")

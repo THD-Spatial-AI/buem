@@ -16,25 +16,24 @@ Usage:
 """
 
 import argparse
-import time
-import sys
-import os
-import psutil
-import multiprocessing
-from pathlib import Path
-from typing import List, Dict, Any
 import json
+import multiprocessing
+import os
 import threading
+import time
+from pathlib import Path
+
+import psutil
 
 # Optimize environment
 os.environ['OMP_NUM_THREADS'] = '4'
 os.environ['MKL_NUM_THREADS'] = '4'
 
-import pandas as pd
 
-from buem.main import run_model, cfg
-from buem.parallelization.parallel_run import ParallelBuildingProcessor
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from buem.main import cfg, run_model
+from buem.parallelization.parallel_run import ParallelBuildingProcessor
+
 
 class PerformanceMonitor:
     """Monitor system performance during building processing."""
@@ -210,7 +209,7 @@ def test_worker_allocation_efficiency(building_count: int = 8, max_workers: int 
                                 key=lambda k: valid_results[k]['buildings_per_second'])
             optimal_rate = valid_results[optimal_workers]['buildings_per_second']
             
-            print(f"\\n🏆 OPTIMAL CONFIGURATION:")
+            print("\\n🏆 OPTIMAL CONFIGURATION:")
             print(f"   Workers: {optimal_workers}")
             print(f"   Throughput: {optimal_rate:.2f} buildings/second")
             
@@ -224,7 +223,7 @@ def test_worker_allocation_efficiency(building_count: int = 8, max_workers: int 
 
 def analyze_multibuilding_bottlenecks():
     """Analyze why multi-building processing doesn't scale linearly."""
-    print(f"\\n🔍 MULTI-BUILDING BOTTLENECK ANALYSIS")
+    print("\\n🔍 MULTI-BUILDING BOTTLENECK ANALYSIS")
     print("=" * 50)
     
     bottlenecks = {
@@ -294,7 +293,7 @@ def main():
     all_results['bottlenecks'] = bottlenecks
     
     # Final summary
-    print(f"\\n📋 PERFORMANCE SUMMARY")
+    print("\\n📋 PERFORMANCE SUMMARY")
     print("=" * 50)
     
     if 'single_building' in all_results:

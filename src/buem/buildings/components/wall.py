@@ -15,7 +15,6 @@ GeoJSON — they are internal metadata only.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from buem.buildings.components.base import EnvelopeElement
 
@@ -41,7 +40,7 @@ class WallElement(EnvelopeElement):
 
     element_type: str = "wall"
     tilt: float = 90.0
-    surface_feature_id: Optional[str] = None
-    objectclass_id: Optional[int] = None
-    height: Optional[float] = None
-    tabula_wall_group: Optional[int] = None
+    surface_feature_id: str | None = None
+    objectclass_id: int | None = None
+    height: float | None = None
+    tabula_wall_group: int | None = None

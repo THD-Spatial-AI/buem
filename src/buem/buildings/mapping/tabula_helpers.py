@@ -22,7 +22,6 @@ reference areas.
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
@@ -47,7 +46,7 @@ def safe_series_float(row: pd.Series, col: str, default: float) -> float:
 
 def select_primary_variant(
     tabula_row: pd.Series, component: str, n_variants: int
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Select the primary TABULA variant for a component type.
 
     Picks the variant with the largest area that has ``b_transmission > 0``.
@@ -94,7 +93,7 @@ def select_primary_variant(
 
 def compute_window_ratios(
     tabula_row: pd.Series, a_wall_1: float
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compute per-direction window-to-wall area ratios from TABULA.
 
     Returns a dict ``{"north": ratio, "east": ratio, …}`` where each

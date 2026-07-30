@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Protocol, Tuple
+from typing import Protocol
 
 import pandas as pd
 
@@ -99,7 +99,7 @@ class BuildingSource(Protocol):
 
     def get_surfaces_for_building(self, building_feature_id: int) -> pd.DataFrame: ...
 
-    def get_tabula_row(self, tabula_id: float) -> Optional[pd.Series]: ...
+    def get_tabula_row(self, tabula_id: float) -> pd.Series | None: ...
 
 
 @dataclass
@@ -142,7 +142,7 @@ class LOD2Mapper:
 
     # ── public API ───────────────────────────────────────────────────────────
 
-    def map_building(self, building_feature_id: int) -> Optional[Building]:
+    def map_building(self, building_feature_id: int) -> Building | None:
         """Map a single building from LOD2 + TABULA data.
 
         Returns
@@ -222,7 +222,7 @@ class LOD2Mapper:
 
         # 9. Build envelope elements
         #    (steps 10-12 follow below: identity, thermal, A_ref)
-        elements: List[EnvelopeElement] = []
+        elements: list[EnvelopeElement] = []
 
         # --- walls (shared → U=0, exposed → net area after openings) ---
         for w in wall_infos:
@@ -347,9 +347,9 @@ class LOD2Mapper:
 
     def map_all(
         self,
-        building_ids: Optional[List[int]] = None,
-        limit: Optional[int] = None,
-    ) -> List[Building]:
+        building_ids: list[int] | None = None,
+        limit: int | None = None,
+    ) -> list[Building]:
         """Map multiple buildings.
 
         Parameters
@@ -369,7 +369,7 @@ class LOD2Mapper:
         if limit is not None:
             building_ids = building_ids[:limit]
 
-        buildings: List[Building] = []
+        buildings: list[Building] = []
         skipped = 0
         for bid in building_ids:
             bldg = self.map_building(bid)
@@ -386,14 +386,14 @@ class LOD2Mapper:
 
     # ── wall classification ──────────────────────────────────────────────────
 
-    def _classify_walls(self, walls_df: pd.DataFrame) -> List[_WallInfo]:
+    def _classify_walls(self, walls_df: pd.DataFrame) -> list[_WallInfo]:
         """Classify each wall as shared (party) or exposed using surface_feature_id.
 
         Returns a list of ``_WallInfo`` in the same iteration order as the
         input DataFrame, with sequential IDs ``wall_1``, ``wall_2``, etc.
         Logs a warning when an exposed wall has a negative (unknown) azimuth.
         """
-        result: List[_WallInfo] = []
+        result: list[_WallInfo] = []
         for idx, (_, row) in enumerate(walls_df.iterrows(), start=1):
             sfid = int(row["surface_feature_id"])
             raw_az = row["azimuth"]
@@ -427,8 +427,8 @@ class LOD2Mapper:
 
     @staticmethod
     def _identify_front_back(
-        exposed_walls: List[_WallInfo],
-    ) -> Tuple[Optional[_WallInfo], Optional[_WallInfo]]:
+        exposed_walls: list[_WallInfo],
+    ) -> tuple[_WallInfo | None, _WallInfo | None]:
         """Identify the front wall (largest exposed) and the back wall (opposite).
 
         The front wall is the exposed wall with the largest area.
@@ -451,7 +451,7 @@ class LOD2Mapper:
 
         # Back wall = closest to 180° opposite front azimuth, within threshold
         opposite_az = (front.azimuth + 180.0) % 360.0
-        best_back: Optional[_WallInfo] = None
+        best_back: _WallInfo | None = None
         best_delta = float("inf")
         for w in exposed_walls:
             if w.wall_id == front.wall_id:
