@@ -32,14 +32,32 @@
 # numpy build (numba, cvxpy, scipy). Re-check this list whenever
 # occupancy's/weather's own dependencies change.
 #
-# numpy/pandas are version-capped below (<3) to match occupancy's/weather's
-# own upper bounds -- confirmed live and necessary: an existing buem_env
-# inspected on 2026-07-29 already had conda-forge pandas 3.0.3 installed
-# (unpinned `- pandas` resolves to conda-forge's latest), which VIOLATES
-# both occupancy's and weather's `pandas>=2.0,<3.0` requirement and would
-# make pip try to force a pandas downgrade outside conda's solver the
-# moment occupancy/weather were installed -- exactly the failure mode this
-# whole explicit-conda-deps approach exists to prevent.
+# numpy/pandas previously had a <3 upper cap here, mirroring an upper cap
+# that used to be in occupancy's/weather's own pyproject.toml. Removed
+# 2026-07-30 after finding that cap wasn't actually protecting anything:
+# occupancy_env and weather_env had already drifted to pandas 3.0.3/numpy
+# 2.4-2.5 in practice (occupancy_env's `pip install -e . --no-deps`
+# workflow never enforces the pin at all; weather_env.yml never encoded
+# an upper bound to begin with), and both repos' full pytest suites pass
+# clean on those versions (weather: 55/58, the 3 non-passing unrelated to
+# numpy/pandas -- missing eccodes native lib; occupancy: 69/69). The caps
+# were removed from occupancy's/weather's own pyproject.toml/meta.yaml in
+# the same change. See those repos' CLAUDE.md for the fuller writeup.
+#
+# Separately (unrelated to the version cap): if you ever add `cupy` to
+# this env, pin `libblas=*=*openblas` too -- mkl (conda-forge's default
+# BLAS build) collides with cupy's bundled CUDA BLAS DLLs on Windows and
+# crashes numpy>=2's blas_fpe_check() self-test on import. buem_env
+# doesn't use cupy so this doesn't apply here today; see
+# weather_env.yml's own libblas line for where it was actually needed.
+#
+# gunicorn is intentionally NOT listed here: it's Unix-only (uses fork()),
+# so conda-forge ships no win-64 build and `conda env update` fails to
+# solve on Windows dev machines with it present. It's a Docker/prod-only
+# dependency (WSGI server for infrastructure/container/'s API image), so
+# it's installed there instead -- see Dockerfile's builder stage -- not in
+# this cross-platform env file. buem's own `pyproject.toml` still declares
+# it under the `server` extra for anyone installing outside conda.
 name: buem_env
 channels:
   - conda-forge
@@ -50,15 +68,14 @@ dependencies:
   - cvxpy
   - flask
   - flask-swagger-ui
-  - gunicorn
   - joblib
   - jsonschema
   - matplotlib
   - netcdf4
   - numba
-  - numpy>=1.26,<3
+  - numpy>=1.26
   - openpyxl
-  - pandas>=2.0,<3
+  - pandas>=2.0
   - psutil
   - psycopg2
   - pulp

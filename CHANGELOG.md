@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed the `numpy<3`/`pandas<3` upper-bound caps from
+  `infrastructure/env/buem_env.yml` (floors only now: `numpy>=1.26`,
+  `pandas>=2.0`), matching the same change in `occupancy`'s/`weather`'s own
+  `pyproject.toml`. The caps weren't protecting anything in practice — both
+  sibling repos had already drifted past them — and `buem`'s test suite,
+  plus occupancy's (69/69) and weather's (55 passed/2 skipped) full pytest
+  suites, all pass clean on numpy 2.4-2.5/pandas 3.0.x.
+- `gunicorn` removed from `infrastructure/env/buem_env.yml` — it's Unix-only
+  (fork()-based), has no win-64 conda-forge build, and was breaking
+  `conda env update` on Windows dev machines. Now installed directly in
+  `infrastructure/container/Dockerfile`'s builder stage instead, where it's
+  actually used (API server CMD); `pyproject.toml`'s `server` extra still
+  declares it for anyone installing outside conda.
+
+### Fixed
+
+- `weather_env`'s `mkl` BLAS build was colliding with `cupy`'s bundled CUDA
+  DLLs on Windows, crashing numpy on plain import (unrelated to buem's own
+  code, but blocked verifying the pin change above against a real weather
+  install). Fixed upstream in `weather`'s own `infrastructure/env/
+  weather_env.yml` (pinned `libblas=*=*openblas`); `cupy` also removed
+  there as unused.
+
 ## [1.2.0] - 2026-07-29
 
 ### Fixed

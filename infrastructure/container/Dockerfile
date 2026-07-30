@@ -28,6 +28,12 @@ RUN conda env create -f /tmp/buem_env.yml \
     && conda clean -afy \
     && rm /tmp/buem_env.yml
 
+# gunicorn (WSGI server for CMD below) is deliberately not in buem_env.yml
+# itself -- it's Unix-only (fork()-based) and has no win-64 conda-forge
+# build, which breaks `conda env update` on Windows dev machines. Install
+# it here instead, only in the Linux container where it actually works.
+RUN /opt/conda/envs/buem_env/bin/pip install gunicorn
+
 # ── Runtime stage ──────────────────────────────────────────────────────────
 FROM continuumio/miniconda3:24.1.2-0
 
