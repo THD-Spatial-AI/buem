@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parent.parent
-os.environ.setdefault("BUEM_WEATHER_DIR", str(project_root / "src" / "buem" / "data" / "weather"))
+os.environ.setdefault("BUEM_WEATHER_DIR", str(project_root / "src" / "buem" / "data"))
 
 from buem.config.cfg_attribute import cfg
 from buem.main import run_model

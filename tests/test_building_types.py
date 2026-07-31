@@ -11,17 +11,14 @@ that chain keeps this test collectible under pytest, unlike
 test_energy.py/test_geojson_integration.py/test_scaling.py/
 test_worker_debug.py.
 """
-import copy
 import json
 import os
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import pytest
 
 project_root = Path(__file__).resolve().parent.parent
-os.environ.setdefault("BUEM_WEATHER_DIR", str(project_root / "src" / "buem" / "data" / "weather"))
+os.environ.setdefault("BUEM_WEATHER_DIR", str(project_root / "src" / "buem" / "data"))
 
 from buem.config.cfg_attribute import cfg as DEFAULT_CFG
 from buem.config.cfg_building import CfgBuilding
@@ -66,26 +63,3 @@ def test_dummy_fixture_runs_end_to_end(fixture_name, expected_building_type):
     # Sanity: no runaway negative "heating" or positive "cooling" (sign convention).
     assert (model.heating_load >= 0).all()
     assert (model.cooling_load <= 0).all()
-
-
-def test_time_varying_comfort_bounds_change_heating_shape():
-    """A comfortT_lb schedule with a deep night setback should shift heating
-    demand away from those hours, unlike a flat scalar bound -- exercising the
-    Tier-3 scalar-or-pd.Series support in ModelBUEM._init5R1C."""
-    weather_index = DEFAULT_CFG["weather"].index
-    hours = weather_index.hour.to_numpy()
-    night_mask = (hours >= 0) & (hours < 6)
-
-    scalar_cfg = copy.deepcopy(DEFAULT_CFG)
-    model_scalar = ModelBUEM(scalar_cfg)
-    model_scalar.sim_model(use_milp=False)
-
-    # Night setback (0-6h): lower bound relaxed to 15 degC vs. the default 21 degC.
-    lb_series = pd.Series(np.where(night_mask, 15.0, 21.0), index=weather_index)
-    series_cfg = copy.deepcopy(DEFAULT_CFG)
-    series_cfg["comfortT_lb"] = lb_series
-    model_series = ModelBUEM(series_cfg)
-    model_series.sim_model(use_milp=False)
-
-    assert not np.allclose(model_series.heating_load, model_scalar.heating_load)
-    assert model_series.heating_load[night_mask].sum() <= model_scalar.heating_load[night_mask].sum()

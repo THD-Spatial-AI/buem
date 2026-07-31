@@ -55,7 +55,14 @@ _COUNTRY_PRIORITY = ["germany", "netherlands", "austria", "czech"]
 
 
 def _nc_years_in_dir(directory: Path) -> list[int]:
-    """Return sorted list of years found as ``combined_merra_{year}.nc`` in *directory*."""
+    """Return sorted list of years found as ``combined_merra_{year}.nc`` in *directory*.
+
+    Returns empty if *directory* doesn't exist -- callers use this to detect "no MERRA
+    data here" and fall back to CSV/synthetic weather, so a missing directory is a normal
+    case, not an error condition.
+    """
+    if not directory.is_dir():
+        return []
     years = []
     for f in directory.iterdir():
         m = re.match(r"combined_merra_(\d{4})\.nc$", f.name)

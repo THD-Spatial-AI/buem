@@ -1,6 +1,6 @@
 import os
 
-os.environ.setdefault('BUEM_WEATHER_DIR', os.path.abspath('src/buem/data/weather'))
+os.environ.setdefault('BUEM_WEATHER_DIR', os.path.abspath('src/buem/data'))
 
 from buem.config.cfg_attribute import cfg
 from buem.thermal.model_buem import ModelBUEM
