@@ -5,15 +5,13 @@ This module provides robust validation and debugging capabilities for incoming
 GeoJSON requests, supporting both legacy and new component structures.
 Uses marshmallow for schema validation with detailed error reporting.
 """
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union, Tuple
 from datetime import datetime
 from enum import Enum
-import json
-import jsonschema
-from marshmallow import Schema, fields, ValidationError, validates, validates_schema, post_load
-from marshmallow_dataclass import dataclass as marsh_dataclass
-import logging
+from typing import Any
+
+from marshmallow import Schema, ValidationError, fields, post_load, validates, validates_schema
 
 logger = logging.getLogger(__name__)
 
@@ -70,28 +68,28 @@ class ValidationIssue:
     message: str
     path: str
     value: Any = None
-    suggestion: Optional[str] = None
+    suggestion: str | None = None
 
 
 @dataclass
 class ValidationResult:
     """Complete validation result with detailed reporting."""
     is_valid: bool
-    issues: List[ValidationIssue] = field(default_factory=list)
-    validated_data: Optional[Dict[str, Any]] = None
+    issues: list[ValidationIssue] = field(default_factory=list)
+    validated_data: dict[str, Any] | None = None
     
     def add_issue(self, level: ValidationLevel, message: str, path: str, 
-                  value: Any = None, suggestion: Optional[str] = None):
+                  value: Any = None, suggestion: str | None = None):
         """Add a validation issue."""
         self.issues.append(ValidationIssue(level, message, path, value, suggestion))
         if level == ValidationLevel.ERROR:
             self.is_valid = False
     
-    def get_errors(self) -> List[ValidationIssue]:
+    def get_errors(self) -> list[ValidationIssue]:
         """Get only error-level issues."""
         return [issue for issue in self.issues if issue.level == ValidationLevel.ERROR]
     
-    def get_warnings(self) -> List[ValidationIssue]:
+    def get_warnings(self) -> list[ValidationIssue]:
         """Get warning-level issues."""
         return [issue for issue in self.issues if issue.level == ValidationLevel.WARNING]
     
@@ -370,7 +368,7 @@ class GeoJsonValidator:
         self.strict_mode = strict_mode
         self.schema = GeoJsonRequestSchema()
     
-    def validate(self, payload: Dict[str, Any]) -> ValidationResult:
+    def validate(self, payload: dict[str, Any]) -> ValidationResult:
         """
         Validate GeoJSON payload with comprehensive error reporting.
         
@@ -399,22 +397,22 @@ class GeoJsonValidator:
         except ValidationError as e:
             result.is_valid = False
             self._process_marshmallow_errors(e.messages, result)
-        except Exception as e:
+        except (TypeError, ValueError, KeyError, AttributeError) as e:
             result.add_issue(
                 ValidationLevel.ERROR,
-                f"Unexpected validation error: {str(e)}",
+                f"Unexpected validation error: {e!s}",
                 "root",
                 suggestion="Check payload format and structure"
             )
         
         return result
     
-    def _validate_features(self, features: List[Dict], result: ValidationResult):
+    def _validate_features(self, features: list[dict], result: ValidationResult):
         """Validate individual features."""
         for i, feature in enumerate(features):
             self._validate_single_feature(feature, f"features[{i}]", result)
     
-    def _validate_single_feature(self, feature: Dict, path: str, result: ValidationResult):
+    def _validate_single_feature(self, feature: dict, path: str, result: ValidationResult):
         """Validate a single feature (supports both v2 and v3 layout)."""
         buem_data = feature.get('properties', {}).get('buem', {})
 
@@ -455,7 +453,7 @@ class GeoJsonValidator:
                     suggestion="Use only one component format for clarity"
                 )
     
-    def _validate_time_consistency(self, features: List[Dict], result: ValidationResult):
+    def _validate_time_consistency(self, features: list[dict], result: ValidationResult):
         """Validate time range consistency."""
         for i, feature in enumerate(features):
             props = feature.get('properties', {})
@@ -464,9 +462,9 @@ class GeoJsonValidator:
             
             if start_time and end_time:
                 if isinstance(start_time, str):
-                    start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    start_time = datetime.fromisoformat(start_time)
                 if isinstance(end_time, str):
-                    end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                    end_time = datetime.fromisoformat(end_time)
                 
                 if start_time >= end_time:
                     result.add_issue(
@@ -476,7 +474,7 @@ class GeoJsonValidator:
                         suggestion="Check time range validity"
                     )
     
-    def _convert_components_format(self, data: Dict, result: ValidationResult):
+    def _convert_components_format(self, data: dict, result: ValidationResult):
         """Convert child_components or v3 envelope to nested components format if needed."""
         for i, feature in enumerate(data.get('features', [])):
             buem_data = feature.get('properties', {}).get('buem', {})
@@ -486,10 +484,10 @@ class GeoJsonValidator:
             if isinstance(building, dict) and isinstance(building.get('envelope'), dict):
                 try:
                     self._convert_v3_to_v2(feature, result, i)
-                except Exception as e:
+                except (TypeError, ValueError, KeyError, AttributeError) as e:
                     result.add_issue(
                         ValidationLevel.ERROR,
-                        f"Failed to convert v3 format to internal format: {str(e)}",
+                        f"Failed to convert v3 format to internal format: {e!s}",
                         f"features[{i}].properties.buem.building"
                     )
                 continue
@@ -508,14 +506,14 @@ class GeoJsonValidator:
                         "Converted child_components to nested components format",
                         f"features[{i}].properties.buem.building_attributes"
                     )
-                except Exception as e:
+                except (TypeError, ValueError, KeyError, AttributeError) as e:
                     result.add_issue(
                         ValidationLevel.ERROR,
-                        f"Failed to convert child_components: {str(e)}",
+                        f"Failed to convert child_components: {e!s}",
                         f"features[{i}].properties.buem.child_components"
                     )
     
-    def _convert_v3_to_v2(self, feature: Dict, result: ValidationResult, feature_idx: int):
+    def _convert_v3_to_v2(self, feature: dict, result: ValidationResult, feature_idx: int):
         """
         Convert v3 format (building.envelope.elements with {value,unit} objects) 
         to v2 format (building_attributes.components) for internal processing.
@@ -557,7 +555,7 @@ class GeoJsonValidator:
             'ventilation': 'Ventilation',
         }
         
-        components = {}
+        components: dict[str, dict[str, Any]] = {}
         for elem in elements:
             elem_type = elem.get('type', '').lower()
             comp_key = type_map.get(elem_type)
@@ -691,9 +689,9 @@ class GeoJsonValidator:
             f"features[{feature_idx}].properties.buem"
         )
     
-    def _child_to_nested_components(self, child_components: List[Dict]) -> Dict[str, Any]:
+    def _child_to_nested_components(self, child_components: list[dict]) -> dict[str, Any]:
         """Convert child_components array to nested components structure."""
-        components = {}
+        components: dict[str, dict[str, Any]] = {}
         
         # Group by component type
         for child in child_components:
@@ -753,11 +751,11 @@ class GeoJsonValidator:
         
         return components
     
-    def _process_marshmallow_errors(self, errors: Dict, result: ValidationResult):
+    def _process_marshmallow_errors(self, errors: dict | list | str, result: ValidationResult):
         """Process marshmallow validation errors."""
         self._flatten_errors(errors, result, "")
     
-    def _flatten_errors(self, errors: Union[Dict, List, str], result: ValidationResult, path: str):
+    def _flatten_errors(self, errors: dict | list | str, result: ValidationResult, path: str):
         """Recursively flatten nested error messages with actionable suggestions."""
         if isinstance(errors, dict):
             for key, value in errors.items():
@@ -810,7 +808,7 @@ class GeoJsonValidator:
         return f"Review the value at '{path}' — see error message above for details"
 
 
-def validate_geojson_request(payload: Dict[str, Any], strict_mode: bool = False) -> ValidationResult:
+def validate_geojson_request(payload: dict[str, Any], strict_mode: bool = False) -> ValidationResult:
     """
     Convenience function to validate GeoJSON request.
     
@@ -844,7 +842,7 @@ def create_validation_report(result: ValidationResult) -> str:
     str
         Formatted validation report.
     """
-    report = [f"=== VALIDATION REPORT ==="]
+    report = ["=== VALIDATION REPORT ==="]
     report.append(f"Status: {result.summary()}")
     report.append("")
     

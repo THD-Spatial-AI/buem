@@ -10,7 +10,6 @@ since floors receive no direct solar radiation.  ``b_transmission`` is typically
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from buem.buildings.components.base import EnvelopeElement
 
@@ -32,6 +31,6 @@ class FloorElement(EnvelopeElement):
     element_type: str = "floor"
     tilt: float = 0.0
     azimuth: float = 0.0
-    surface_feature_id: Optional[str] = None
-    objectclass_id: Optional[int] = None
-    tabula_floor_group: Optional[int] = None
+    surface_feature_id: str | None = None
+    objectclass_id: int | None = None
+    tabula_floor_group: int | None = None

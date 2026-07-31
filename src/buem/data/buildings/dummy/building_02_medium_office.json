@@ -27,7 +27,7 @@
               "unit": "m"
             },
             "n_storeys": 3,
-            "building_type": "OFF",
+            "building_type": "office",
             "construction_period": "1985-1994",
             "country": "NL",
             "neighbour_status": "B_Alone",

@@ -23,7 +23,6 @@ Opening sizes
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from buem.buildings.components.base import EnvelopeElement
 
@@ -47,4 +46,4 @@ class VentilationElement(EnvelopeElement):
     area: float = 0.0
     tilt: float = 0.0
     azimuth: float = 0.0
-    air_changes: Optional[float] = 0.5
+    air_changes: float | None = 0.5

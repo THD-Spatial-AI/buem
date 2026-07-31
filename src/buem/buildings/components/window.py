@@ -20,7 +20,6 @@ reference areas.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from buem.buildings.components.base import EnvelopeElement
 
@@ -49,7 +48,7 @@ class WindowElement(EnvelopeElement):
 
     element_type: str = "window"
     tilt: float = 90.0
-    g_gl: Optional[float] = 0.5
+    g_gl: float | None = 0.5
     F_sh_vert: float = 0.75
     F_f: float = 0.20
     F_w: float = 1.0

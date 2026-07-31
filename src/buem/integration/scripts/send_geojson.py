@@ -9,13 +9,14 @@ Usage:
 import argparse
 import json
 import sys
-import requests
+import time
 from pathlib import Path
-from datetime import datetime
+
+import requests
 
 # Import validation if available
 try:
-    from buem.integration.scripts.geojson_validator import validate_geojson_request, create_validation_report
+    from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
     VALIDATION_AVAILABLE = True
 except ImportError:
     VALIDATION_AVAILABLE = False
@@ -55,7 +56,7 @@ def validate_file(file_path: Path, verbose: bool = True) -> bool:
         
         return True
         
-    except Exception as e:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
         if verbose:
             print(f"❌ Validation error: {e}")
         return False
@@ -77,7 +78,7 @@ def format_response(response: requests.Response, verbose: bool = True) -> None:
             # Display summary info
             if 'metadata' in data:
                 metadata = data['metadata']
-                print(f"\n📊 Processing Summary:")
+                print("\n📊 Processing Summary:")
                 print(f"   - Total features: {metadata.get('total_features', 'unknown')}")
                 print(f"   - Successful: {metadata.get('successful_features', 'unknown')}")
                 print(f"   - Failed: {metadata.get('failed_features', 'unknown')}")
@@ -106,7 +107,7 @@ def format_response(response: requests.Response, verbose: bool = True) -> None:
         
         # Full response output
         if verbose:
-            print(f"\n📄 Full Response:")
+            print("\n📄 Full Response:")
             print(json.dumps(data, indent=2))
         else:
             # Just show the JSON without extra formatting
@@ -115,7 +116,7 @@ def format_response(response: requests.Response, verbose: bool = True) -> None:
     except json.JSONDecodeError:
         print("\n📄 Response (not JSON):")
         print(response.text)
-    except Exception as e:
+    except (TypeError, KeyError, AttributeError) as e:
         print(f"\n❌ Error processing response: {e}")
         print(response.text)
 
@@ -164,22 +165,21 @@ Examples:
     verbose = not args.quiet
     
     if verbose:
-        print(f"🚀 BUEM API Client")
+        print("🚀 BUEM API Client")
         print(f"📁 File: {args.file}")
         print(f"🌐 URL: {args.url}")
     
     # Validate file if requested
-    if args.validate:
-        if not validate_file(args.file, verbose):
-            if verbose:
-                print("\n❌ Aborting due to validation errors")
-            sys.exit(3)
+    if args.validate and not validate_file(args.file, verbose):
+        if verbose:
+            print("\n❌ Aborting due to validation errors")
+        sys.exit(3)
     
     # Load and send file
     try:
         with args.file.open("r", encoding="utf-8") as f:
             payload = json.load(f)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"❌ Error loading JSON file: {e}", file=sys.stderr)
         sys.exit(3)
     
@@ -191,27 +191,27 @@ Examples:
     # Send request
     try:
         if verbose:
-            print(f"\n📡 Sending request...")
-            start_time = datetime.now()
-        
+            print("\n📡 Sending request...")
+            start_time = time.monotonic()
+
         response = requests.post(
-            args.url, 
-            json=payload, 
-            params=params, 
+            args.url,
+            json=payload,
+            params=params,
             timeout=args.timeout
         )
-        
+
         if verbose:
-            elapsed = (datetime.now() - start_time).total_seconds()
+            elapsed = time.monotonic() - start_time
             print(f"⏱️ Request completed in {elapsed:.2f}s")
-        
+
     except requests.exceptions.Timeout:
         print(f"❌ Request timed out after {args.timeout} seconds", file=sys.stderr)
         sys.exit(4)
     except requests.exceptions.ConnectionError:
         print(f"❌ Connection error - is the API running at {args.url}?", file=sys.stderr)
         sys.exit(4)
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"❌ Request failed: {e}", file=sys.stderr)
         sys.exit(4)
     
@@ -231,7 +231,7 @@ Examples:
             if verbose:
                 print(f"\n💾 Response saved to {args.save_response}")
                 
-        except Exception as e:
+        except (OSError, ValueError, TypeError) as e:
             print(f"⚠️ Warning: Failed to save response: {e}", file=sys.stderr)
     
     # Exit with appropriate code

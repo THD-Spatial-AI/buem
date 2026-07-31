@@ -16,25 +16,23 @@ Usage:
 """
 
 import argparse
-import time
-import sys
-import os
-import psutil
-import multiprocessing
-from pathlib import Path
-from typing import List, Dict, Any
 import json
+import multiprocessing
+import os
 import threading
+import time
+from pathlib import Path
+
+import psutil
 
 # Optimize environment
 os.environ['OMP_NUM_THREADS'] = '4'
 os.environ['MKL_NUM_THREADS'] = '4'
 
-import pandas as pd
 
-from buem.main import run_model, cfg
-from buem.parallelization.parallel_run import ParallelBuildingProcessor
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from buem.main import cfg, run_model
+
 
 class PerformanceMonitor:
     """Monitor system performance during building processing."""
@@ -78,7 +76,7 @@ class PerformanceMonitor:
                 self.memory_samples.append(mem_mb)
                 self.thread_samples.append(process.num_threads())
                 time.sleep(0.5)
-            except:
+            except psutil.Error:
                 break
 
 def analyze_single_building_performance():
@@ -93,7 +91,7 @@ def analyze_single_building_performance():
     start_time = time.time()
     
     try:
-        result = run_model(
+        run_model(
             cfg,
             plot=False,
             use_milp=False
@@ -101,7 +99,7 @@ def analyze_single_building_performance():
         elapsed_time = time.time() - start_time
         stats = monitor.stop_monitoring()
         print(f"  Done: {elapsed_time:.2f}s")
-    except Exception as e:
+    except (ValueError, RuntimeError) as e:
         elapsed_time = float('inf')
         stats = {}
         print(f"  Failed: {e}")
@@ -152,11 +150,6 @@ def test_worker_allocation_efficiency(building_count: int = 8, max_workers: int 
         start_time = time.time()
         
         try:
-            # Process buildings in parallel
-            processor = ParallelBuildingProcessor(
-                workers=workers
-            )
-            
             building_results = []
             processed_count = 0
             
@@ -170,7 +163,7 @@ def test_worker_allocation_efficiency(building_count: int = 8, max_workers: int 
                     building_results.append(result)
                     processed_count += 1
                     
-                except Exception as e:
+                except (OSError, ValueError, KeyError, TypeError) as e:
                     print(f"    ⚠️  Failed to process {building_file.name}: {e}")
                     continue
             
@@ -192,7 +185,7 @@ def test_worker_allocation_efficiency(building_count: int = 8, max_workers: int 
                   f"RAM: {stats.get('max_memory_mb', 0):.0f}MB max, "
                   f"Threads: {stats.get('max_threads', 0)}")
             
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError, KeyError, psutil.Error) as e:
             print(f"    ❌ Failed with {workers} workers: {e}")
             results[workers] = {
                 'elapsed': float('inf'),
@@ -210,7 +203,7 @@ def test_worker_allocation_efficiency(building_count: int = 8, max_workers: int 
                                 key=lambda k: valid_results[k]['buildings_per_second'])
             optimal_rate = valid_results[optimal_workers]['buildings_per_second']
             
-            print(f"\\n🏆 OPTIMAL CONFIGURATION:")
+            print("\\n🏆 OPTIMAL CONFIGURATION:")
             print(f"   Workers: {optimal_workers}")
             print(f"   Throughput: {optimal_rate:.2f} buildings/second")
             
@@ -224,7 +217,7 @@ def test_worker_allocation_efficiency(building_count: int = 8, max_workers: int 
 
 def analyze_multibuilding_bottlenecks():
     """Analyze why multi-building processing doesn't scale linearly."""
-    print(f"\\n🔍 MULTI-BUILDING BOTTLENECK ANALYSIS")
+    print("\\n🔍 MULTI-BUILDING BOTTLENECK ANALYSIS")
     print("=" * 50)
     
     bottlenecks = {
@@ -294,7 +287,7 @@ def main():
     all_results['bottlenecks'] = bottlenecks
     
     # Final summary
-    print(f"\\n📋 PERFORMANCE SUMMARY")
+    print("\\n📋 PERFORMANCE SUMMARY")
     print("=" * 50)
     
     if 'single_building' in all_results:

@@ -1,16 +1,17 @@
-from flask import Blueprint, request, jsonify, current_app
 import json
+import logging
 import time
 import traceback
+
 import requests
-import logging
+from flask import Blueprint, current_app, jsonify, request
 
 from buem.config.cfg_building import CfgBuilding
-from buem.main import run_model
 from buem.config.validator import validate_cfg
 
 # new import: integration processor
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from buem.main import run_model
 
 bp = Blueprint("model_api", __name__, url_prefix="/api")
 logger = logging.getLogger(__name__)
@@ -31,7 +32,6 @@ def run_building_model():
          "include_timeseries" in payload else "false")
         )
         include_ts = str(include_ts).lower() == "true"
-        gp = GeoJsonProcessor(payload, include_timeseries=include_ts, db_fetcher=...)
 
         cfgb = CfgBuilding(json.dumps(payload))
         cfg = cfgb.to_cfg_dict()

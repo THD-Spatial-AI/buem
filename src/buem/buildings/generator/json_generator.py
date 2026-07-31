@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from buem.buildings.building import Building
 
@@ -74,9 +75,9 @@ class GeoJsonBuildingWriter:
 
     def write_batch(
         self,
-        buildings: List[Building],
+        buildings: list[Building],
         mode: str = "individual",
-    ) -> List[Path]:
+    ) -> list[Path]:
         """Write multiple buildings to GeoJSON files.
 
         Parameters
@@ -93,7 +94,7 @@ class GeoJsonBuildingWriter:
             Paths to the written files.
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        paths: List[Path] = []
+        paths: list[Path] = []
 
         if mode == "single":
             features = [b.to_v3_geojson_feature() for b in buildings]
@@ -118,13 +119,13 @@ class GeoJsonBuildingWriter:
 
 
 def _wrap_feature_collection(
-    features: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    features: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Wrap a list of Feature dicts into a GeoJSON FeatureCollection."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     return {
         "type": "FeatureCollection",
-        "timeStamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timeStamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "features": features,
     }

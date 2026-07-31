@@ -9,7 +9,7 @@ types and provides serialisation helpers for the v3 GeoJSON schema.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass
@@ -50,22 +50,22 @@ class EnvelopeElement:
     area: float = 0.0
     azimuth: float = 0.0
     tilt: float = 90.0
-    U: Optional[float] = None
+    U: float | None = None
     b_transmission: float = 1.0
-    surface: Optional[str] = None
-    g_gl: Optional[float] = None
-    air_changes: Optional[float] = None
+    surface: str | None = None
+    g_gl: float | None = None
+    air_changes: float | None = None
 
     # ── serialisation to v3 GeoJSON ──────────────────────────────────────────
 
-    def to_element_dict(self) -> Dict[str, Any]:
+    def to_element_dict(self) -> dict[str, Any]:
         """Return a complete ``envelope.elements[i]`` dict with inline thermal props.
 
         Matches the v3 example_request.json structure where geometry and
         thermal properties live together on each element.  Ventilation
         elements carry only ``air_changes``.
         """
-        d: Dict[str, Any] = {
+        d: dict[str, Any] = {
             "id": self.id,
             "type": self.element_type,
         }

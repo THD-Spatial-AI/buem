@@ -5,7 +5,6 @@ It is skipped when running in CI or without weather data.
 """
 import json
 import time
-import os
 from pathlib import Path
 
 import pytest

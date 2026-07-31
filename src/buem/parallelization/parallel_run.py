@@ -30,18 +30,24 @@ Requirements:
 """
 
 import json
-import time
 import logging
+import time
 import traceback
-from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any, Union
-from datetime import datetime, timezone
+from collections.abc import Callable, Sequence
+from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
+from concurrent.futures.process import BrokenProcessPool
+from datetime import UTC, datetime
 from multiprocessing import cpu_count
-from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
-from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from pathlib import Path
+from typing import Any
+
+from buem.config.weather_cache import (
+    distinct_locations,
+    get_or_fetch_weather,
+    weather_available,
+)
 from buem.integration import validate_request_file
-from buem.main import run_model
-from buem.config.cfg_building import CfgBuilding
+from buem.integration.scripts.geojson_processor import GeoJsonProcessor
 
 
 def _worker_init():
@@ -53,18 +59,47 @@ def _worker_init():
     BUEM config stack) moves that one-time cost into pool creation rather than into the
     first ``process_single_building`` call.
 
-    The import of ``buem.config.cfg_attribute`` also triggers the weather-data load.
-    Because the main process has already created the feather cache, the workers read
-    the fast binary feather file (~50 ms) instead of parsing the CSV and running the
-    pvlib DISC decomposition (~2-3 s).
+    The import of ``buem.config.cfg_attribute`` also triggers the bundled-CSV
+    weather-data load (the offline fallback default). Because the main process has
+    already created its feather cache, workers read the fast binary feather file
+    (~50 ms) instead of parsing the CSV and running the pvlib DISC decomposition
+    (~2-3 s). Per-building dynamic weather (when the optional ``weather`` package is
+    installed) is resolved separately, per building, inside each worker via
+    ``AttributeBuilder.generate_weather_profile()`` -- see ``process_buildings``'s
+    pre-warm step below for why that no longer assumes a single global location.
     """
     # Heavy numerics / solver
-    import numpy          # noqa: F401
-    import pandas         # noqa: F401
-    import cvxpy          # noqa: F401
+    import cvxpy  # noqa: F401
+    import numpy  # noqa: F401
+    import pandas  # noqa: F401
 
     # BUEM config stack (triggers weather feather-cache read via cfg_attribute)
-    from buem.config import cfg_attribute        # noqa: F401
+    from buem.config import cfg_attribute  # noqa: F401
+
+def _extract_building_attrs(building_file: str | Path) -> dict[str, Any]:
+    """Best-effort extraction of latitude/longitude/year/weather_provider
+    from a raw building request JSON file, for weather cache pre-warming.
+
+    Returns an empty dict (falls back to distinct_locations()'s own
+    defaults) on any parse failure -- a malformed file here should not
+    block pre-warming for the rest of the batch; process_single_building
+    still validates and reports errors for that file individually.
+    """
+    try:
+        with Path(building_file).open('r') as f:
+            data = json.load(f)
+        feature = data['features'][0] if 'features' in data else data
+        attrs: dict[str, Any] = dict(
+            feature.get('properties', {}).get('building_attributes', {})
+        )
+        coords = feature.get('geometry', {}).get('coordinates')
+        if coords and len(coords) >= 2:
+            attrs.setdefault('longitude', coords[0])
+            attrs.setdefault('latitude', coords[1])
+        return attrs
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        return {}
+
 
 # Configure logging
 logging.basicConfig(
@@ -82,7 +117,7 @@ except ImportError:
     logger.warning("psutil not available - system monitoring will be limited")
 
 
-def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
+def process_single_building(building_file: str | Path) -> dict[str, Any]:
     """
     Process a single building file and return results.
     
@@ -116,7 +151,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
             building_data = json.load(f)
         
         # Extract building ID
-        if 'features' in building_data and building_data['features']:
+        if building_data.get('features'):
             building_id = building_data['features'][0].get('id', building_file.stem)
         else:
             building_id = building_file.stem
@@ -159,7 +194,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
                 'processing_time': processing_time,
                 'file_path': str(building_file),
                 'metadata': {
-                    'processed_at': datetime.now(timezone.utc).isoformat(),
+                    'processed_at': datetime.now(UTC).isoformat(),
                     'validation_passed': validation_result,
                     'failed_features': failed_features,
                     'total_features': total_features
@@ -169,7 +204,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
         # Extract summary results
         summary_stats = {}
         thermal_breakdown = {}
-        if 'features' in response and response['features']:
+        if response.get('features'):
             feature = response['features'][0]
             if 'properties' in feature and 'buem' in feature['properties']:
                 thermal_profile = feature['properties']['buem'].get('thermal_load_profile', {})
@@ -195,16 +230,16 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
             'processing_time': processing_time,
             'file_path': str(building_file),
             'metadata': {
-                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'validation_passed': validation_result,
                 'failed_features': failed_features,
                 'total_features': total_features
             }
         }
         
-    except Exception as e:
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         processing_time = time.time() - start_time
-        error_msg = f"Error processing {building_file}: {str(e)}"
+        error_msg = f"Error processing {building_file}: {e!s}"
         logger.error(f"{error_msg}\n{traceback.format_exc()}")
         
         return {
@@ -214,7 +249,7 @@ def process_single_building(building_file: Union[str, Path]) -> Dict[str, Any]:
             'processing_time': processing_time,
             'file_path': str(building_file),
             'metadata': {
-                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'validation_passed': False,
                 'traceback': traceback.format_exc()
             }
@@ -242,10 +277,10 @@ class ParallelBuildingProcessor:
     
     def __init__(
         self,
-        workers: Optional[int] = None,
+        workers: int | None = None,
         chunk_size: int = 5,
         timeout: float = 300.0,
-        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ):
         """
         Initialize the parallel processor.
@@ -278,11 +313,11 @@ class ParallelBuildingProcessor:
             logger.info(f"System memory: {memory_info.total / (1024**3):.1f} GB available")
     
     def process_buildings(
-        self, 
-        building_files: List[Union[str, Path]],
+        self,
+        building_files: Sequence[str | Path],
         save_results: bool = True,
-        results_file: Optional[str] = None
-    ) -> Dict[str, Any]:
+        results_file: str | None = None
+    ) -> dict[str, Any]:
         """
         Process multiple buildings in parallel.
         
@@ -325,11 +360,36 @@ class ParallelBuildingProcessor:
             performance_metrics['initial_memory_mb'] = initial_memory
         
         try:
-            # Ensure the feather weather cache exists before spawning workers.
-            # The import triggers cfg_attribute module-level code which either reads
-            # the existing cache or creates it from CSV + pvlib DISC.
+            # Ensure the bundled-CSV feather cache exists before spawning workers
+            # (the offline fallback default -- see cfg_attribute.py). The import
+            # triggers module-level code which either reads the existing cache or
+            # creates it from CSV + pvlib DISC.
             from buem.config import cfg_attribute  # noqa: F401
-            logger.info("Weather feather cache ready — workers will load from cache")
+            logger.info("Bundled weather feather cache ready")
+
+            # Pre-warm the dynamic per-location weather cache for every distinct
+            # (latitude, longitude, year, provider) across this batch, in the main
+            # process, before forking workers. A single building batch can span
+            # many locations, so this replaces the old single-global-cache
+            # assumption above with one cache entry per distinct location.
+            if weather_available():
+                locations = distinct_locations(
+                    _extract_building_attrs(f) for f in building_files
+                )
+                logger.info(
+                    "Pre-warming weather cache for %d distinct location(s)",
+                    len(locations),
+                )
+                for lat, lon, year, provider in locations:
+                    try:
+                        get_or_fetch_weather(lat, lon, year, provider)
+                    except (ImportError, FileNotFoundError, KeyError, OSError, ValueError) as exc:
+                        logger.warning(
+                            "Weather pre-warm failed for (lat=%s, lon=%s, year=%s, "
+                            "provider=%s): %s -- affected buildings will fall back "
+                            "to the bundled default at processing time.",
+                            lat, lon, year, provider, exc,
+                        )
 
             # Use ProcessPoolExecutor for better control over process lifecycle.
             # _worker_init pre-imports heavy modules (cvxpy, numpy, pandas, buem model
@@ -383,21 +443,22 @@ class ParallelBuildingProcessor:
                         logger.error(f"⏱️ Timeout: {error_result['building_id']}")
                         completed_count += 1
                     
-                    except Exception as e:
+                    except (OSError, ValueError, KeyError, IndexError, TypeError,
+                            AttributeError, BrokenProcessPool) as e:
                         building_file = future_to_file[future]
                         error_result = {
                             'building_id': Path(building_file).stem,
                             'success': False,
-                            'error': f"Unexpected error: {str(e)}",
+                            'error': f"Unexpected error: {e!s}",
                             'processing_time': 0,
                             'file_path': str(building_file)
                         }
                         failed_buildings.append(error_result)
-                        logger.error(f"💥 Error: {error_result['building_id']} - {str(e)}")
+                        logger.error(f"💥 Error: {error_result['building_id']} - {e!s}")
                         completed_count += 1
         
         except Exception as e:
-            logger.error(f"Critical error in parallel processing: {str(e)}")
+            logger.error(f"Critical error in parallel processing: {e!s}")
             raise
         
         # Calculate performance metrics
@@ -427,7 +488,7 @@ class ParallelBuildingProcessor:
                 'failed': failed_count,
                 'success_rate_percent': performance_metrics['success_rate'] * 100,
                 'total_processing_time': total_time,
-                'processed_at': datetime.now(timezone.utc).isoformat()
+                'processed_at': datetime.now(UTC).isoformat()
             },
             'buildings': {
                 'successful': completed_buildings,
@@ -441,14 +502,14 @@ class ParallelBuildingProcessor:
             if not results_file:
                 results_dir = Path(__file__).resolve().parent.parent / "results"
                 results_dir.mkdir(parents=True, exist_ok=True)
-                results_file = str(results_dir / f"parallel_processing_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                results_file = str(results_dir / f"parallel_processing_results_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json")
             with open(results_file, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
             logger.info(f"Results saved to: {results_file}")
             results['results_file'] = results_file
         
         # Log summary
-        logger.info(f"🎯 Processing Summary:")
+        logger.info("🎯 Processing Summary:")
         logger.info(f"   Total buildings: {total_buildings}")
         logger.info(f"   ✅ Successful: {successful_count}")
         logger.info(f"   ❌ Failed: {failed_count}")

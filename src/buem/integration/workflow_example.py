@@ -43,10 +43,12 @@ import json
 import sys
 from pathlib import Path
 
+from buem.integration import validate_request_file
+from buem.integration.scripts.schema_manager import SchemaVersionManager
+
 # Import the enhanced integration system (using lazy imports for infrastructure-dependent modules)
 from buem.integration.scripts.schema_validator import BuemSchemaValidator
-from buem.integration.scripts.schema_manager import SchemaVersionManager
-from buem.integration import validate_request_file
+
 
 # Lazy imports for modules that require BUEM infrastructure
 def get_geojson_processor():
@@ -121,9 +123,9 @@ def demonstrate_schema_management():
     
     # Get schema information
     info = schema_manager.get_version_info()
-    print(f"\nLatest version info:")
+    print("\nLatest version info:")
     print(f"  Directory: {info['directory']}")
-    print(f"  Files available:")
+    print("  Files available:")
     for name, file_info in info['files'].items():
         status = "✅" if file_info['exists'] else "❌"
         print(f"    {status} {name}")
@@ -202,7 +204,7 @@ def demonstrate_processing_pipeline(file_path: Path):
         
         return True
         
-    except Exception as e:
+    except (OSError, ValueError, KeyError, TypeError) as e:
         print(f"❌ Processing failed: {e}")
         return False
 
@@ -268,7 +270,7 @@ def demonstrate_version_switching():
             status = "✅ Valid" if result["overall_valid"] else "❌ Invalid"
             print(f"   Example validation: {status}")
             
-        except Exception as e:
+        except (FileNotFoundError, OSError, ValueError, KeyError) as e:
             print(f"   Could not test version {version}: {e}")
 
 

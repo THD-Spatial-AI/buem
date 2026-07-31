@@ -53,16 +53,30 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Optional sub-package, now an independent repo in the UU-BUEM organisation.
-# Not published to PyPI, so it needs a direct git reference.
+# Optional sub-packages now in independent repos within the UU-BUEM organisation.
+# Neither is published to PyPI or a conda channel yet, so these are direct
+# git references (PEP 508). Tracked at @main (latest) rather than a pinned
+# tag -- see infrastructure/env/buem_env.yml's header comment for the
+# reproducibility trade-off and how to pin instead.
+# occupancy: https://github.com/UU-BUEM/occupancy
+# weather:   https://github.com/UU-BUEM/weather
+#
+# occupancy is pinned to enerplanet's own fork branch, not UU-BUEM/occupancy@main:
+# fix/config-path-resolution has not been merged upstream (confirmed absent from
+# UU-BUEM/occupancy's commit history as of this sync) -- switching to @main would
+# silently drop that fix. Revisit once it lands upstream.
 occupancy = [
     "occupancy @ git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution",
 ]
 weather = [
-    "weather",
+    "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main",
 ]
 server = [
     "gunicorn",
+]
+docs = [
+    "sphinx>=9.0.0",
+    "sphinx-rtd-theme>=3.0.0",
 ]
 dev = [
     "mypy",
@@ -87,7 +101,7 @@ buem = [
 
 [tool.setuptools_scm]
 version_file = "src/buem/_version.py"
-fallback_version = "0.1.3"
+fallback_version = "1.2.0"
 
 [tool.ruff]
 line-length = 120

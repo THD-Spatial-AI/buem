@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -61,7 +60,7 @@ class ExcelBuildingSource:
         self.path = Path(workbook_path)
         if not self.path.exists():
             raise FileNotFoundError(f"Workbook not found: {self.path}")
-        self._cache: Dict[str, pd.DataFrame] = {}
+        self._cache: dict[str, pd.DataFrame] = {}
 
     def _load_sheet(self, sheet_name: str) -> pd.DataFrame:
         """Load and cache a single sheet from the workbook."""
@@ -106,7 +105,7 @@ class ExcelBuildingSource:
 
     # ── filtered accessors ───────────────────────────────────────────────────
 
-    def get_building_ids(self, limit: Optional[int] = None) -> List[int]:
+    def get_building_ids(self, limit: int | None = None) -> list[int]:
         """Return a list of ``building_feature_id`` values.
 
         Parameters
@@ -136,7 +135,7 @@ class ExcelBuildingSource:
             self.surfaces["building_feature_id"] == building_feature_id
         ]
 
-    def get_tabula_row(self, tabula_id: float) -> Optional[pd.Series]:
+    def get_tabula_row(self, tabula_id: float) -> pd.Series | None:
         """Look up a single TABULA row by ``id``.
 
         Parameters
@@ -182,7 +181,7 @@ class ExcelBuildingSource:
             logger.info("Saved %s → %s (%d rows)", name, pq_path, len(df))
 
     @classmethod
-    def from_parquet(cls, parquet_dir: str | Path) -> "ExcelBuildingSource":
+    def from_parquet(cls, parquet_dir: str | Path) -> ExcelBuildingSource:
         """Load from pre-converted Parquet files instead of Excel.
 
         Parameters

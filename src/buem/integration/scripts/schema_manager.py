@@ -41,10 +41,9 @@ Usage:
     paths = manager.get_schema_paths("v2")
 """
 import json
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-import re
 import logging
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +81,7 @@ class SchemaVersionManager:
         request_schema_path = paths["request_schema"]
     """
     
-    def __init__(self, base_dir: Optional[Path] = None):
+    def __init__(self, base_dir: Path | None = None):
         """
         Initialize schema manager.
         
@@ -110,9 +109,9 @@ class SchemaVersionManager:
         else:
             self.base_dir = Path(base_dir)
         
-        self._version_cache: Optional[List[str]] = None
+        self._version_cache: list[str] | None = None
     
-    def _parse_version(self, version_str: str) -> Tuple[int, ...]:
+    def _parse_version(self, version_str: str) -> tuple[int, ...]:
         """
         Parse version string into tuple for comparison.
         
@@ -134,7 +133,7 @@ class SchemaVersionManager:
         except ValueError as e:
             raise ValueError(f"Invalid version format: {version_str}") from e
     
-    def get_available_versions(self, force_refresh: bool = False) -> List[str]:
+    def get_available_versions(self, force_refresh: bool = False) -> list[str]:
         """
         Get list of available schema versions, sorted oldest to newest.
         
@@ -183,7 +182,7 @@ class SchemaVersionManager:
         
         return versions[-1]  # Last item is newest after sorting
     
-    def get_schema_paths(self, version: Optional[str] = None) -> Dict[str, Path]:
+    def get_schema_paths(self, version: str | None = None) -> dict[str, Path]:
         """
         Get file paths for a schema version.
         
@@ -220,7 +219,7 @@ class SchemaVersionManager:
             "response_example": version_dir / "example_response.json"
         }
     
-    def load_schema(self, schema_type: str, version: Optional[str] = None) -> Dict[str, Any]:
+    def load_schema(self, schema_type: str, version: str | None = None) -> dict[str, Any]:
         """
         Load a specific schema file.
         
@@ -250,7 +249,7 @@ class SchemaVersionManager:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in schema file {schema_path}: {e}") from e
     
-    def load_example(self, example_type: str, version: Optional[str] = None) -> Dict[str, Any]:
+    def load_example(self, example_type: str, version: str | None = None) -> dict[str, Any]:
         """
         Load an example payload file.
         
@@ -280,7 +279,7 @@ class SchemaVersionManager:
         """Check if a specific version exists."""
         return version in self.get_available_versions()
     
-    def get_version_info(self, version: Optional[str] = None) -> Dict[str, Any]:
+    def get_version_info(self, version: str | None = None) -> dict[str, Any]:
         """
         Get information about a schema version.
         
@@ -292,7 +291,7 @@ class SchemaVersionManager:
             version = self.get_latest_version()
         
         paths = self.get_schema_paths(version)
-        info = {
+        info: dict[str, Any] = {
             "version": version,
             "is_latest": version == self.get_latest_version(),
             "directory": str(self.base_dir / version),

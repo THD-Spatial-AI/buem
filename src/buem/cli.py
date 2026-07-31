@@ -177,7 +177,8 @@ def main() -> None:
                 f"Starting Gunicorn on http://{args.host}:{args.port}"
                 f" ({args.workers} workers)"
             )
-            sys.exit(subprocess.run(cmd).returncode)
+            # check=False: propagate gunicorn's own exit code below, don't raise on nonzero.
+            sys.exit(subprocess.run(cmd, check=False).returncode)
 
     # ── validate ─────────────────────────────────────────────────────────────
     elif args.command == "validate":
@@ -282,9 +283,9 @@ def _run_validate() -> None:
             ok = False
 
     try:
-        from buem.thermal.model_buem import ModelBUEM  # noqa: F401
+        from buem.thermal.model_buem import ModelBUEM
 
-        lines.append("  [OK]  buem.thermal.model_buem.ModelBUEM")
+        lines.append(f"  [OK]  {ModelBUEM.__module__}.{ModelBUEM.__qualname__}")
     except ImportError as exc:
         lines.append(f"  [ERR] ModelBUEM: {exc}")
         ok = False

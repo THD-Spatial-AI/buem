@@ -1,6 +1,7 @@
-import requests
 import json
 from pathlib import Path
+
+import requests
 
 API_URL = "http://127.0.0.1:5000/api/process"
 RESPONSE_FILE = Path(r"c:\\test\\buem\\src\\buem\\integration\\api_response_received_v1.geojson")

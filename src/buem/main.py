@@ -1,10 +1,12 @@
-import time
 import logging
-from buem.thermal.model_buem import ModelBUEM
+import sys
+import time
+
+import numpy as np
+
 from buem.config.cfg_attribute import cfg
 from buem.config.validator import validate_cfg
-import numpy as np
-import sys
+from buem.thermal.model_buem import ModelBUEM
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +59,9 @@ def run_model(cfg_dict, plot: bool = False, use_milp: bool = False, return_model
                 from buem.results.standard_plots import PlotVariables as pvar
                 plotter = pvar()
                 plotter.plot_variables(model, model, period='year')
-            except Exception:
+            except ImportError:
+                logger.warning("buem.results.standard_plots not available; skipping plot")
+            except (ValueError, TypeError, AttributeError, RuntimeError, KeyError):
                 import traceback
                 traceback.print_exc()
 
@@ -104,7 +108,7 @@ def main():
             print(f" Cooling per A_ref ({floor_area:.0f} m²): {abs(cooling.sum())/floor_area:.1f} kWh/m²/yr")
             print(f" bU (U-values W/m2K): {model.bU}")
             print(f" bH (kW/K): {model.bH}")
-        except Exception as _e:
+        except (TypeError, ValueError, ZeroDivisionError, AttributeError, KeyError) as _e:
             print("Could not print low-level params:", _e)
 
     n_total = len(res["times"])

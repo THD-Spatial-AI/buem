@@ -29,19 +29,16 @@ Usage:
 """
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
-import logging
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator, ValidationError
+from jsonschema.exceptions import SchemaError
 
+from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
 from buem.integration.scripts.schema_manager import SchemaVersionManager
-from buem.integration.scripts.geojson_validator import (
-    validate_geojson_request,
-    create_validation_report,
-    ValidationLevel
-)
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +74,7 @@ class BuemSchemaValidator:
             validator.print_validation_result(result)
     """
     
-    def __init__(self, version: Optional[str] = None, schema_manager_instance: Optional[SchemaVersionManager] = None):
+    def __init__(self, version: str | None = None, schema_manager_instance: SchemaVersionManager | None = None):
         """
         Initialize the validator.
         
@@ -87,26 +84,26 @@ class BuemSchemaValidator:
         """
         self.schema_manager = schema_manager_instance or SchemaVersionManager()
         self.version = version or self.schema_manager.get_latest_version()
-        self._request_schema: Optional[Dict[str, Any]] = None
-        self._response_schema: Optional[Dict[str, Any]] = None
+        self._request_schema: dict[str, Any] | None = None
+        self._response_schema: dict[str, Any] | None = None
     
     @property
-    def request_schema(self) -> Dict[str, Any]:
+    def request_schema(self) -> dict[str, Any]:
         """Lazy-load request schema."""
         if self._request_schema is None:
             self._request_schema = self.schema_manager.load_schema("request", self.version)
         return self._request_schema
     
     @property
-    def response_schema(self) -> Dict[str, Any]:
+    def response_schema(self) -> dict[str, Any]:
         """Lazy-load response schema."""
         if self._response_schema is None:
             self._response_schema = self.schema_manager.load_schema("response", self.version)
         return self._response_schema
     
     def validate_json_schema(self, 
-                           payload: Dict[str, Any], 
-                           schema_type: str = "request") -> Tuple[bool, str, List[str]]:
+                           payload: dict[str, Any], 
+                           schema_type: str = "request") -> tuple[bool, str, list[str]]:
         """
         Validate payload against pure JSON Schema.
         
@@ -146,10 +143,10 @@ class BuemSchemaValidator:
             summary = f"❌ JSON Schema validation failed ({len(errors)} errors, version {self.version})"
             return False, summary, error_messages
             
-        except Exception as e:
+        except (OSError, ValueError, SchemaError) as e:
             return False, f"❌ Schema validation error: {e}", [str(e)]
     
-    def validate_buem_domain(self, payload: Dict[str, Any]) -> Tuple[bool, str, List[str]]:
+    def validate_buem_domain(self, payload: dict[str, Any]) -> tuple[bool, str, list[str]]:
         """
         Validate payload against BUEM domain rules.
         
@@ -164,7 +161,7 @@ class BuemSchemaValidator:
             report = create_validation_report(result)
             
             if result.is_valid:
-                summary = f"✅ BUEM domain validation passed"
+                summary = "✅ BUEM domain validation passed"
                 return True, summary, report.split('\n')
             else:
                 error_count = len(result.get_errors()) + len(result.get_warnings())
@@ -176,10 +173,10 @@ class BuemSchemaValidator:
             return False, f"❌ BUEM validation error: {e}", [str(e)]
     
     def validate_comprehensive(self, 
-                             payload: Dict[str, Any], 
+                             payload: dict[str, Any], 
                              schema_type: str = "request",
                              skip_json_schema: bool = False,
-                             skip_buem_domain: bool = False) -> Dict[str, Any]:
+                             skip_buem_domain: bool = False) -> dict[str, Any]:
         """
         Run comprehensive validation including both JSON Schema and BUEM domain rules.
         
@@ -192,7 +189,7 @@ class BuemSchemaValidator:
         Returns:
             Validation result dictionary with detailed information
         """
-        result = {
+        result: dict[str, Any] = {
             "version": self.version,
             "schema_type": schema_type,
             "overall_valid": True,
@@ -226,7 +223,7 @@ class BuemSchemaValidator:
     def validate_file(self, 
                      file_path: Path, 
                      schema_type: str = "request",
-                     **kwargs) -> Dict[str, Any]:
+                     **kwargs) -> dict[str, Any]:
         """
         Validate a JSON file.
         
@@ -241,7 +238,7 @@ class BuemSchemaValidator:
         try:
             with file_path.open(encoding="utf-8") as f:
                 payload = json.load(f)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             return {
                 "version": self.version,
                 "schema_type": schema_type,
@@ -254,7 +251,7 @@ class BuemSchemaValidator:
         result["file_path"] = str(file_path)
         return result
     
-    def print_validation_result(self, result: Dict[str, Any], verbose: bool = False) -> None:
+    def print_validation_result(self, result: dict[str, Any], verbose: bool = False) -> None:
         """
         Pretty-print validation results.
         
@@ -262,7 +259,7 @@ class BuemSchemaValidator:
             result: Result from validate_comprehensive or validate_file
             verbose: Show detailed error information
         """
-        print(f"\n🔍 BUEM Schema Validation Results")
+        print("\n🔍 BUEM Schema Validation Results")
         print("=" * 50)
         
         if "file_path" in result:
@@ -301,8 +298,8 @@ class BuemSchemaValidator:
 def _validate_payload_legacy(*, 
                            label: str, 
                            schema_path: Path, 
-                           instance_path: Optional[Path], 
-                           instance_data: Optional[Dict[str, Any]]) -> int:
+                           instance_path: Path | None, 
+                           instance_data: dict[str, Any] | None) -> int:
     """
     Legacy function for compatibility with original schema_validator.py.
     
@@ -345,7 +342,7 @@ def _validate_payload_legacy(*,
         return 2
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """
     CLI entry point for BUEM schema validation.
     
@@ -384,7 +381,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     
     try:
         validator = BuemSchemaValidator(version=args.version)
-    except Exception as e:
+    except (FileNotFoundError, OSError) as e:
         print(f"❌ Failed to initialize validator: {e}")
         return 2
     

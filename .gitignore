@@ -13,9 +13,11 @@ dist/
 *.db
 *.sqlite3
 *.log
+
+# Test coverage artifacts (pytest-cov)
+.coverage
+coverage.xml
 *.csv
-!src/buem/data/COSMO_Year__ix_389_660.csv
-!src/buem/data/COSMO_Year__ix_390_650.csv
 !src/buem/data/weather/COSMO_Year__ix_390_650.csv
 *.xlsx
 !src/buem/data/default_2016.xlsx

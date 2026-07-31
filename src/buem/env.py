@@ -37,6 +37,7 @@ def load_env() -> None:
         from dotenv import load_dotenv
 
         dotenv_home = os.environ.get("BUEM_HOME")
+        found: Path | None
         if dotenv_home:
             found = Path(dotenv_home) / ".env"
             load_dotenv(found, override=False)
@@ -52,7 +53,8 @@ def load_env() -> None:
         if found and found.is_file():
             _root = found.parent
             for _var in (
-                "BUEM_WEATHER_DIR", "BUEM_RESULTS_DIR", "BUEM_LOG_DIR",
+                "BUEM_WEATHER_DIR", "BUEM_WEATHER_DATA_DIR",
+                "BUEM_RESULTS_DIR", "BUEM_LOG_DIR",
                 "BUEM_CBC_EXE", "BUEM_LOG_FILE", "BUEM_ELEC_PROFILE_DIR",
             ):
                 _val = os.environ.get(_var)
@@ -63,8 +65,25 @@ def load_env() -> None:
 
     # 2. Apply defaults relative to the package directory so that an
     #    installed package (or editable install) works out of the box.
+    #    BUEM_WEATHER_DIR holds the bundled offline-fallback CSV and also
+    #    roots the dynamic per-location weather cache (see
+    #    buem.config.weather_cache). BUEM_WEATHER_DATA_DIR (no default
+    #    here) points at the `weather` package's own pre-processed
+    #    provider archives; when unset, weather.get_point_weather() falls
+    #    back to its own data_root() convention.
     _pkg = Path(__file__).parent
     os.environ.setdefault("BUEM_WEATHER_DIR", str(_pkg / "data" / "weather"))
     os.environ.setdefault("BUEM_RESULTS_DIR", str(_pkg / "results"))
     os.environ.setdefault("BUEM_LOG_DIR",     str(_pkg / "logs"))
     os.environ.setdefault("BUEM_ELEC_PROFILE_DIR", str(_pkg / "data" / "electricity_profiles"))
+
+    # BUEM_RESULTS_DIR/BUEM_LOG_DIR are output directories the app writes
+    # to at runtime (result cache, log files) -- ensure they exist rather
+    # than waiting for whichever code path happens to write there first.
+    # BUEM_WEATHER_DIR is deliberately NOT created here: it must already
+    # contain the bundled weather CSV, and cfg_attribute.py raises
+    # FileNotFoundError with a clear message if it doesn't -- silently
+    # creating an empty directory would turn that into a more confusing
+    # failure later.
+    Path(os.environ["BUEM_RESULTS_DIR"]).mkdir(parents=True, exist_ok=True)
+    Path(os.environ["BUEM_LOG_DIR"]).mkdir(parents=True, exist_ok=True)

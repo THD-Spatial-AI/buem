@@ -39,16 +39,16 @@ Performance Notes:
 """
 
 import json
-import time
 import logging
+import time
 import traceback
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any, Union
-from datetime import datetime, timezone
-from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from typing import Any
+
 from buem.integration import validate_request_file
-from buem.main import run_model
-from buem.config.cfg_building import CfgBuilding
+from buem.integration.scripts.geojson_processor import GeoJsonProcessor
 
 # Configure logging
 logging.basicConfig(
@@ -65,8 +65,12 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     logger.warning("psutil not available - system monitoring will be limited")
 
+# Usable in except clauses regardless of whether psutil is installed
+# (referencing psutil.Error directly would raise NameError when it's absent).
+_PSUTIL_EXCEPTIONS = (psutil.Error,) if PSUTIL_AVAILABLE else ()
 
-def process_single_building_sequential(building_file: Union[str, Path]) -> Dict[str, Any]:
+
+def process_single_building_sequential(building_file: str | Path) -> dict[str, Any]:
     """
     Process a single building file sequentially and return results.
     
@@ -94,7 +98,7 @@ def process_single_building_sequential(building_file: Union[str, Path]) -> Dict[
     building_file = Path(building_file)
     
     # Initialize detailed stats tracking
-    stats = {
+    stats: dict[str, float] = {
         'load_time': 0,
         'validation_time': 0,
         'processing_time': 0,
@@ -109,7 +113,7 @@ def process_single_building_sequential(building_file: Union[str, Path]) -> Dict[
         stats['load_time'] = time.time() - load_start
         
         # Extract building ID
-        if 'features' in building_data and building_data['features']:
+        if building_data.get('features'):
             building_id = building_data['features'][0].get('id', building_file.stem)
         else:
             building_id = building_file.stem
@@ -125,7 +129,7 @@ def process_single_building_sequential(building_file: Union[str, Path]) -> Dict[
             return {
                 'building_id': building_id,
                 'success': False,
-                'error': f"Validation failed",
+                'error': "Validation failed",
                 'processing_time': time.time() - start_time,
                 'file_path': str(building_file),
                 'detailed_stats': stats
@@ -147,7 +151,7 @@ def process_single_building_sequential(building_file: Union[str, Path]) -> Dict[
         
         # Extract summary results
         summary_stats = {}
-        if 'features' in response and response['features']:
+        if response.get('features'):
             feature = response['features'][0]
             if 'properties' in feature and 'buem' in feature['properties']:
                 thermal_profile = feature['properties']['buem'].get('thermal_load_profile', {})
@@ -162,16 +166,16 @@ def process_single_building_sequential(building_file: Union[str, Path]) -> Dict[
             'file_path': str(building_file),
             'detailed_stats': stats,
             'metadata': {
-                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'validation_passed': validation_result,
                 'processing_mode': 'sequential'
             }
         }
         
-    except Exception as e:
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         total_time = time.time() - start_time
         stats['total_time'] = total_time
-        error_msg = f"Error processing {building_file}: {str(e)}"
+        error_msg = f"Error processing {building_file}: {e!s}"
         logger.error(f"{error_msg}\\n{traceback.format_exc()}")
         
         return {
@@ -182,7 +186,7 @@ def process_single_building_sequential(building_file: Union[str, Path]) -> Dict[
             'file_path': str(building_file),
             'detailed_stats': stats,
             'metadata': {
-                'processed_at': datetime.now(timezone.utc).isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'validation_passed': False,
                 'processing_mode': 'sequential',
                 'traceback': traceback.format_exc()
@@ -212,7 +216,7 @@ class SequentialBuildingProcessor:
     def __init__(
         self,
         timeout: float = 300.0,
-        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_callback: Callable[[int, int], None] | None = None,
         detailed_logging: bool = True,
         memory_monitoring: bool = True
     ):
@@ -243,10 +247,10 @@ class SequentialBuildingProcessor:
     
     def process_buildings(
         self, 
-        building_files: List[Union[str, Path]],
+        building_files: list[str | Path],
         save_results: bool = True,
-        results_file: Optional[str] = None
-    ) -> Dict[str, Any]:
+        results_file: str | None = None
+    ) -> dict[str, Any]:
         """
         Process multiple buildings sequentially.
         
@@ -276,7 +280,7 @@ class SequentialBuildingProcessor:
         # Initialize results tracking
         completed_buildings = []
         failed_buildings = []
-        performance_metrics = {
+        performance_metrics: dict[str, Any] = {
             'start_time': start_time,
             'mode': 'sequential',
             'total_buildings': total_buildings,
@@ -334,11 +338,11 @@ class SequentialBuildingProcessor:
                         if self.detailed_logging:
                             logger.info(f"Memory usage: {current_memory:.1f} MB")
                     
-                except Exception as e:
+                except (KeyError, *_PSUTIL_EXCEPTIONS) as e:
                     error_result = {
                         'building_id': Path(building_file).stem,
                         'success': False,
-                        'error': f"Unexpected error: {str(e)}",
+                        'error': f"Unexpected error: {e!s}",
                         'processing_time': time.time() - building_start_time,
                         'file_path': str(building_file),
                         'metadata': {
@@ -346,14 +350,14 @@ class SequentialBuildingProcessor:
                         }
                     }
                     failed_buildings.append(error_result)
-                    logger.error(f"💥 Error: {error_result['building_id']} - {str(e)}")
+                    logger.error(f"💥 Error: {error_result['building_id']} - {e!s}")
         
         except KeyboardInterrupt:
             logger.warning("Processing interrupted by user")
             raise
         
         except Exception as e:
-            logger.error(f"Critical error in sequential processing: {str(e)}")
+            logger.error(f"Critical error in sequential processing: {e!s}")
             raise
         
         # Calculate performance metrics
@@ -387,7 +391,7 @@ class SequentialBuildingProcessor:
                 performance_metrics['average_model_processing_time'] = sum(s['processing_time'] for s in all_stats) / len(all_stats)
         
         # Compile comprehensive results
-        results = {
+        results: dict[str, Any] = {
             'summary': {
                 'total_buildings': total_buildings,
                 'successful': successful_count,
@@ -395,7 +399,7 @@ class SequentialBuildingProcessor:
                 'success_rate_percent': performance_metrics['success_rate'] * 100,
                 'total_processing_time': total_time,
                 'processing_mode': 'sequential',
-                'processed_at': datetime.now(timezone.utc).isoformat()
+                'processed_at': datetime.now(UTC).isoformat()
             },
             'buildings': {
                 'successful': completed_buildings,
@@ -409,14 +413,14 @@ class SequentialBuildingProcessor:
             if not results_file:
                 results_dir = Path(__file__).resolve().parent.parent / "results"
                 results_dir.mkdir(parents=True, exist_ok=True)
-                results_file = str(results_dir / f"sequential_processing_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                results_file = str(results_dir / f"sequential_processing_results_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json")
             with open(results_file, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
             logger.info(f"Results saved to: {results_file}")
             results['results_file'] = results_file
         
         # Log summary
-        logger.info(f"🎯 Sequential Processing Summary:")
+        logger.info("🎯 Sequential Processing Summary:")
         logger.info(f"   Total buildings: {total_buildings}")
         logger.info(f"   ✅ Successful: {successful_count}")
         logger.info(f"   ❌ Failed: {failed_count}")

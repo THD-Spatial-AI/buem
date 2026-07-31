@@ -16,7 +16,6 @@ True
 from __future__ import annotations
 
 import logging
-from typing import FrozenSet
 
 import pandas as pd
 
@@ -40,7 +39,7 @@ class SharedWallDetector:
     """
 
     def __init__(self, surfaces_df: pd.DataFrame) -> None:
-        self._shared_sfids: FrozenSet[int] = self._detect(surfaces_df)
+        self._shared_sfids: frozenset[int] = self._detect(surfaces_df)
         logger.info(
             "SharedWallDetector: %d shared surface_feature_ids detected",
             len(self._shared_sfids),
@@ -60,7 +59,7 @@ class SharedWallDetector:
     # ── internals ────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _detect(surfaces_df: pd.DataFrame) -> FrozenSet[int]:
+    def _detect(surfaces_df: pd.DataFrame) -> frozenset[int]:
         """Identify wall surface_feature_ids that belong to >1 building."""
         walls = surfaces_df[surfaces_df["objectclass_id"] == _OBJECTCLASS_WALL]
         counts = (

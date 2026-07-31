@@ -1,0 +1,108 @@
+# infrastructure/env/buem_env.yml
+# Runtime + dev + Docker environment for buem (single env file, matching
+# UU-BUEM/occupancy and UU-BUEM/weather's convention).
+#
+# Create:
+#   conda env create -f infrastructure/env/buem_env.yml
+#   conda activate buem_env
+#   pip install -e . --no-deps        # install buem from repo root
+#
+# Update (after a git pull, to pick up new/changed dependencies):
+#   conda env update -n buem_env -f infrastructure/env/buem_env.yml --prune
+#   pip install -e . --no-deps        # re-run if pyproject.toml changed
+#
+# occupancy/weather (below, under pip:) are tracked at @main rather than a
+# pinned tag, so `conda env update ... --prune` always picks up their
+# latest pushed changes -- re-run the update command above periodically
+# to refresh. Pin to a specific released tag instead (e.g. @v3.0.0) if you
+# need a reproducible, non-moving environment (e.g. a frozen release build
+# or CI you want stable across upstream pushes).
+#
+# Every runtime dependency occupancy/weather themselves declare (confirmed
+# live against their pyproject.toml on GitHub: numpy, pandas, python-dotenv,
+# scipy, pvlib, xarray, netcdf4, requests, urllib3) is listed explicitly
+# below as a conda package -- NOT left for pip to resolve on its own.
+# Reason: pip only reinstalls a dependency if the already-installed version
+# doesn't satisfy the requirement, so as long as conda installs a
+# satisfying version FIRST, pip's install of occupancy/weather just finds
+# everything already present and installs only the package code itself.
+# Without this, pip would be free to silently swap in a PyPI wheel for
+# whichever of these conda hasn't already provided -- which can break ABI
+# compatibility with other conda packages compiled against a specific
+# numpy build (numba, cvxpy, scipy). Re-check this list whenever
+# occupancy's/weather's own dependencies change.
+#
+# numpy/pandas previously had a <3 upper cap here, mirroring an upper cap
+# that used to be in occupancy's/weather's own pyproject.toml. Removed
+# 2026-07-30 after finding that cap wasn't actually protecting anything:
+# occupancy_env and weather_env had already drifted to pandas 3.0.3/numpy
+# 2.4-2.5 in practice (occupancy_env's `pip install -e . --no-deps`
+# workflow never enforces the pin at all; weather_env.yml never encoded
+# an upper bound to begin with), and both repos' full pytest suites pass
+# clean on those versions (weather: 55/58, the 3 non-passing unrelated to
+# numpy/pandas -- missing eccodes native lib; occupancy: 69/69). The caps
+# were removed from occupancy's/weather's own pyproject.toml/meta.yaml in
+# the same change. See those repos' CLAUDE.md for the fuller writeup.
+#
+# Separately (unrelated to the version cap): if you ever add `cupy` to
+# this env, pin `libblas=*=*openblas` too -- mkl (conda-forge's default
+# BLAS build) collides with cupy's bundled CUDA BLAS DLLs on Windows and
+# crashes numpy>=2's blas_fpe_check() self-test on import. buem_env
+# doesn't use cupy so this doesn't apply here today; see
+# weather_env.yml's own libblas line for where it was actually needed.
+#
+# gunicorn is intentionally NOT listed here: it's Unix-only (uses fork()),
+# so conda-forge ships no win-64 build and `conda env update` fails to
+# solve on Windows dev machines with it present. It's a Docker/prod-only
+# dependency (WSGI server for infrastructure/container/'s API image), so
+# it's installed there instead -- see Dockerfile's builder stage -- not in
+# this cross-platform env file. buem's own `pyproject.toml` still declares
+# it under the `server` extra for anyone installing outside conda.
+name: buem_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.14
+  - coincbc
+  - cvxpy
+  - flask
+  - flask-swagger-ui
+  - joblib
+  - jsonschema
+  - matplotlib
+  - netcdf4
+  - numba
+  - numpy>=1.26
+  - openpyxl
+  - pandas>=2.0
+  - psutil
+  - psycopg2
+  - pulp
+  - pvlib
+  - pyarrow
+  - python-dotenv
+  - requests
+  - scipy
+  - urllib3
+  - xarray
+  - setuptools-scm>=8
+  # Development
+  - mypy
+  - pytest
+  - pytest-cov
+  - ruff
+  - pip
+  - pip:
+    - marshmallow>=4.0.0
+    - marshmallow-dataclass>=8.0.0
+    # Optional sub-packages (https://github.com/UU-BUEM/occupancy,
+    # https://github.com/UU-BUEM/weather). Neither is published to PyPI or
+    # a conda channel yet, so installed via a direct git reference (see
+    # the @main note above). All of their own dependencies are already
+    # conda-installed above, so these two lines only add the package code
+    # itself. Remove them if you don't need real occupancy-driven loads or
+    # dynamic per-location weather -- buem falls back to synthetic/bundled
+    # defaults without them.
+    - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main
+    - weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main

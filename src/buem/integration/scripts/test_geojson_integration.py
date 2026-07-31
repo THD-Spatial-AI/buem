@@ -13,22 +13,17 @@ Usage:
   python test_geojson_integration.py --verbose
   python test_geojson_integration.py --test-files path/to/additional/files/*.geojson
 """
-import sys
-import json
 import argparse
-from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Any
+import json
 import logging
+import sys
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
-from buem.integration.scripts.geojson_validator import (
-    validate_geojson_request, 
-    create_validation_report,
-    ValidationLevel,
-    GeoJsonValidator
-)
-from buem.integration.scripts.debug_utils import BuemDebugger
 from buem.integration.scripts.geojson_processor import GeoJsonProcessor
+from buem.integration.scripts.geojson_validator import ValidationLevel, validate_geojson_request
 
 
 class GeoJsonTestSuite:
@@ -36,7 +31,7 @@ class GeoJsonTestSuite:
     
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
-        self.results = {
+        self.results: dict[str, Any] = {
             'validation_tests': [],
             'processing_tests': [],
             'format_conversion_tests': [],
@@ -52,13 +47,13 @@ class GeoJsonTestSuite:
     def log(self, message: str):
         """Log message if verbose mode is enabled."""
         if self.verbose:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+            print(f"[{datetime.now(UTC).strftime('%H:%M:%S')}] {message}")
     
-    def test_schema_validation(self) -> Dict[str, Any]:
+    def test_schema_validation(self) -> dict[str, Any]:
         """Test schema validation functionality."""
         self.log("Testing schema validation...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -98,11 +93,11 @@ class GeoJsonTestSuite:
         self.results['validation_tests'] = results
         return results
     
-    def test_format_conversion(self) -> Dict[str, Any]:
+    def test_format_conversion(self) -> dict[str, Any]:
         """Test hybrid format conversion (child_components to nested components)."""
         self.log("Testing format conversion...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -129,11 +124,11 @@ class GeoJsonTestSuite:
         self.results['format_conversion_tests'] = results
         return results
     
-    def test_processing_pipeline(self) -> Dict[str, Any]:
+    def test_processing_pipeline(self) -> dict[str, Any]:
         """Test complete processing pipeline."""
         self.log("Testing processing pipeline...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -163,11 +158,11 @@ class GeoJsonTestSuite:
         self.results['processing_tests'] = results
         return results
     
-    def test_response_schema_compliance(self) -> Dict[str, Any]:
+    def test_response_schema_compliance(self) -> dict[str, Any]:
         """Test that responses comply with response schema."""
         self.log("Testing response schema compliance...")
         
-        results = {
+        results: dict[str, Any] = {
             'passed': 0,
             'failed': 0,
             'tests': []
@@ -187,7 +182,7 @@ class GeoJsonTestSuite:
         self.results['schema_compliance_tests'] = results
         return results
     
-    def _test_single_validation(self, file_path: Path, should_pass: bool = True) -> Dict[str, Any]:
+    def _test_single_validation(self, file_path: Path, should_pass: bool = True) -> dict[str, Any]:
         """Test validation of a single file."""
         try:
             with file_path.open('r') as f:
@@ -210,7 +205,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"validate_{file_path.name}",
                 'passed': False,
@@ -218,7 +213,7 @@ class GeoJsonTestSuite:
                 'message': f"Validation test failed with exception: {e}"
             }
     
-    def _test_validation_payload(self, payload: Dict[str, Any], name: str, should_pass: bool = True) -> Dict[str, Any]:
+    def _test_validation_payload(self, payload: dict[str, Any], name: str, should_pass: bool = True) -> dict[str, Any]:
         """Test validation of a payload."""
         try:
             result = validate_geojson_request(payload)
@@ -238,7 +233,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"validate_{name}",
                 'passed': False,
@@ -246,7 +241,7 @@ class GeoJsonTestSuite:
                 'message': f"Validation test failed with exception: {e}"
             }
     
-    def _test_format_conversion(self, payload: Dict[str, Any], name: str) -> Dict[str, Any]:
+    def _test_format_conversion(self, payload: dict[str, Any], name: str) -> dict[str, Any]:
         """Test format conversion functionality."""
         try:
             result = validate_geojson_request(payload)
@@ -259,7 +254,13 @@ class GeoJsonTestSuite:
                 }
             
             validated_data = result.validated_data
-            
+            if validated_data is None:
+                return {
+                    'test_name': f"convert_{name}",
+                    'passed': False,
+                    'message': "Payload passed validation but produced no validated_data"
+                }
+
             # Check if conversion happened
             features = validated_data.get('features', [])
             if features:
@@ -287,7 +288,7 @@ class GeoJsonTestSuite:
                     'message': "No features found in payload"
                 }
             
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"convert_{name}",
                 'passed': False,
@@ -295,7 +296,7 @@ class GeoJsonTestSuite:
                 'message': f"Format conversion test failed: {e}"
             }
     
-    def _test_processing_pipeline(self, file_path: Path) -> Dict[str, Any]:
+    def _test_processing_pipeline(self, file_path: Path) -> dict[str, Any]:
         """Test complete processing pipeline (validation + processing)."""
         try:
             with file_path.open('r') as f:
@@ -328,7 +329,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as e:
             return {
                 'test_name': f"process_{file_path.name}",
                 'passed': False,
@@ -336,11 +337,11 @@ class GeoJsonTestSuite:
                 'message': f"Processing pipeline test failed: {e}"
             }
     
-    def _test_response_compliance(self, file_path: Path) -> Dict[str, Any]:
+    def _test_response_compliance(self, file_path: Path) -> dict[str, Any]:
         """Test response schema compliance (structure check)."""
         try:
             # Create expected response structure and check compliance
-            expected_fields = {
+            expected_fields: dict[str, Any] = {
                 'type': 'FeatureCollection',
                 'features': list,
                 'processed_at': str,
@@ -349,7 +350,7 @@ class GeoJsonTestSuite:
             }
             
             # For testing, create a mock response structure
-            mock_response = {
+            mock_response: dict[str, Any] = {
                 'type': 'FeatureCollection',
                 'features': [
                     {
@@ -381,7 +382,7 @@ class GeoJsonTestSuite:
                         }
                     }
                 ],
-                'processed_at': datetime.now().isoformat(),
+                'processed_at': datetime.now(UTC).isoformat(),
                 'processing_elapsed_s': 0.5,
                 'metadata': {
                     'total_features': 1,
@@ -397,6 +398,10 @@ class GeoJsonTestSuite:
             for field, expected_type in expected_fields.items():
                 if field not in mock_response:
                     compliance_issues.append(f"Missing field: {field}")
+                elif isinstance(expected_type, str):
+                    # Exact value match
+                    if mock_response[field] != expected_type:
+                        compliance_issues.append(f"Wrong value for {field}: expected {expected_type}, got {mock_response[field]}")
                 elif not isinstance(mock_response[field], expected_type):
                     compliance_issues.append(f"Wrong type for {field}: expected {expected_type}, got {type(mock_response[field])}")
             
@@ -421,7 +426,7 @@ class GeoJsonTestSuite:
                 }
             }
             
-        except Exception as e:
+        except (KeyError, TypeError, IndexError) as e:
             return {
                 'test_name': f"response_compliance_{file_path.name}",
                 'passed': False,
@@ -429,7 +434,7 @@ class GeoJsonTestSuite:
                 'message': f"Response compliance test failed: {e}"
             }
     
-    def _create_invalid_samples(self) -> List[Dict[str, Any]]:
+    def _create_invalid_samples(self) -> list[dict[str, Any]]:
         """Create invalid sample payloads for testing."""
         return [
             # Missing required fields
@@ -458,7 +463,7 @@ class GeoJsonTestSuite:
             }
         ]
     
-    def _create_child_components_sample(self) -> Dict[str, Any]:
+    def _create_child_components_sample(self) -> dict[str, Any]:
         """Create sample with child_components format."""
         return {
             "type": "FeatureCollection",
@@ -497,7 +502,7 @@ class GeoJsonTestSuite:
             }]
         }
     
-    def _create_hybrid_format_sample(self) -> Dict[str, Any]:
+    def _create_hybrid_format_sample(self) -> dict[str, Any]:
         """Create sample with both formats (should prefer nested)."""
         return {
             "type": "FeatureCollection", 
@@ -533,20 +538,22 @@ class GeoJsonTestSuite:
             }]
         }
     
-    def run_all_tests(self) -> Dict[str, Any]:
+    def run_all_tests(self) -> dict[str, Any]:
         """Run all test suites."""
         self.log("Starting comprehensive GeoJSON test suite...")
         
-        start_time = datetime.now()
-        
+        wall_start = datetime.now(UTC)
+        start_time = time.monotonic()
+
         # Run test suites
         validation_results = self.test_schema_validation()
         conversion_results = self.test_format_conversion()
         processing_results = self.test_processing_pipeline()
         compliance_results = self.test_response_schema_compliance()
-        
-        end_time = datetime.now()
-        elapsed = (end_time - start_time).total_seconds()
+
+        wall_end = datetime.now(UTC)
+        end_time = time.monotonic()
+        elapsed = end_time - start_time
         
         # Compile summary
         total_tests = (validation_results['passed'] + validation_results['failed'] +
@@ -558,8 +565,8 @@ class GeoJsonTestSuite:
                        processing_results['passed'] + compliance_results['passed'])
         
         summary = {
-            'start_time': start_time.isoformat(),
-            'end_time': end_time.isoformat(),
+            'start_time': wall_start.isoformat(),
+            'end_time': wall_end.isoformat(),
             'elapsed_seconds': elapsed,
             'total_tests': total_tests,
             'total_passed': total_passed,
@@ -575,7 +582,7 @@ class GeoJsonTestSuite:
         
         return summary
     
-    def print_summary(self, summary: Dict[str, Any]):
+    def print_summary(self, summary: dict[str, Any]):
         """Print test summary."""
         print("\n" + "="*60)
         print("BUEM GEOJSON TEST SUITE RESULTS")
@@ -644,7 +651,7 @@ def main():
     except KeyboardInterrupt:
         print("\nTest suite interrupted by user")
         sys.exit(130)
-    except Exception as e:
+    except (KeyError, TypeError, ZeroDivisionError) as e:
         print(f"Test suite failed with error: {e}")
         if args.verbose:
             import traceback

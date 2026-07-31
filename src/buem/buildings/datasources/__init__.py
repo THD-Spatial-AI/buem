@@ -6,7 +6,9 @@ __all__ = ["ExcelBuildingSource"]
 
 # PostgresBuildingSource is available when psycopg2 is installed:
 try:
-    from buem.buildings.datasources.pg_source import PostgresBuildingSource
+    from buem.buildings.datasources.pg_source import (
+        PostgresBuildingSource as PostgresBuildingSource,
+    )
     __all__.append("PostgresBuildingSource")
 except ImportError:
     pass

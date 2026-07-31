@@ -27,7 +27,7 @@
               "unit": "m"
             },
             "n_storeys": 2,
-            "building_type": "SCH",
+            "building_type": "school",
             "construction_period": "1965-1974",
             "country": "NL",
             "neighbour_status": "B_Alone",

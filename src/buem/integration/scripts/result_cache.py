@@ -16,7 +16,7 @@ import os
 import pickle
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -56,14 +56,14 @@ def _make_hashable(obj: Any) -> Any:
     return obj
 
 
-def compute_cfg_hash(cfg: Dict[str, Any]) -> str:
+def compute_cfg_hash(cfg: dict[str, Any]) -> str:
     """Return a hex SHA-256 digest that uniquely identifies the model inputs."""
     canonical = _make_hashable(cfg)
     raw = json.dumps(canonical, sort_keys=True, default=str).encode()
     return hashlib.sha256(raw).hexdigest()
 
 
-def get_cached_result(cache_key: str) -> Optional[Dict[str, Any]]:
+def get_cached_result(cache_key: str) -> dict[str, Any] | None:
     """Return the cached result dict, or None on miss."""
     path = CACHE_DIR / f"{cache_key}.pkl"
     if not path.exists():
@@ -71,12 +71,12 @@ def get_cached_result(cache_key: str) -> Optional[Dict[str, Any]]:
     try:
         with open(path, "rb") as f:
             return pickle.load(f)
-    except Exception as exc:
+    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, ValueError) as exc:
         logger.debug(f"Cache read error for {cache_key}: {exc}")
         return None
 
 
-def store_result(cache_key: str, result: Dict[str, Any]) -> None:
+def store_result(cache_key: str, result: dict[str, Any]) -> None:
     """Persist *result* under *cache_key* (atomic write via rename)."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_path = tempfile.mkstemp(dir=str(CACHE_DIR), suffix=".tmp")
@@ -85,7 +85,7 @@ def store_result(cache_key: str, result: Dict[str, Any]) -> None:
             pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
         dest = CACHE_DIR / f"{cache_key}.pkl"
         os.replace(tmp_path, str(dest))
-    except Exception as exc:
+    except (OSError, pickle.PicklingError, TypeError) as exc:
         logger.debug(f"Cache write error for {cache_key}: {exc}")
         try:
             os.unlink(tmp_path)

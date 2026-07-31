@@ -11,7 +11,6 @@ solar irradiance computation on tilted surfaces.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from buem.buildings.components.base import EnvelopeElement
 
@@ -32,6 +31,6 @@ class RoofElement(EnvelopeElement):
 
     element_type: str = "roof"
     tilt: float = 30.0
-    surface_feature_id: Optional[str] = None
-    objectclass_id: Optional[int] = None
-    tabula_roof_group: Optional[int] = None
+    surface_feature_id: str | None = None
+    objectclass_id: int | None = None
+    tabula_roof_group: int | None = None
