@@ -28,6 +28,17 @@ DEFAULT_NUM_PERSONS = 4
 DEFAULT_YEAR = 2018
 DEFAULT_SEED = 42
 
+# TABULA residential building-size classes (see BuildingIdentity.building_type,
+# src/buem/buildings/building.py). Anything outside this set is routed to
+# occupancy's ServiceBuildingProfile instead of HouseholdProfile -- see
+# AttributeBuilder.generate_electricity_profile(). occupancy's own 8 service
+# types (supermarket/office/restaurant/school/hotel/bakery/warehouse/clinic)
+# are deliberately not hand-copied here; occupancy.services_buildings.
+# SERVICE_BUILDING_TYPES / get_building_type() is the single source of truth
+# for that side, kept up to date independently in the occupancy repo.
+RESIDENTIAL_BUILDING_TYPES = frozenset({"SFH", "MFH", "TH", "AB"})
+DEFAULT_BUILDING_TYPE = "MFH"
+
 # --- changed code: make weather CSV path configurable via BUEM_WEATHER_DIR env var ---
 # Default to package-local data/weather folder if env var is not set so behavior is backwards-compatible.
 DEFAULT_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "weather"))
@@ -262,6 +273,31 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
     ),
     "ventControl": AttributeSpec("ventControl", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
     "control": AttributeSpec("control", AttributeCategory.BOOLEAN, AttrType.BOOL, False),
+    "building_type": AttributeSpec(
+        "building_type",
+        AttributeCategory.FIXED,
+        AttrType.STR,
+        DEFAULT_BUILDING_TYPE,
+        doc=(
+            "TABULA residential size class (SFH/MFH/TH/AB, see "
+            "RESIDENTIAL_BUILDING_TYPES) or one of occupancy's service-building "
+            "type ids (supermarket/office/restaurant/school/hotel/bakery/"
+            "warehouse/clinic). Selects HouseholdProfile vs. ServiceBuildingProfile "
+            "in AttributeBuilder.generate_electricity_profile()."
+        ),
+    ),
+    "capacity": AttributeSpec(
+        "capacity",
+        AttributeCategory.FIXED,
+        AttrType.INT,
+        None,
+        doc=(
+            "Service-building capacity (e.g. seats, beds, staff) passed to "
+            "occupancy.ServiceBuildingProfile. Ignored for residential "
+            "building_type values, where num_persons applies instead. "
+            "None uses the service type's own capacity_default."
+        ),
+    ),
     "num_persons": AttributeSpec("num_persons", AttributeCategory.FIXED, AttrType.INT, DEFAULT_NUM_PERSONS, doc="Default persons for electricity profile generation"),
     "year": AttributeSpec("year", AttributeCategory.FIXED, AttrType.INT, DEFAULT_YEAR, doc="Default year for profile generation"),
     "seed": AttributeSpec("seed", AttributeCategory.FIXED, AttrType.INT, DEFAULT_SEED, doc="RNG seed for reproducible electricity profiles (default: 42)"),

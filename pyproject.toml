@@ -67,6 +67,10 @@ weather = [
 server = [
     "gunicorn",
 ]
+docs = [
+    "sphinx>=9.0.0",
+    "sphinx-rtd-theme>=3.0.0",
+]
 dev = [
     "mypy",
     "pytest",

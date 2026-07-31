@@ -1,0 +1,504 @@
+{
+  "type": "FeatureCollection",
+  "timeStamp": "2024-02-24T12:00:00Z",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "building_001",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5,
+          52
+        ]
+      },
+      "properties": {
+        "start_time": "2018-01-01T00:00:00Z",
+        "end_time": "2018-12-31T23:00:00Z",
+        "resolution": "60",
+        "resolution_unit": "minutes",
+        "buem": {
+          "building": {
+            "building_type": "SFH",
+            "construction_period": "1965-1974",
+            "country": "NL",
+            "n_storeys": 2,
+            "A_ref": {
+              "value": 100,
+              "unit": "m2"
+            },
+            "h_room": {
+              "value": 2.5,
+              "unit": "m"
+            },
+            "neighbour_status": "B_Alone",
+            "attic_condition": "N",
+            "cellar_condition": "N",
+            "envelope": {
+              "elements": [
+                {
+                  "id": "Wall_1",
+                  "type": "wall",
+                  "area": {
+                    "value": 30,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 1.6,
+                    "unit": "W/(m2K)"
+                  },
+                  "b_transmission": {
+                    "value": 1,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Wall_2",
+                  "type": "wall",
+                  "area": {
+                    "value": 25,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 1.4,
+                    "unit": "W/(m2K)"
+                  },
+                  "b_transmission": {
+                    "value": 1,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Wall_3",
+                  "type": "wall",
+                  "area": {
+                    "value": 30,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 180,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 1.6,
+                    "unit": "W/(m2K)"
+                  },
+                  "b_transmission": {
+                    "value": 1,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Wall_4",
+                  "type": "wall",
+                  "area": {
+                    "value": 25,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 270,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 1.6,
+                    "unit": "W/(m2K)"
+                  },
+                  "b_transmission": {
+                    "value": 1,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Roof_1",
+                  "type": "roof",
+                  "area": {
+                    "value": 100,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 180,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 30,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 1.2,
+                    "unit": "W/(m2K)"
+                  }
+                },
+                {
+                  "id": "Floor_1",
+                  "type": "floor",
+                  "area": {
+                    "value": 100,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 1.5,
+                    "unit": "W/(m2K)"
+                  },
+                  "b_transmission": {
+                    "value": 0.8,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Win_1",
+                  "type": "window",
+                  "area": {
+                    "value": 6,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "parent_id": "Wall_1",
+                  "U": {
+                    "value": 2.8,
+                    "unit": "W/(m2K)"
+                  },
+                  "g_gl": {
+                    "value": 0.6,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Win_2",
+                  "type": "window",
+                  "area": {
+                    "value": 8,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 180,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "parent_id": "Wall_3",
+                  "U": {
+                    "value": 2.8,
+                    "unit": "W/(m2K)"
+                  },
+                  "g_gl": {
+                    "value": 0.6,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Win_3",
+                  "type": "window",
+                  "area": {
+                    "value": 4,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "parent_id": "Wall_2",
+                  "U": {
+                    "value": 2.5,
+                    "unit": "W/(m2K)"
+                  },
+                  "g_gl": {
+                    "value": 0.6,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Door_1",
+                  "type": "door",
+                  "area": {
+                    "value": 2,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "parent_id": "Wall_1",
+                  "U": {
+                    "value": 3,
+                    "unit": "W/(m2K)"
+                  }
+                },
+                {
+                  "id": "Vent_1",
+                  "type": "ventilation",
+                  "air_changes": {
+                    "value": 0.5,
+                    "unit": "1/h"
+                  }
+                }
+              ]
+            },
+            "thermal": {
+              "n_air_infiltration": {
+                "value": 0.5,
+                "unit": "1/h"
+              },
+              "n_air_use": {
+                "value": 0.5,
+                "unit": "1/h"
+              },
+              "c_m": {
+                "value": 165.0,
+                "unit": "kJ/(m2K)"
+              },
+              "thermal_class": "medium",
+              "comfortT_lb": {
+                "value": 21,
+                "unit": "degC"
+              },
+              "comfortT_ub": {
+                "value": 24,
+                "unit": "degC"
+              },
+              "design_T_min": {
+                "value": -12.0,
+                "unit": "degC"
+              },
+              "F_sh_hor": {
+                "value": 0.80,
+                "unit": "-"
+              },
+              "F_sh_vert": {
+                "value": 0.75,
+                "unit": "-"
+              },
+              "F_f": {
+                "value": 0.20,
+                "unit": "-"
+              },
+              "F_w": {
+                "value": 1.0,
+                "unit": "-"
+              },
+              "F_red_htr": {
+                "value": 0.95,
+                "unit": "-"
+              }
+            }
+          },
+          "solver": {
+            "use_milp": false,
+            "parallel_thermal": true,
+            "use_chunked_processing": true
+          }
+        }
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "building_002",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.13,
+          52.08
+        ]
+      },
+      "properties": {
+        "start_time": "2018-01-01T00:00:00Z",
+        "end_time": "2018-12-31T23:00:00Z",
+        "resolution": "60",
+        "resolution_unit": "minutes",
+        "buem": {
+          "building": {
+            "building_type": "office",
+            "capacity": 40,
+            "country": "NL",
+            "n_storeys": 3,
+            "A_ref": {
+              "value": 600,
+              "unit": "m2"
+            },
+            "h_room": {
+              "value": 3.0,
+              "unit": "m"
+            },
+            "envelope": {
+              "elements": [
+                {
+                  "id": "Wall_1",
+                  "type": "wall",
+                  "area": {
+                    "value": 120,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 180,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 0.5,
+                    "unit": "W/(m2K)"
+                  },
+                  "b_transmission": {
+                    "value": 1,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Roof_1",
+                  "type": "roof",
+                  "area": {
+                    "value": 200,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 180,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 0.4,
+                    "unit": "W/(m2K)"
+                  }
+                },
+                {
+                  "id": "Floor_1",
+                  "type": "floor",
+                  "area": {
+                    "value": 200,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 0,
+                    "unit": "deg"
+                  },
+                  "U": {
+                    "value": 0.5,
+                    "unit": "W/(m2K)"
+                  },
+                  "b_transmission": {
+                    "value": 1,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Win_1",
+                  "type": "window",
+                  "area": {
+                    "value": 40,
+                    "unit": "m2"
+                  },
+                  "azimuth": {
+                    "value": 180,
+                    "unit": "deg"
+                  },
+                  "tilt": {
+                    "value": 90,
+                    "unit": "deg"
+                  },
+                  "parent_id": "Wall_1",
+                  "U": {
+                    "value": 1.4,
+                    "unit": "W/(m2K)"
+                  },
+                  "g_gl": {
+                    "value": 0.5,
+                    "unit": "-"
+                  }
+                },
+                {
+                  "id": "Vent_1",
+                  "type": "ventilation",
+                  "air_changes": {
+                    "value": 0.5,
+                    "unit": "1/h"
+                  }
+                }
+              ]
+            },
+            "thermal": {
+              "n_air_infiltration": {
+                "value": 0.3,
+                "unit": "1/h"
+              },
+              "n_air_use": {
+                "value": 0.7,
+                "unit": "1/h"
+              },
+              "thermal_class": "medium",
+              "comfortT_lb": {
+                "value": 20,
+                "unit": "degC"
+              },
+              "comfortT_ub": {
+                "value": 25,
+                "unit": "degC"
+              }
+            }
+          },
+          "solver": {
+            "use_milp": false,
+            "parallel_thermal": true,
+            "use_chunked_processing": true
+          }
+        }
+      }
+    }
+  ]
+}

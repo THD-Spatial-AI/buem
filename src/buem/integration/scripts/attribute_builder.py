@@ -9,14 +9,19 @@ from typing import Any
 
 import pandas as pd
 
-from buem.config.cfg_attribute import ATTRIBUTE_SPECS
+from buem.config.cfg_attribute import ATTRIBUTE_SPECS, RESIDENTIAL_BUILDING_TYPES
 from buem.config.validator import validate_cfg
 from buem.config.weather_cache import get_or_fetch_weather, weather_available
 
 # occupancy is an optional independent package (https://github.com/UU-BUEM/occupancy)
 # Install with: pip install buem[occupancy]  (or `pip install occupancy` directly)
 try:
-    from occupancy import ElectricityConsumptionProfile, HouseholdProfile, to_buem_profiles  # type: ignore[import]
+    from occupancy import (  # type: ignore[import]
+        ElectricityConsumptionProfile,
+        HouseholdProfile,
+        ServiceBuildingProfile,
+        to_buem_profiles,
+    )
     _OCCUPANCY_AVAILABLE = True
 except ImportError:
     _OCCUPANCY_AVAILABLE = False
@@ -24,22 +29,54 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _reindex_or_raise(series: pd.Series, target_index: pd.DatetimeIndex, name: str) -> pd.Series:
+    """Reindex a profile onto the weather index without silently zero-filling
+    gaps -- a real misalignment (e.g. a year/timezone mismatch between the
+    occupancy profile and weather) should surface as an error, not a
+    plausible-looking zero internal-gains/electricity result for those hours.
+
+    ``method="nearest"`` alone would happily match e.g. a 2019 profile onto a
+    2018 index (nearest always finds *some* label), which is exactly the
+    silent-wrong-data failure mode this guards against -- a ``tolerance`` is
+    required so a genuinely out-of-range timestamp reindexes to NaN instead.
+    Half an hour assumes this repo's consistently-hourly resolution.
+    """
+    aligned = series.reindex(target_index, method="nearest", tolerance=pd.Timedelta(minutes=30))
+    if aligned.isna().any():
+        n_missing = int(aligned.isna().sum())
+        raise ValueError(
+            f"{name} could not be aligned to the weather timeseries at "
+            f"{n_missing} of {len(target_index)} timestep(s) -- refusing to "
+            "silently zero-fill. Check that the occupancy profile covers the "
+            "same year/timezone as the weather data."
+        )
+    return aligned
+
+# Attributes that identify *which building* is being modeled -- there is no
+# safe generic default for these (unlike thermal-class-type assumptions), so
+# they must be explicitly supplied via payload_attrs or db_fetcher rather than
+# silently falling back to ATTRIBUTE_SPECS' generic example-house defaults.
+REQUIRED_FROM_CALLER: tuple[str, ...] = ("latitude", "longitude", "components", "A_ref")
+
+
 class AttributeBuilder:
     """
     Merge building attributes from multiple sources and generate derived profiles.
-    
+
     Precedence: payload > database > defaults (cfg_attribute.py)
     """
-    
+
     def __init__(
         self,
         payload_attrs: dict[str, Any],
         building_id: str | None = None,
-        db_fetcher: Callable[[str], dict[str, Any]] | None = None
+        db_fetcher: Callable[[str], dict[str, Any]] | None = None,
+        *,
+        allow_weather_fallback: bool = False,
     ):
         """
         Initialize attribute builder.
-        
+
         Parameters
         ----------
         payload_attrs : Dict[str, Any]
@@ -48,21 +85,30 @@ class AttributeBuilder:
             Building identifier for database lookup.
         db_fetcher : Callable, optional
             Function to fetch additional attributes by building_id.
+        allow_weather_fallback : bool, optional
+            If True, silently substitute the bundled reference-location weather
+            when a real per-location fetch fails for a reason other than the
+            `weather` package being fully absent (e.g. no archive for this
+            location/year). Default False: such failures raise, since silently
+            using the wrong location's weather can produce a plausible-looking
+            but wrong result. Intended for offline/dev use only.
         """
         self.payload_attrs = payload_attrs
         self.building_id = building_id
         self.db_fetcher = db_fetcher
+        self.allow_weather_fallback = allow_weather_fallback
         self.merged_attrs: dict[str, Any] = {}
-        
+        self._provided_keys: set[str] = set()
+
     def build(self) -> dict[str, Any]:
         """
         Build complete attribute dictionary.
-        
+
         Returns
         -------
         Dict[str, Any]
             Complete building attributes ready for CfgBuilding.
-            
+
         Raises
         ------
         ValueError
@@ -71,57 +117,77 @@ class AttributeBuilder:
         # Step 1: Merge sources (payload > db > defaults)
         self.merge_sources()
 
-        # Step 2: Fetch a location-specific weather DataFrame (unless opted out)
+        # Step 2: Refuse to silently model the generic example house in place
+        # of a real building the caller forgot to fully specify.
+        missing_required = [k for k in REQUIRED_FROM_CALLER if k not in self._provided_keys]
+        if missing_required:
+            raise ValueError(
+                f"Missing required building attributes (not supplied via payload "
+                f"or database): {missing_required}. These identify the specific "
+                "building being modeled and are not safe to default silently."
+            )
+
+        # Step 3: Fetch a location-specific weather DataFrame (unless opted out)
         self.generate_weather_profile()
 
-        # Step 3: Generate electricity profile (unless opted out)
+        # Step 4: Generate electricity profile (unless opted out)
         self.generate_electricity_profile()
 
-        # Step 4: Align timeseries indices to weather year
+        # Step 5: Align timeseries indices to weather year
         self.align_timeseries()
 
-        # Step 5: Validate complete config
+        # Step 6: Validate complete config
         issues = validate_cfg(self.merged_attrs)
         if issues:
             raise ValueError(f"Attribute validation failed: {'; '.join(issues)}")
-        
+
         return self.merged_attrs
     
     def merge_sources(self):
         """Merge payload, database, and defaults with correct precedence."""
         # Start with defaults
         self.merged_attrs = {
-            spec.name: spec.default 
+            spec.name: spec.default
             for spec in ATTRIBUTE_SPECS.values()
         }
-        
+
         # Overlay database values (if available)
         if self.db_fetcher and self.building_id:
             try:
                 db_attrs = self.db_fetcher(self.building_id) or {}
-                self.merged_attrs.update(db_attrs)
             except (OSError, ValueError, KeyError, RuntimeError) as exc:
-                # Continue with defaults -- db_fetcher is a caller-supplied
-                # callable, so its failure modes aren't fully known here.
-                logger.warning(
-                    "db_fetcher failed for building_id=%r, continuing with defaults: %s",
-                    self.building_id, exc,
-                )
-        
+                # A db_fetcher was explicitly wired for a specific building_id --
+                # if it fails, that building's real data is missing. Silently
+                # continuing with the generic example-house defaults would model
+                # the wrong building without any signal that anything went
+                # wrong, so raise instead.
+                raise RuntimeError(
+                    f"db_fetcher failed for building_id={self.building_id!r}; "
+                    "refusing to silently continue with generic building "
+                    "defaults for a specific building lookup."
+                ) from exc
+            self.merged_attrs.update(db_attrs)
+            self._provided_keys.update(db_attrs.keys())
+
         # Overlay payload (highest priority)
         self.merged_attrs.update(self.payload_attrs)
+        self._provided_keys.update(self.payload_attrs.keys())
     
     def generate_weather_profile(self):
         """Fetch a location-specific weather DataFrame via the optional
-        weather package, unless opted out. Falls back to whatever default
-        is already in merged_attrs["weather"] (the bundled CSV, see
-        cfg_attribute.py) if weather isn't installed or the fetch fails
-        (e.g. no processed archive for this location/year/provider)."""
+        weather package, unless opted out. Falls back to whatever default is
+        already in merged_attrs["weather"] (the bundled CSV, see
+        cfg_attribute.py) only when the `weather` package (or one of its
+        optional extras) is genuinely absent -- a fetch that fails for a real
+        location/year (no archive, bad response, etc.) raises instead, unless
+        ``allow_weather_fallback=True`` was passed to __init__, since silently
+        using the wrong location's weather can produce a plausible-looking but
+        wrong result."""
         if bool(self.merged_attrs.get("use_provided_weather", False)):
             return  # Keep the provided/merged weather DataFrame as-is
 
         if not weather_available():
-            return  # Keep the bundled-CSV default already in merged_attrs["weather"]
+            return  # weather package not installed at all -- documented bundled-CSV fallback
 
         lat = float(self.merged_attrs.get("latitude", ATTRIBUTE_SPECS["latitude"].default))
         lon = float(self.merged_attrs.get("longitude", ATTRIBUTE_SPECS["longitude"].default))
@@ -130,11 +196,31 @@ class AttributeBuilder:
 
         try:
             self.merged_attrs["weather"] = get_or_fetch_weather(lat, lon, year, provider)
-        except (ImportError, FileNotFoundError, KeyError, OSError, ValueError) as exc:
+        except ImportError as exc:
+            # weather itself imported fine (weather_available() above), but one
+            # of its optional extras (e.g. xarray/netcdf4 for point-query) is
+            # missing -- the same "extra not installed" case as above, just
+            # discovered one level deeper. Documented, lenient fallback.
             warnings.warn(
-                f"Dynamic weather fetch failed for (lat={lat}, lon={lon}, "
-                f"year={year}, provider={provider!r}); falling back to "
-                f"bundled default weather. ({exc})",
+                f"weather package's point-query extra is unavailable "
+                f"(lat={lat}, lon={lon}, year={year}, provider={provider!r}); "
+                f"falling back to bundled default weather. ({exc})",
+                stacklevel=2,
+            )
+        except (FileNotFoundError, KeyError, OSError, ValueError) as exc:
+            if not self.allow_weather_fallback:
+                raise RuntimeError(
+                    f"Weather fetch failed for the requested building location "
+                    f"(lat={lat}, lon={lon}, year={year}, provider={provider!r}); "
+                    "refusing to silently substitute the bundled reference-"
+                    "location weather for a specific building. Pass "
+                    "allow_weather_fallback=True to opt into the lenient "
+                    "(dev/offline) behavior instead."
+                ) from exc
+            warnings.warn(
+                f"Weather fetch failed for (lat={lat}, lon={lon}, year={year}, "
+                f"provider={provider!r}); falling back to bundled default "
+                f"weather (allow_weather_fallback=True). ({exc})",
                 stacklevel=2,
             )
 
@@ -153,7 +239,7 @@ class AttributeBuilder:
             weather_year = int(ATTRIBUTE_SPECS["year"].default)
 
         # Get generation parameters
-        num_persons = int(self.merged_attrs.get("num_persons", ATTRIBUTE_SPECS["num_persons"].default))
+        building_type = self.merged_attrs.get("building_type", ATTRIBUTE_SPECS["building_type"].default)
         seed = self.merged_attrs.get("seed", ATTRIBUTE_SPECS["seed"].default)
 
         try:
@@ -163,14 +249,42 @@ class AttributeBuilder:
                     "occupancy package is required for electricity profile generation. "
                     "Install it with: pip install buem[occupancy]"
                 )
-            household = HouseholdProfile(num_persons=num_persons, year=weather_year, seed=seed)
-            elec_gen = ElectricityConsumptionProfile(household, seed=seed)
-            buem_inputs = to_buem_profiles(elec_gen.to_result())
+
+            if building_type in RESIDENTIAL_BUILDING_TYPES:
+                num_persons = int(self.merged_attrs.get("num_persons", ATTRIBUTE_SPECS["num_persons"].default))
+                household = HouseholdProfile(num_persons=num_persons, year=weather_year, seed=seed)
+                elec_gen = ElectricityConsumptionProfile(household, seed=seed)
+                result = elec_gen.to_result()
+            else:
+                # Non-residential: route through occupancy's ServiceBuildingProfile
+                # instead of forcing every building through HouseholdProfile.
+                capacity_raw = self.merged_attrs.get("capacity", ATTRIBUTE_SPECS["capacity"].default)
+                # Explicit cast (mirrors num_persons above) -- a string capacity from
+                # a JSON payload would otherwise reach ServiceBuildingProfile's
+                # `self.capacity <= 0` check and raise an unrelated-looking TypeError
+                # instead of a clear int-conversion error here.
+                capacity = int(capacity_raw) if capacity_raw is not None else None
+                try:
+                    service = ServiceBuildingProfile(
+                        building_type=building_type,
+                        year=weather_year,
+                        capacity=capacity,
+                        seed=seed,
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"building_type {building_type!r} is neither a residential TABULA "
+                        f"code ({sorted(RESIDENTIAL_BUILDING_TYPES)}) nor a registered "
+                        "occupancy service-building type."
+                    ) from exc
+                result = service.to_result()
+
+            buem_inputs = to_buem_profiles(result)
 
             # Align index with weather (8760 hourly points)
             if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:
                 buem_inputs = {
-                    key: series.reindex(weather_df.index, method='nearest', fill_value=0.0)
+                    key: _reindex_or_raise(series, weather_df.index, key)
                     for key, series in buem_inputs.items()
                 }
 
@@ -197,10 +311,10 @@ class AttributeBuilder:
             and isinstance(self.merged_attrs["elecLoad"], pd.Series)
             and not self.merged_attrs["elecLoad"].index.equals(weather_index)
         ):
-            self.merged_attrs["elecLoad"] = self.merged_attrs["elecLoad"].reindex(
-                weather_index, method='nearest', fill_value=0.0
+            self.merged_attrs["elecLoad"] = _reindex_or_raise(
+                self.merged_attrs["elecLoad"], weather_index, "elecLoad"
             )
-        
+
         # Align other profiles (Q_ig, occ_nothome, etc.) if needed
         for key in ("Q_ig", "occ_nothome", "occ_sleeping"):
             if (
@@ -208,6 +322,4 @@ class AttributeBuilder:
                 and isinstance(self.merged_attrs[key], pd.Series)
                 and not self.merged_attrs[key].index.equals(weather_index)
             ):
-                self.merged_attrs[key] = self.merged_attrs[key].reindex(
-                    weather_index, method='nearest', fill_value=0.0
-                )
+                self.merged_attrs[key] = _reindex_or_raise(self.merged_attrs[key], weather_index, key)

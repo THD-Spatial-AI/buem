@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-31
+
+### Added
+
+- Services (non-residential) buildings are now routed through
+  occupancy's `ServiceBuildingProfile` instead of being forced through
+  `HouseholdProfile` — `AttributeBuilder.generate_electricity_profile`
+  branches on `building_type`: TABULA residential codes
+  (`RESIDENTIAL_BUILDING_TYPES`: `SFH`/`MFH`/`TH`/`AB`) use the existing
+  household path; any of occupancy's 8 service-building ids
+  (supermarket/office/restaurant/school/hotel/bakery/warehouse/clinic)
+  use the new path. New `building_type`/`capacity` `AttributeSpec`s.
+- `ModelBUEM`'s `comfortT_lb`/`comfortT_ub` now accept a per-timestep
+  `pd.Series` (in addition to the existing scalar), letting a building
+  express a real occupied/unoccupied setpoint schedule (e.g. a school
+  closed nights/weekends/summer) instead of only the coarse annual
+  `F_red_htr` reduction factor.
+- `AttributeBuilder(..., allow_weather_fallback=True)` opts back into
+  lenient bundled-weather substitution on a per-location fetch failure
+  (see Changed, below, for the new default).
+- Six non-residential dummy fixtures
+  (`src/buem/data/buildings/dummy/*.json`) updated from inert placeholder
+  `building_type` codes to real occupancy type ids.
+- `tests/test_building_types.py`, `tests/test_attribute_builder_strictness.py`.
+- `docs/` (Sphinx/ReadTheDocs source) reintegrated — removed during the
+  `v1.1` submodule-extraction refactor, never recreated until now.
+  `pyproject.toml` `docs` extra (`sphinx`, `sphinx-rtd-theme`) restored.
+  Content updated for drift accumulated since removal (occupancy/weather
+  package split, v3 API schema, this release's changes); `modules/
+  results.rst`/`technology.rst` now clearly flagged as documenting
+  currently-nonexistent modules rather than presented as working.
+- `src/buem/integration/json_schema/versions/v4/` — draft (not agreed
+  with EnerPlanET) proposal for a `building_type` enum + `capacity`
+  field; inert, not wired into any live validation path. See its
+  `DRAFT.md`.
+- `.claude/` known-issues/decisions log (mirrors `occupancy`'s/
+  `weather`'s own convention) and `.claude/release-workflow.md`.
+
+### Changed
+
+- **Breaking**: `AttributeBuilder.build()` now raises `ValueError` if
+  `latitude`/`longitude`/`components`/`A_ref` weren't explicitly supplied
+  via `payload_attrs` or `db_fetcher`, instead of silently substituting
+  `ATTRIBUTE_SPECS`' generic ~100 m² example-house defaults. Does not
+  affect the live GeoJSON API in practice — `geojson_validator.py`'s
+  v3→v2 conversion already unconditionally populates all four keys
+  (with its own fallbacks) before `AttributeBuilder` ever sees the
+  payload — but is a breaking change for any code calling
+  `AttributeBuilder` directly with a partial `payload_attrs`.
+- **Breaking**: a `db_fetcher` that raises now propagates (wrapped
+  `RuntimeError`) instead of logging a warning and silently continuing
+  with generic defaults.
+- **Breaking**: `generate_weather_profile`'s per-location weather fetch
+  now raises by default when the `weather` package is installed but has
+  no data for the specific requested location/year/provider (previously
+  silently substituted the bundled reference-location CSV). Fetches that
+  fail because `weather`'s own optional extras are absent (e.g. xarray/
+  netcdf4) remain a lenient fallback, unchanged. See `allow_weather_fallback` above.
+- Profile/weather-index reindexing (`Q_ig`/`elecLoad`/`occ_nothome`/
+  `occ_sleeping`) now raises if any timestep can't align within a
+  30-minute tolerance, instead of silently zero-filling — plain
+  `method="nearest"` reindexing never produces `NaN`, so the previous
+  `fill_value=0.0` could silently paper over a real year/timezone
+  mismatch.
+- `ModelBUEM._initEnvelop`'s `h_room` sanity bound widened from 5.0 m to
+  20.0 m (was blocking legitimate tall non-residential spaces —
+  warehouses, sports halls, industrial halls).
+- `ModelBUEM._init5R1C`'s `comfortT_lb`/`comfortT_ub` sanity range
+  widened from [15, 30] °C to [5, 35] °C (was blocking legitimate
+  frost-protection-only setpoints for lightly-conditioned industrial/
+  warehouse space).
+
+### Fixed
+
+- `capacity` (service-building sizing) is now explicitly cast with
+  `int()`, matching `num_persons` — previously a string `capacity` from a
+  JSON payload would reach `ServiceBuildingProfile`'s `self.capacity <=
+  0` check and raise an unrelated-looking `TypeError`.
+- `BUEM_RESULTS_DIR`/`BUEM_LOG_DIR` are now created by `load_env()`
+  directly instead of only being `os.environ.setdefault`, fixing a CI
+  "Smoke test CLI" failure (`buem validate` reported `BUEM_LOG_DIR
+  [MISSING]`) on a genuinely fresh checkout with no leftover `results/`/
+  `logs/` directories from a prior run.
+- Resolved all remaining `ruff` (180) and `mypy` (74) findings repo-wide,
+  no suppressions; applied `ruff --fix` repo-wide (import sorting,
+  `Optional[X]` → `X | None`, unused vars/imports).
+
 ## [1.2.1] - 2026-07-30
 
 ### Changed

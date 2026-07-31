@@ -27,7 +27,7 @@
               "unit": "m"
             },
             "n_storeys": 5,
-            "building_type": "COM",
+            "building_type": "supermarket",
             "construction_period": "2005-2014",
             "country": "NL",
             "neighbour_status": "B_Alone",

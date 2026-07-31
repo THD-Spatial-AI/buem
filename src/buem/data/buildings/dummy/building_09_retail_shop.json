@@ -27,7 +27,7 @@
               "unit": "m"
             },
             "n_storeys": 1,
-            "building_type": "RET",
+            "building_type": "supermarket",
             "construction_period": "2005-2014",
             "country": "NL",
             "neighbour_status": "B_Alone",

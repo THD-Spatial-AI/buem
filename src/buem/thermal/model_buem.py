@@ -78,8 +78,9 @@ class ModelBUEM:
             ``'weather'`` (DataFrame with DNI/DHI/GHI/T), ``'components'``
             (structured wall/roof/floor/window/door definitions with U-values
             and element areas), ``'A_ref'``, ``'h_room'``, ``'thermalClass'``,
-            ``'c_m'``, ``'comfortT_lb'``, ``'comfortT_ub'``, ``'Q_ig'``,
-            ``'elecLoad'``, ``'occ_nothome'``, ``'occ_sleeping'``,
+            ``'c_m'``, ``'comfortT_lb'``, ``'comfortT_ub'`` (each a scalar or a
+            ``pd.Series`` aligned with ``'weather'``'s index, for schedule-driven
+            setpoints), ``'Q_ig'``, ``'elecLoad'``, ``'occ_nothome'``, ``'occ_sleeping'``,
             ``'n_air_infiltration'``, ``'n_air_use'``, solar/shading factors,
             and geographic coordinates (``'latitude'``, ``'longitude'``).
         maxLoad : float, optional
@@ -321,8 +322,10 @@ class ModelBUEM:
         if "h_room" not in self.cfg:
             raise ValueError("h_room (room height) missing from configuration")
         h_room = self._cfg_float("h_room", required=True)
-        if h_room <= 0 or h_room > 5.0:
-            raise ValueError(f"h_room ({h_room}) must be between 0 and 5.0 meters")
+        # Upper bound covers non-residential spaces (warehouses, sports halls,
+        # industrial halls) as well as residential room heights, not just the latter.
+        if h_room <= 0 or h_room > 20.0:
+            raise ValueError(f"h_room ({h_room}) must be between 0 and 20.0 meters")
 
         rho_air = self.CONST["rho_air"]
         C_air = self.CONST["C_air"]
@@ -357,7 +360,9 @@ class ModelBUEM:
         - ``bC_m``  – internal heat capacity [kWh/K] (= A_ref × c_m / 3600)
         - ``bA_tot``– total internal surface area [m²] (= A_ref × λ_at)
         - ``bH_is`` – surface–air conductance [kW/K] (= A_tot × h_is)
-        - ``bT_comf_lb / bT_comf_ub`` – dead-band comfort bounds [°C]
+        - ``bT_comf_lb / bT_comf_ub`` – dead-band comfort bounds [°C], length-n
+          arrays (broadcast from a scalar, or taken directly from a per-timestep
+          ``pd.Series`` in ``cfg``)
 
         Solar gain profiles stored in ``self.profiles``:
 
@@ -405,24 +410,54 @@ class ModelBUEM:
         self.bA_tot = self.bA_f * self.bConst["lambda_at"]
         self.bH_is = self.bA_tot * self.bConst["h_is"]
 
-        # comfort bounds - must be provided, no defaults
+        # comfort bounds - must be provided, no defaults.
+        # Accepted as either a scalar (applied to every timestep, as before) or a
+        # pd.Series aligned with cfg['weather'].index -- lets a building express a
+        # real occupied/unoccupied setpoint schedule (e.g. a school closed nights,
+        # weekends, and summer) instead of only the annual F_red_htr scalar, which
+        # was designed for residential night-setback. Normalized to a length-n
+        # array immediately so every downstream consumer (LP/MILP constraints,
+        # big-M bounds, T_set) needs no further scalar/array branching.
         if "comfortT_lb" not in self.cfg:
             raise ValueError("comfortT_lb (lower comfort temperature) must be specified")
         if "comfortT_ub" not in self.cfg:
             raise ValueError("comfortT_ub (upper comfort temperature) must be specified")
 
-        comfortT_lb = self.cfg["comfortT_lb"]
-        comfortT_ub = self.cfg["comfortT_ub"]
+        comfortT_lb_raw = self.cfg["comfortT_lb"]
+        comfortT_ub_raw = self.cfg["comfortT_ub"]
 
-        if comfortT_lb is None or comfortT_ub is None:
+        if comfortT_lb_raw is None or comfortT_ub_raw is None:
             raise ValueError("comfortT_lb and comfortT_ub must be specified for thermal simulation")
-        if float(comfortT_lb) >= float(comfortT_ub):
-            raise ValueError(f"comfortT_lb ({comfortT_lb}) must be < comfortT_ub ({comfortT_ub})")
-        if float(comfortT_lb) < 15 or float(comfortT_ub) > 30:
-            raise ValueError(f"Comfort temperatures unreasonable: lb={comfortT_lb}, ub={comfortT_ub}")
 
-        self.bT_comf_lb = float(comfortT_lb)
-        self.bT_comf_ub = float(comfortT_ub)
+        n_steps = len(self.times)
+
+        def _to_comfort_array(value: Any, name: str) -> np.ndarray:
+            if isinstance(value, pd.Series):
+                if len(value) != n_steps:
+                    raise ValueError(
+                        f"{name} series length ({len(value)}) must match the weather "
+                        f"timeseries length ({n_steps})"
+                    )
+                return value.to_numpy(dtype=float)
+            return np.full(n_steps, float(value))
+
+        comfortT_lb = _to_comfort_array(comfortT_lb_raw, "comfortT_lb")
+        comfortT_ub = _to_comfort_array(comfortT_ub_raw, "comfortT_ub")
+
+        if np.any(comfortT_lb >= comfortT_ub):
+            raise ValueError("comfortT_lb must be < comfortT_ub at every timestep")
+        # Sanity range covers non-residential setpoints (frost-protection-only
+        # unheated/lightly-conditioned industrial space) as well as residential
+        # comfort, not just the latter.
+        if np.any(comfortT_lb < 5) or np.any(comfortT_ub > 35):
+            raise ValueError(
+                "Comfort temperatures unreasonable: "
+                f"lb range=[{comfortT_lb.min()}, {comfortT_lb.max()}], "
+                f"ub range=[{comfortT_ub.min()}, {comfortT_ub.max()}]"
+            )
+
+        self.bT_comf_lb = comfortT_lb
+        self.bT_comf_ub = comfortT_ub
 
         # Build surface azimuth/tilt dicts from component elements (element ids as keys)
         surf_az = {}
@@ -799,9 +834,11 @@ class ModelBUEM:
             self.bM_q[comp] = {}
             self.bm_q[comp] = {}
             for state, H_val in d.items():
-                # conservative bounds based on comfort temps and weather extremes
-                high = (self.bT_comf_ub - (self.cfg["weather"]["T"].min() - 10)) * H_val
-                low = (self.bT_comf_lb - (self.cfg["weather"]["T"].max() + 10)) * H_val
+                # conservative bounds based on comfort temps and weather extremes.
+                # bT_comf_ub/lb may vary by timestep -- use the widest excursion
+                # across the whole array to keep these legacy big-M bounds conservative.
+                high = (float(np.max(self.bT_comf_ub)) - (self.cfg["weather"]["T"].min() - 10)) * H_val
+                low = (float(np.min(self.bT_comf_lb)) - (self.cfg["weather"]["T"].max() + 10)) * H_val
                 self.bM_q[comp][state] = high
                 self.bm_q[comp][state] = low
 
@@ -1090,7 +1127,8 @@ class ModelBUEM:
             design = max(1.0, float(self.calcDesignHeatLoad()))
         except (TypeError, ValueError, KeyError):
             design = 1000.0
-        temp_range = max(0.1, abs(self.bT_comf_ub - self.bT_comf_lb))
+        # bT_comf_ub/lb may vary by timestep -- use the widest gap across the array.
+        temp_range = max(0.1, float(np.max(np.abs(self.bT_comf_ub - self.bT_comf_lb))))
         M_array = np.zeros(n)
         for i in range(n):
             peak_gain = abs(Q_air_list[i]) + abs(Q_surface_list[i])
@@ -1274,8 +1312,8 @@ class ModelBUEM:
                 )
             else:
                 constraints.append(T_m[n - 1] - T_m[0] == 0)
-            constraints.append(T_air[i] >= self.bT_comf_lb)
-            constraints.append(T_air[i] <= self.bT_comf_ub)
+            constraints.append(T_air[i] >= self.bT_comf_lb[i])
+            constraints.append(T_air[i] <= self.bT_comf_ub[i])
             Mi = float(M_array[i])
             constraints.append(Q_heat[i] <= Mi * y[i])
             constraints.append(Q_cool[i] <= Mi * (1 - y[i]))
@@ -1343,8 +1381,8 @@ class ModelBUEM:
                     )
                 else:
                     prob_pulp += (T_m_p[n-1] - T_m_p[0] == 0)
-                prob_pulp += (T_air_p[i] >= self.bT_comf_lb)
-                prob_pulp += (T_air_p[i] <= self.bT_comf_ub)
+                prob_pulp += (T_air_p[i] >= self.bT_comf_lb[i])
+                prob_pulp += (T_air_p[i] <= self.bT_comf_ub[i])
                 Mi = float(M_array[i])
                 prob_pulp += (Q_heat_p[i] <= Mi * y_p[i])
                 prob_pulp += (Q_cool_p[i] <= Mi * (1 - y_p[i]))
@@ -1425,9 +1463,11 @@ class ModelBUEM:
         if "T_e" not in self.profiles:
             self.profiles["T_e"] = self.cfg["weather"]["T"]
 
-        # T_set: initial mass-node temperature (dead-band midpoint)
+        # T_set: initial mass-node temperature (dead-band midpoint). A single
+        # scalar regardless of whether bT_comf_lb/ub vary by timestep -- it only
+        # seeds the periodic wrap-around's T_m(0), not a per-timestep bound.
         assert self.bT_comf_lb is not None and self.bT_comf_ub is not None
-        self.T_set = (self.bT_comf_lb + self.bT_comf_ub) / 2.0
+        self.T_set = float(np.mean((self.bT_comf_lb + self.bT_comf_ub) / 2.0))
 
         # Build 5R1C physics constraint matrix A_eq (3*n x 4*n)
         A_eq, b_eq, milp_meta = self._addConstraints()
@@ -1453,7 +1493,8 @@ class ModelBUEM:
         ]
         prob = cp.Problem(obj, constraints)
         print(f"Solving LP: {4*n} vars, A_eq {A_eq.shape}, "
-              f"comfort [{self.bT_comf_lb}, {self.bT_comf_ub}] degC ...")
+              f"comfort lb∈[{self.bT_comf_lb.min():.1f},{self.bT_comf_lb.max():.1f}], "
+              f"ub∈[{self.bT_comf_ub.min():.1f},{self.bT_comf_ub.max():.1f}] degC ...")
         # Try CLARABEL (interior-point, high accuracy) first; fall back to OSQP
         try:
             prob.solve(solver=cp.CLARABEL, verbose=False)

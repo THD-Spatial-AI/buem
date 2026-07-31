@@ -5,13 +5,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 
-> **Note:** the Read the Docs build is currently broken — `docs/source/conf.py`
-> and the `pyproject.toml` `docs` extra it depends on (`.readthedocs.yaml`)
-> were removed from this repo during the `v1.1` submodule-extraction
-> refactor and never recreated. The badge/link below point at whatever
-> readthedocs last built successfully (pre-`v1.1`, so likely stale) until
-> the docs source is rebuilt.
-
 BuEM computes **hourly heating and cooling demand** for buildings using the
 **ISO 13790 5R1C** thermal-network method combined with a linear-programming
 solver. It exposes a REST API that accepts GeoJSON and returns energy profiles,
