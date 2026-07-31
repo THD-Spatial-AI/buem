@@ -45,19 +45,25 @@ class GeoJsonProcessor:
         Function(building_id) -> Dict of additional attributes.
     result_save_dir : str or Path, optional
         Directory for saving .gz files (default: env BUEM_RESULTS_DIR).
+    allow_weather_fallback : bool, optional
+        Forwarded to ``AttributeBuilder`` — see its docstring. Default
+        False: a per-location weather-fetch failure raises rather than
+        silently substituting the bundled reference-location weather.
     """
-    
+
     def __init__(
         self,
         payload: dict[str, Any],
         include_timeseries: bool = False,
         db_fetcher: Callable[[str], dict[str, Any]] | None = None,
         result_save_dir: str | None = None,
+        allow_weather_fallback: bool = False,
     ):
         self.payload = payload
         self.include_timeseries = include_timeseries
         self.db_fetcher = db_fetcher
-        
+        self.allow_weather_fallback = allow_weather_fallback
+
         # Result save directory
         if result_save_dir:
             self.result_save_dir = Path(result_save_dir)
@@ -183,7 +189,8 @@ class GeoJsonProcessor:
         builder = AttributeBuilder(
             payload_attrs=payload_attrs,
             building_id=building_id,
-            db_fetcher=self.db_fetcher
+            db_fetcher=self.db_fetcher,
+            allow_weather_fallback=self.allow_weather_fallback,
         )
         merged_attrs = builder.build()
         

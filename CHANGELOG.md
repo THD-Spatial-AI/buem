@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-07-31
+
+### Fixed
+
+- `v2.0.0`'s CI run failed: several tests (`test_hash_debug.py`,
+  `test_building_types.py`, two capacity tests in
+  `test_attribute_builder_strictness.py`, `test_cache.py`) called
+  `AttributeBuilder`/`GeoJsonProcessor` without opting into
+  `allow_weather_fallback=True`. Locally this was masked because the dev
+  environment lacks `weather`'s point-query extras (xarray/netcdf4),
+  hitting the still-lenient `ImportError` branch; GitHub Actions' CI
+  environment has those installed but no cached per-location weather
+  data, hitting the new-in-`v2.0.0` strict `FileNotFoundError` branch
+  instead. Added `allow_weather_fallback` as a pass-through parameter on
+  `GeoJsonProcessor` (forwarded to `AttributeBuilder`) and set it
+  explicitly in the affected tests, which legitimately don't need real
+  per-location weather accuracy.
+
 ## [2.0.0] - 2026-07-31
 
 ### Added

@@ -35,15 +35,18 @@ def test_cache_hit_is_faster():
     with open(BUILDING_FILE) as f:
         payload = json.load(f)
 
+    # No real per-location weather data is available in CI/dev -- opt into
+    # the documented bundled-CSV fallback (this test exercises caching,
+    # not weather accuracy).
     t0 = time.time()
-    proc = GeoJsonProcessor(payload=payload, include_timeseries=False)
+    proc = GeoJsonProcessor(payload=payload, include_timeseries=False, allow_weather_fallback=True)
     resp = proc.process()
     t1 = time.time()
     meta = resp["metadata"]
     assert meta["successful_features"] > 0, "First run should succeed"
 
     t2 = time.time()
-    proc2 = GeoJsonProcessor(payload=payload, include_timeseries=False)
+    proc2 = GeoJsonProcessor(payload=payload, include_timeseries=False, allow_weather_fallback=True)
     resp2 = proc2.process()
     t3 = time.time()
     meta2 = resp2["metadata"]
