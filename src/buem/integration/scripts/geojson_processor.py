@@ -50,7 +50,7 @@ class GeoJsonProcessor:
     result_save_dir : str or Path, optional
         Directory for saving .gz files (default: env BUEM_RESULTS_DIR).
     """
-    
+
     def __init__(
         self,
         payload: Dict[str, Any],
@@ -61,7 +61,7 @@ class GeoJsonProcessor:
         self.payload = payload
         self.include_timeseries = include_timeseries
         self.db_fetcher = db_fetcher
-        
+
         # Result save directory
         if result_save_dir:
             self.result_save_dir = Path(result_save_dir)
