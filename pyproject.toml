@@ -103,7 +103,12 @@ line-length = 120
 target-version = "py314"
 
 [tool.ruff.lint]
-extend-ignore = ["E203", "E501"]
+extend-ignore = [
+    "E203", "E501",
+    "RUF100",  # some `# noqa: E402` comments target flake8 (this repo's IDE linter),
+               # not ruff -- ruff doesn't select E402 itself, so it would otherwise
+               # flag those as "unused noqa" and fail on a rule flake8 still enforces.
+]
 
 [tool.mypy]
 ignore_missing_imports = true
