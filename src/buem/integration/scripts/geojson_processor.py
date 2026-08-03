@@ -1,26 +1,23 @@
 """
 Process GeoJSON payloads: extract attributes, run thermal model, return results.
 """
-from typing import Any, Callable, Dict, List, Optional
-from datetime import datetime, timezone
-from pathlib import Path
+import gzip
+import json
+import logging
 import time
 import uuid
-import json
-import gzip
-import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from flask import current_app
 
+from buem.config.cfg_building import CfgBuilding
 from buem.integration.scripts.attribute_builder import AttributeBuilder
 from buem.integration.scripts.electricity_load_profile import load_electricity_load_profile
-from buem.integration.scripts.geojson_validator import (
-    validate_geojson_request,
-    create_validation_report,
-    ValidationLevel
-)
-from buem.config.cfg_building import CfgBuilding
+from buem.integration.scripts.geojson_validator import create_validation_report, validate_geojson_request
 from buem.main import run_model
 from buem.weather.from_merra import MerraWeatherData
 
@@ -53,10 +50,10 @@ class GeoJsonProcessor:
 
     def __init__(
         self,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         include_timeseries: bool = False,
-        db_fetcher: Optional[Callable[[str], Dict[str, Any]]] = None,
-        result_save_dir: Optional[str] = None,
+        db_fetcher: Callable[[str], dict[str, Any]] | None = None,
+        result_save_dir: str | None = None,
     ):
         self.payload = payload
         self.include_timeseries = include_timeseries
@@ -70,7 +67,7 @@ class GeoJsonProcessor:
             default_dir = Path(__file__).resolve().parents[1] / "results"
             self.result_save_dir = Path(os.environ.get("BUEM_RESULTS_DIR", str(default_dir)))
     
-    def process(self) -> Dict[str, Any]:
+    def process(self) -> dict[str, Any]:
         """
         Process all features and return GeoJSON FeatureCollection with results.
         
@@ -132,7 +129,7 @@ class GeoJsonProcessor:
                     "type": "processing_error",
                     "message": str(exc),
                     "feature_id": feat.get('id'),
-                    "timestamp": datetime.now(timezone.utc).isoformat()
+                    "timestamp": datetime.now(UTC).isoformat()
                 }
                 out_features.append(feat)
         
@@ -140,7 +137,7 @@ class GeoJsonProcessor:
         response = {
             "type": "FeatureCollection",
             "features": out_features,
-            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "processed_at": datetime.now(UTC).isoformat(),
             "processing_elapsed_s": round(time.time() - start_time, 3),
             "metadata": {
                 "total_features": len(features),
@@ -161,11 +158,11 @@ class GeoJsonProcessor:
     
     @staticmethod
     def _v3_to_internal(
-        building: Optional[Dict[str, Any]],
-        envelope: Optional[Dict[str, Any]],
-        thermal: Optional[Dict[str, Any]],
+        building: dict[str, Any] | None,
+        envelope: dict[str, Any] | None,
+        thermal: dict[str, Any] | None,
         coords: list,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Transform v3 schema sections into the internal attribute dict expected by
         AttributeBuilder / CfgBuilding / ModelBUEM.
@@ -194,7 +191,7 @@ class GeoJsonProcessor:
         thermal = thermal or {}
         envelope = envelope or {}
 
-        attrs: Dict[str, Any] = {}
+        attrs: dict[str, Any] = {}
 
         # --- Location: authoritative from geometry.coordinates [lon, lat, elev?] ---
         attrs["longitude"] = float(coords[0]) if len(coords) > 0 else 5.0
@@ -233,11 +230,11 @@ class GeoJsonProcessor:
             "ventilation": "Ventilation",
         }
 
-        components: Dict[str, Any] = {
+        components: dict[str, Any] = {
             k: {"elements": []} for k in TYPE_TO_COMP.values()
         }
         # Track first b_transmission seen per component type (model reads it at component level)
-        comp_b_trans: Dict[str, float] = {}
+        comp_b_trans: dict[str, float] = {}
 
         for elem in envelope.get("elements", []):
             eid = elem.get("id", "")
@@ -255,7 +252,7 @@ class GeoJsonProcessor:
                 components["Ventilation"]["elements"].append(internal_elem)
                 continue
 
-            internal_elem: Dict[str, Any] = {
+            internal_elem: dict[str, Any] = {
                 "id": eid,
                 "area": scalar(elem.get("area"), 0.0),
                 "azimuth": scalar(elem.get("azimuth"), 0.0),
@@ -297,7 +294,7 @@ class GeoJsonProcessor:
         attrs["components"] = components
         return attrs
 
-    def _process_single_feature(self, feature: Dict[str, Any], validation_result) -> Dict[str, Any]:
+    def _process_single_feature(self, feature: dict[str, Any], validation_result) -> dict[str, Any]:
         """
         Process single GeoJSON feature: build attributes, run model, add results.
 
@@ -405,8 +402,8 @@ class GeoJsonProcessor:
             try:
                 fname = self._save_timeseries(times, heating, cooling, electricity)
                 profile["timeseries_file"] = f"/api/files/{fname}"
-            except Exception as exc:
-                logger.exception(f"Timeseries save failed for {building_id}: {exc}")
+            except Exception:
+                logger.exception("Timeseries save failed for %s", building_id)
 
         # Determine weather year from cfg
         weather_df = cfg.get("weather", pd.DataFrame())
@@ -435,10 +432,10 @@ class GeoJsonProcessor:
     
     @staticmethod
     def _load_feature_weather(
-        lat: Optional[float],
-        lon: Optional[float],
-        start_time: Optional[str],
-    ) -> Optional[pd.DataFrame]:
+        lat: float | None,
+        lon: float | None,
+        start_time: str | None,
+    ) -> pd.DataFrame | None:
         """Load MERRA-2 weather for the feature's location and year.
 
         Returns None when BUEM_WEATHER_DIR is not set, no matching NetCDF file
@@ -482,7 +479,7 @@ class GeoJsonProcessor:
                 "No MERRA-2 file for year %d in %s; using default weather.", year, weather_dir
             )
             return None
-        except Exception as exc:
+        except (ImportError, KeyError, OSError, RuntimeError, ValueError) as exc:
             logger.warning("MERRA-2 weather load failed (%s); using default weather.", exc)
             return None
 
@@ -516,15 +513,15 @@ class GeoJsonProcessor:
             
             return arr
             
-        except Exception as e:
-            logger.error(f"Failed to validate array {array_name}: {e}")
+        except (OverflowError, TypeError, ValueError) as exc:
+            logger.error(f"Failed to validate array {array_name}: {exc}")
             return np.array([], dtype=float)
     
     def _build_thermal_load_profile(
         self, times, heating, cooling, electricity, elapsed,
         start_time, end_time, resolution, resolution_unit,
         a_ref: float = 100.0, compute_cooling: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Build thermal load profile matching the v4 response schema.
 
@@ -569,7 +566,7 @@ class GeoJsonProcessor:
             start_iso = start_time or "2018-01-01T00:00:00Z"
             end_iso = end_time or "2018-12-31T23:00:00Z"
 
-        def energy_summary(arr: np.ndarray) -> Dict[str, Any]:
+        def energy_summary(arr: np.ndarray) -> dict[str, Any]:
             """Build an energy_summary object with {value, unit} measurement fields."""
             if len(arr) == 0:
                 zero_kwh = {"value": 0.0, "unit": "kWh"}
@@ -590,7 +587,7 @@ class GeoJsonProcessor:
 
         total_energy_kwh = heating_summary["total"]["value"] + elec_summary["total"]["value"]
 
-        summary: Dict[str, Any] = {
+        summary: dict[str, Any] = {
             "heating": heating_summary,
             "electricity": elec_summary,
             "peak_heating_load": {"value": heating_summary["max"]["value"], "unit": "kW"},
@@ -606,7 +603,7 @@ class GeoJsonProcessor:
         summary["total_energy_demand"] = {"value": round(total_energy_kwh, 3), "unit": "kWh"}
         summary["energy_intensity"] = {"value": energy_intensity_kwh_m2, "unit": "kWh/m2"}
 
-        profile: Dict[str, Any] = {
+        profile: dict[str, Any] = {
             "start_time": start_iso,
             "end_time": end_iso,
             "resolution": resolution,
@@ -615,7 +612,7 @@ class GeoJsonProcessor:
         }
 
         if self.include_timeseries and has_times:
-            timeseries: Dict[str, Any] = {
+            timeseries: dict[str, Any] = {
                 "unit": "kW",
                 "timestamps": (
                     [t.isoformat() for t in times]

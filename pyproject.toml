@@ -110,6 +110,15 @@ target-version = "py314"
 [tool.ruff.lint]
 extend-ignore = ["E203", "E501"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/buem/config/cfg_attribute.py" = ["BLE001", "I001", "S110", "UP006", "UP035"]
+"src/buem/config/cfg_building.py" = ["UP037"]
+"src/buem/integration/scripts/attribute_builder.py" = ["BLE001", "I001", "S110", "UP006", "UP035", "UP045"]
+"src/buem/integration/scripts/electricity_load_profile.py" = ["PIE810", "TRY004"]
+"src/buem/thermal/model_buem.py" = ["BLE001", "I001", "PERF102", "PLR1711", "RUF012", "RUF059", "SIM401", "TRY004", "UP004"]
+"src/buem/weather/from_merra.py" = ["BLE001", "UP007", "UP045"]
+"tests/test_building_types.py" = ["F401"]
+
 [tool.mypy]
 ignore_missing_imports = true
 
