@@ -120,17 +120,18 @@ class AttributeBuilder:
             self._normalize_provided_elec_load(weather_df)
             return
 
+        if not _OCCUPANCY_AVAILABLE:
+            # occupancy is optional; fall back to the merged/default profile.
+            self._normalize_provided_elec_load(weather_df)
+            self.merged_attrs["year"] = weather_year
+            return
+
         # Get generation parameters
         num_persons = int(self.merged_attrs.get("num_persons", ATTRIBUTE_SPECS["num_persons"].default))
         seed = self.merged_attrs.get("seed", ATTRIBUTE_SPECS["seed"].default)
         
         try:
             # Generate profile
-            if not _OCCUPANCY_AVAILABLE:
-                raise ImportError(
-                    "occupancy package is required for electricity profile generation. "
-                    "Install it with: pip install git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution"
-                )
             occ = OccupancyProfile(num_persons=num_persons, year=weather_year, seed=seed)
             elec_gen = ElectricityConsumptionProfile(occ, seed=seed)
             profile_df = elec_gen.generate()
