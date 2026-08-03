@@ -104,5 +104,13 @@ dependencies:
     # itself. Remove them if you don't need real occupancy-driven loads or
     # dynamic per-location weather -- buem falls back to synthetic/bundled
     # defaults without them.
-    - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main
+    #
+    # occupancy pinned to enerplanet's fork/branch (not UU-BUEM/occupancy@main):
+    # upstream main's package layout (households/, services_buildings/, core/,
+    # config/) has no internal_gains/electricity modules, so attribute_builder.py's
+    # `from occupancy.internal_gains.occupancy_profile import OccupancyProfile`
+    # ModuleNotFoundErrors and every request needing an electricity profile 500s.
+    # fix/config-path-resolution also fixes config data path resolution for a
+    # real (non-editable) pip install, which @main gets wrong too.
+    - occupancy @ git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution
     - weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main
