@@ -252,7 +252,7 @@ class GeoJsonProcessor:
                 components["Ventilation"]["elements"].append(internal_elem)
                 continue
 
-            internal_elem: dict[str, Any] = {
+            internal_elem = {
                 "id": eid,
                 "area": scalar(elem.get("area"), 0.0),
                 "azimuth": scalar(elem.get("azimuth"), 0.0),

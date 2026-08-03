@@ -54,7 +54,7 @@ class AttributeBuilder:
         self.payload_attrs = payload_attrs
         self.building_id = building_id
         self.db_fetcher = db_fetcher
-        self.merged_attrs = {}
+        self.merged_attrs: Dict[str, Any] = {}
         
     def build(self) -> Dict[str, Any]:
         """
