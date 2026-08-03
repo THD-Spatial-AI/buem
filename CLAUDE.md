@@ -52,10 +52,9 @@ synthetic/bundled fallbacks when not installed.
     services-building support, without checking in first. Reverted; the
     same change now lives safely as a tier-2 draft in `versions/v4/` (see
     its `DRAFT.md`).
-- **Pushing to GitHub is a distinct, user-triggered workflow** — see
-  `.claude/release-workflow.md`. Don't push, tag, or create a GitHub
-  release except when the user explicitly asks for it (e.g. "push to
-  github" / "release this").
+- **Pushing to GitHub is a distinct, user-triggered workflow.** Don't push,
+  tag, or create a GitHub release except when the user explicitly asks for
+  it (e.g. "push to github" / "release this").
 
 ## Cross-repo (UU-BUEM)
 
@@ -94,13 +93,6 @@ conda env `buem_env`; prefer conda. See `infrastructure/env/buem_env.yml`.
 
 ## See also
 
-- `.claude/README.md` — git-tracked known-issues/decisions log, split
-  cross-cutting / `residential/` (household-dwelling-type) /
-  `services/` (non-residential-building-type), mirroring occupancy's/
-  weather's own `.claude/` convention.
-- `.claude/release-workflow.md` — the "push to github" runbook (docs
-  update, local CI mirror, version tag, push, monitor). See the
-  "Guardrails" section above — only run this when explicitly asked.
 - `docs/` — Sphinx/ReadTheDocs source (reintegrated 2026-07-31; was
   removed during the `v1.1` submodule-extraction refactor along with the
   `pyproject.toml` `docs` extra, per this file's own former note — both
