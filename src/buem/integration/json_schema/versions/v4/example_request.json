@@ -334,6 +334,9 @@
             "use_milp": false,
             "parallel_thermal": true,
             "use_chunked_processing": true
+          },
+          "weather": {
+            "provider": "merra-2"
           }
         }
       }

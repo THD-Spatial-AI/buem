@@ -35,18 +35,24 @@ def test_cache_hit_is_faster():
     with open(BUILDING_FILE) as f:
         payload = json.load(f)
 
-    # No real per-location weather data is available in CI/dev -- opt into
-    # the documented bundled-CSV fallback (this test exercises caching,
-    # not weather accuracy).
+    # Real per-location weather fetch (weather is a compulsory dependency).
+    # This test exercises result caching, not weather accuracy, so pin the
+    # simulation year to one with a processed archive available wherever
+    # this test runs, overriding the fixture's own start_time/end_time
+    # (2024/2025) which BUEM_WEATHER_DATA_DIR may not have archives for.
+    props = payload["features"][0]["properties"]
+    props["start_time"] = "2018-01-01T00:00:00Z"
+    props["end_time"] = "2019-01-01T00:00:00Z"
+
     t0 = time.time()
-    proc = GeoJsonProcessor(payload=payload, include_timeseries=False, allow_weather_fallback=True)
+    proc = GeoJsonProcessor(payload=payload, include_timeseries=False)
     resp = proc.process()
     t1 = time.time()
     meta = resp["metadata"]
     assert meta["successful_features"] > 0, "First run should succeed"
 
     t2 = time.time()
-    proc2 = GeoJsonProcessor(payload=payload, include_timeseries=False, allow_weather_fallback=True)
+    proc2 = GeoJsonProcessor(payload=payload, include_timeseries=False)
     resp2 = proc2.process()
     t3 = time.time()
     meta2 = resp2["metadata"]

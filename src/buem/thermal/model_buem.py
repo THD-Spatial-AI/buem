@@ -655,10 +655,12 @@ class ModelBUEM:
 
         Notes
         -----
-        - DNI is clipped to extraterrestrial irradiance to suppress
-          low-sun-angle blow-ups common in NWP-derived weather data.
         - Floor elements receive 0 (downward-facing, no solar exposure).
-        - A hard 1200 W/m² cap is applied as a physical guard.
+        - DNI/DHI are used as provided by ``cfg['weather']`` without
+          additional clipping: the weather package (UU-BUEM/weather) and
+          ``cfg_attribute.py``'s bundled-CSV fallback both already return
+          physically-bounded DNI/DHI (see ``weather_cache.py`` /
+          ``cfg_attribute.py``), so no defensive re-sanitisation happens here.
         """
         # compute solar position and helpers - NO DEFAULTS for coordinates
         if "latitude" not in self.cfg:
@@ -705,20 +707,6 @@ class ModelBUEM:
                 f" {weather_data['T'].min():.1f} to {weather_data['T'].max():.1f} C"
             )
 
-        # Clip DNI to the physical maximum: extraterrestrial irradiance at this time of year.
-        # COSMO (and other NWP models) compute DNI = (GHI-DHI)/cos(zenith).
-        # At low sun elevation cos(zenith)→0 this diverges far beyond the solar constant (~1361 W/m²).
-        # dni_extra is the seasonally-adjusted solar constant (1316–1413 W/m²) from pvlib.
-        dni_raw_max = weather_data["DNI"].max()
-        dni_clipped = weather_data["DNI"].clip(lower=0, upper=dni_extra)
-        clipped_hours = (weather_data["DNI"] > dni_extra).sum()
-        if clipped_hours > 0:
-            print(
-                f"WARNING: DNI sanitised: {clipped_hours} hours clipped"
-                f" from raw max {dni_raw_max:.0f} W/m2 to"
-                f" extraterrestrial max {float(dni_extra.max()):.0f} W/m2"
-            )
-
         df = pd.DataFrame(index=self.times)
         for comp, elems in self.component_elements.items():
             for e in elems:
@@ -759,19 +747,15 @@ class ModelBUEM:
                     surface_azimuth=float(az),
                     solar_zenith=solpos["apparent_zenith"],
                     solar_azimuth=solpos["azimuth"],
-                    dni=dni_clipped,
+                    dni=weather_data["DNI"],
                     ghi=weather_data["GHI"],
                     dhi=weather_data["DHI"],
                     dni_extra=dni_extra,
                     airmass=AM,
                     model="isotropic",
                 )
-                # Physical cap: no surface can receive more than GHI * 2 or 1200 W/m2
-                # (isotropic should never exceed this, but guard against data anomalies)
-                poa_raw = total["poa_global"].fillna(0)
-                poa_capped = poa_raw.clip(lower=0, upper=1200.0)  # W/m2 physical max
                 # store POA in kW/m2
-                df[eid] = poa_capped / 1000.0
+                df[eid] = total["poa_global"].fillna(0) / 1000.0
         self._irrad_surf = df
         return df
 

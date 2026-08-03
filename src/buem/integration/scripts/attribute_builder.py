@@ -3,7 +3,6 @@ Build complete building attributes by merging payload, database, and defaults.
 Generate weather and electricity profiles, and align timeseries indices.
 """
 import logging
-import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -11,7 +10,7 @@ import pandas as pd
 
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS, RESIDENTIAL_BUILDING_TYPES
 from buem.config.validator import validate_cfg
-from buem.config.weather_cache import get_or_fetch_weather, weather_available
+from buem.config.weather_cache import get_or_fetch_weather
 
 # occupancy is an optional independent package (https://github.com/UU-BUEM/occupancy)
 # Install with: pip install buem[occupancy]  (or `pip install occupancy` directly)
@@ -71,8 +70,6 @@ class AttributeBuilder:
         payload_attrs: dict[str, Any],
         building_id: str | None = None,
         db_fetcher: Callable[[str], dict[str, Any]] | None = None,
-        *,
-        allow_weather_fallback: bool = False,
     ):
         """
         Initialize attribute builder.
@@ -85,18 +82,10 @@ class AttributeBuilder:
             Building identifier for database lookup.
         db_fetcher : Callable, optional
             Function to fetch additional attributes by building_id.
-        allow_weather_fallback : bool, optional
-            If True, silently substitute the bundled reference-location weather
-            when a real per-location fetch fails for a reason other than the
-            `weather` package being fully absent (e.g. no archive for this
-            location/year). Default False: such failures raise, since silently
-            using the wrong location's weather can produce a plausible-looking
-            but wrong result. Intended for offline/dev use only.
         """
         self.payload_attrs = payload_attrs
         self.building_id = building_id
         self.db_fetcher = db_fetcher
-        self.allow_weather_fallback = allow_weather_fallback
         self.merged_attrs: dict[str, Any] = {}
         self._provided_keys: set[str] = set()
 
@@ -174,20 +163,14 @@ class AttributeBuilder:
         self._provided_keys.update(self.payload_attrs.keys())
     
     def generate_weather_profile(self):
-        """Fetch a location-specific weather DataFrame via the optional
-        weather package, unless opted out. Falls back to whatever default is
-        already in merged_attrs["weather"] (the bundled CSV, see
-        cfg_attribute.py) only when the `weather` package (or one of its
-        optional extras) is genuinely absent -- a fetch that fails for a real
-        location/year (no archive, bad response, etc.) raises instead, unless
-        ``allow_weather_fallback=True`` was passed to __init__, since silently
-        using the wrong location's weather can produce a plausible-looking but
-        wrong result."""
+        """Fetch a location-specific weather DataFrame via the (compulsory)
+        weather package, unless opted out. A fetch that fails for the
+        requested location/year (no processed archive, bad response, etc.)
+        always raises -- there is no fallback, since substituting any other
+        location's weather (real or not) would silently model the wrong
+        building."""
         if bool(self.merged_attrs.get("use_provided_weather", False)):
             return  # Keep the provided/merged weather DataFrame as-is
-
-        if not weather_available():
-            return  # weather package not installed at all -- documented bundled-CSV fallback
 
         lat = float(self.merged_attrs.get("latitude", ATTRIBUTE_SPECS["latitude"].default))
         lon = float(self.merged_attrs.get("longitude", ATTRIBUTE_SPECS["longitude"].default))
@@ -196,33 +179,11 @@ class AttributeBuilder:
 
         try:
             self.merged_attrs["weather"] = get_or_fetch_weather(lat, lon, year, provider)
-        except ImportError as exc:
-            # weather itself imported fine (weather_available() above), but one
-            # of its optional extras (e.g. xarray/netcdf4 for point-query) is
-            # missing -- the same "extra not installed" case as above, just
-            # discovered one level deeper. Documented, lenient fallback.
-            warnings.warn(
-                f"weather package's point-query extra is unavailable "
-                f"(lat={lat}, lon={lon}, year={year}, provider={provider!r}); "
-                f"falling back to bundled default weather. ({exc})",
-                stacklevel=2,
-            )
         except (FileNotFoundError, KeyError, OSError, ValueError) as exc:
-            if not self.allow_weather_fallback:
-                raise RuntimeError(
-                    f"Weather fetch failed for the requested building location "
-                    f"(lat={lat}, lon={lon}, year={year}, provider={provider!r}); "
-                    "refusing to silently substitute the bundled reference-"
-                    "location weather for a specific building. Pass "
-                    "allow_weather_fallback=True to opt into the lenient "
-                    "(dev/offline) behavior instead."
-                ) from exc
-            warnings.warn(
-                f"Weather fetch failed for (lat={lat}, lon={lon}, year={year}, "
-                f"provider={provider!r}); falling back to bundled default "
-                f"weather (allow_weather_fallback=True). ({exc})",
-                stacklevel=2,
-            )
+            raise RuntimeError(
+                f"Weather fetch failed for the requested building location "
+                f"(lat={lat}, lon={lon}, year={year}, provider={provider!r})."
+            ) from exc
 
     def generate_electricity_profile(self):
         """Generate Q_ig/elecLoad/occ_nothome/occ_sleeping via occupancy, unless opted out."""

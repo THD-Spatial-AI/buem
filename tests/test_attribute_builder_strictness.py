@@ -57,7 +57,7 @@ def test_capacity_string_is_cast_to_int():
     still work, exercising the explicit int() cast added alongside num_persons."""
     building_attrs = _load_building_attributes("building_02_medium_office.json")
     building_attrs["capacity"] = "25"  # str, as it might arrive from a loose JSON client
-    merged = AttributeBuilder(payload_attrs=building_attrs, allow_weather_fallback=True).build()
+    merged = AttributeBuilder(payload_attrs=building_attrs).build()
     assert "elecLoad" in merged
 
 
@@ -67,7 +67,7 @@ def test_capacity_garbage_string_raises_clear_error():
     building_attrs = _load_building_attributes("building_02_medium_office.json")
     building_attrs["capacity"] = "not-a-number"
     with pytest.raises(RuntimeError, match="invalid literal"):
-        AttributeBuilder(payload_attrs=building_attrs, allow_weather_fallback=True).build()
+        AttributeBuilder(payload_attrs=building_attrs).build()
 
 
 def test_reindex_or_raise_rejects_misaligned_series():

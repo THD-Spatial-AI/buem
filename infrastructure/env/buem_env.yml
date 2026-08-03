@@ -66,6 +66,7 @@ dependencies:
   - python>=3.14
   - coincbc
   - cvxpy
+  - dask  # required at runtime by weather's xr.open_mfdataset point-query path; not declared by weather[pointquery] itself
   - flask
   - flask-swagger-ui
   - joblib
@@ -96,13 +97,17 @@ dependencies:
   - pip:
     - marshmallow>=4.0.0
     - marshmallow-dataclass>=8.0.0
-    # Optional sub-packages (https://github.com/UU-BUEM/occupancy,
-    # https://github.com/UU-BUEM/weather). Neither is published to PyPI or
-    # a conda channel yet, so installed via a direct git reference (see
-    # the @main note above). All of their own dependencies are already
+    # occupancy (https://github.com/UU-BUEM/occupancy) and weather
+    # (https://github.com/UU-BUEM/weather). Neither is published to PyPI or
+    # a conda channel yet, so installed via a direct git reference (see the
+    # @main note above). All of their own dependencies are already
     # conda-installed above, so these two lines only add the package code
-    # itself. Remove them if you don't need real occupancy-driven loads or
-    # dynamic per-location weather -- buem falls back to synthetic/bundled
-    # defaults without them.
+    # itself.
+    # occupancy is still optional -- remove it if you don't need real
+    # occupancy-driven loads; buem falls back to a synthetic profile
+    # without it.
+    # weather is COMPULSORY (2026-08-03): every T/GHI/DHI/DNI attribute
+    # comes from its real per-location get_point_weather() fetch, no
+    # bundled/local-file fallback -- buem will not import without it.
     - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main
     - weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main

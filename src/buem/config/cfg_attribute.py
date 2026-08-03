@@ -5,14 +5,19 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from buem.config.weather_cache import get_or_fetch_weather
+from buem.env import load_env
+
 from .attribute_types import AttributeCategory, AttributeSpec, AttrType
 
 logger = logging.getLogger(__name__)
 
-# ── Optional external sub-packages (now independent repos in UU-BUEM org) ─────
-# occupancy: https://github.com/UU-BUEM/occupancy
-# weather:   https://github.com/UU-BUEM/weather
-# Install via: pip install buem[occupancy,weather]  (or `pip install occupancy` / `pip install weather` directly)
+load_env()  # ensure BUEM_WEATHER_DATA_DIR/WEATHER_DATA_DIR are set before the fetch below
+
+# ── occupancy (https://github.com/UU-BUEM/occupancy) is still optional, with a
+# documented synthetic fallback below. weather (https://github.com/UU-BUEM/weather)
+# is compulsory (2026-08-03) -- every T/GHI/DHI/DNI value comes from its real
+# per-location fetch, so it's imported unconditionally like pandas/pvlib.
 try:
     from occupancy import ElectricityConsumptionProfile, HouseholdProfile, to_buem_profiles  # type: ignore[import]
     _OCCUPANCY_AVAILABLE = True
@@ -28,6 +33,16 @@ DEFAULT_NUM_PERSONS = 4
 DEFAULT_YEAR = 2018
 DEFAULT_SEED = 42
 
+# Default location/provider for the module-level weather default below and the
+# "latitude"/"longitude"/"weather_provider" AttributeSpec defaults further down
+# -- a single source of truth so the two can't drift apart.
+DEFAULT_LATITUDE = 52.0
+DEFAULT_LONGITUDE = 5.0
+# era5-land was the original default; switched to merra-2 (2026-08-04) since
+# era5-land currently fails at this cell/year -- see CLAUDE.md "Weather is
+# compulsory" for the data-quality findings behind this choice.
+DEFAULT_WEATHER_PROVIDER = "merra-2"
+
 # TABULA residential building-size classes (see BuildingIdentity.building_type,
 # src/buem/buildings/building.py). Anything outside this set is routed to
 # occupancy's ServiceBuildingProfile instead of HouseholdProfile -- see
@@ -39,73 +54,25 @@ DEFAULT_SEED = 42
 RESIDENTIAL_BUILDING_TYPES = frozenset({"SFH", "MFH", "TH", "AB"})
 DEFAULT_BUILDING_TYPE = "MFH"
 
-# --- changed code: make weather CSV path configurable via BUEM_WEATHER_DIR env var ---
-# Default to package-local data/weather folder if env var is not set so behavior is backwards-compatible.
-DEFAULT_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "weather"))
-WEATHER_DIR = os.environ.get("BUEM_WEATHER_DIR", DEFAULT_DATA_DIR)
-WEATHER_CSV = os.path.join(WEATHER_DIR, "COSMO_Year__ix_390_650.csv")
-WEATHER_CACHE = os.path.join(WEATHER_DIR, "COSMO_Year__ix_390_650_processed.feather")
-
-if not os.path.exists(WEATHER_CSV):
-    raise FileNotFoundError(
-        f"Weather CSV not found at {WEATHER_CSV}. "
-        "Provide the file there or set BUEM_WEATHER_DIR to a folder containing "
-        "COSMO_Year__ix_390_650.csv (e.g. mount ./data/weather and set env var accordingly)."
-    )
-
-# Try loading the already-processed feather cache (includes DISC-reconstructed DNI/DHI).
-# This avoids the ~2-3s pvlib DISC computation on every module import (critical for
-# multiprocessing workers that each re-import this module).
-if os.path.exists(WEATHER_CACHE):
-    df_weather = pd.read_feather(WEATHER_CACHE)
-    df_weather.set_index(df_weather.columns[0], inplace=True)
-    df_weather.index = pd.to_datetime(df_weather.index)
-else:
-    # Inline CSV loading with pvlib DISC reconstruction (replaces buem.weather.from_csv).
-    # pvlib is a core buem dependency; no external weather package required for this step.
-    import pvlib  # type: ignore[import-untyped]
-
-    _df = pd.read_csv(WEATHER_CSV)
-    _df.set_index(_df.columns[0], inplace=True)
-    _df.index = pd.to_datetime(_df.index, utc=True)
-    _df = _df[["T", "GHI", "DNI", "DHI"]].copy()
-
-    # Reconstruct DNI and DHI from GHI using pvlib DISC decomposition.
-    # COSMO-REA6 stores DNI = (GHI-DHI)/cos(zenith), which diverges near the horizon
-    # (observed max: 4951 W/m2, physically impossible).  DISC gives bounded 0..~1000 W/m2.
-    # NOTE: these coordinates are the fixed COSMO-REA6 grid cell this CSV was extracted for
-    # (encoded in the filename's ix_390_650 grid indices), not the "latitude"/"longitude"
-    # AttributeSpec defaults below (52.0/5.0) which describe the building's own location for
-    # solar-gain/shading calculations. They are intentionally independent: swapping in a
-    # different building location does not change which weather-station grid cell this file
-    # represents.
-    _solpos = pvlib.solarposition.get_solarposition(_df.index, latitude=52.07, longitude=5.07)
-    _dni_extra = pvlib.irradiance.get_extra_radiation(_df.index.dayofyear)
-    _disc = pvlib.irradiance.disc(
-        ghi=_df["GHI"],
-        solar_zenith=_solpos["apparent_zenith"],
-        datetime_or_doy=_df.index,
-    )
-    _df["DNI"] = _disc["dni"].clip(lower=0, upper=_dni_extra).fillna(0)
-    _cos_z = np.cos(np.radians(_solpos["apparent_zenith"].clip(upper=90))).clip(lower=0)
-    _df["DHI"] = (_df["GHI"] - _df["DNI"] * _cos_z).clip(lower=0, upper=_df["GHI"]).fillna(0)
-
-    df_weather = _df.copy()
-    df_weather.index = df_weather.index.tz_convert(None)
-
-    # Save processed weather to feather cache for fast reloading by worker processes
-    try:
-        df_weather.reset_index().to_feather(WEATHER_CACHE)
-    except (OSError, ValueError) as exc:
-        # Non-critical: caching failure should not block model execution.
-        logger.warning("Could not write weather feather cache %s: %s", WEATHER_CACHE, exc)
+# Real weather-module fetch for the module-level default location above (used
+# by ATTRIBUTE_SPECS["weather"].default below, and by anything that imports
+# this module without going through AttributeBuilder's per-building fetch --
+# e.g. `buem run`'s demo path, cfg_building.WeatherConfig(None)). Cached to a
+# local feather file keyed by (provider, lat, lon, year) via
+# weather_cache.get_or_fetch_weather, exactly like any other building's fetch
+# -- there is no bundled/shipped weather data file anymore, only this
+# locally-generated cache of a real fetch. Requires BUEM_WEATHER_DATA_DIR (or
+# weather's own WEATHER_DATA_DIR) to point at processed provider archives.
+df_weather = get_or_fetch_weather(
+    DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_YEAR, DEFAULT_WEATHER_PROVIDER
+)
 
 main_index = df_weather.index
 n_hours = len(main_index)
 temp_profile = df_weather["T"]
 ghi_profile = df_weather["GHI"]
-dni_profile = df_weather["DNI"]   # DISC-reconstructed, physically bounded
-dhi_profile = df_weather["DHI"]   # back-computed from GHI - DNI*cos(zenith)
+dni_profile = df_weather["DNI"]
+dhi_profile = df_weather["DHI"]
 
 # Generate Q_ig/elecLoad/occ_nothome/occ_sleeping: use occupancy's to_buem_profiles() if
 # available, else a synthetic sinusoidal fallback for all four series.
@@ -187,8 +154,8 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
     "occ_sleeping": AttributeSpec("occ_sleeping", AttributeCategory.FIXED, AttrType.SERIES,
                                   default=occ_sleeping_profile,
                                   doc="Sleeping occupancy profile (fraction asleep). From occupancy.to_buem_profiles() when available."),
-    "latitude": AttributeSpec("latitude", AttributeCategory.FIXED, AttrType.FLOAT, 52.0),
-    "longitude": AttributeSpec("longitude", AttributeCategory.FIXED, AttrType.FLOAT, 5.0),
+    "latitude": AttributeSpec("latitude", AttributeCategory.FIXED, AttrType.FLOAT, DEFAULT_LATITUDE),
+    "longitude": AttributeSpec("longitude", AttributeCategory.FIXED, AttrType.FLOAT, DEFAULT_LONGITUDE),
     # New structured component tree: component-level U (same for all elements) + element list
     "components": AttributeSpec(
         "components",
@@ -302,10 +269,14 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
     "year": AttributeSpec("year", AttributeCategory.FIXED, AttrType.INT, DEFAULT_YEAR, doc="Default year for profile generation"),
     "seed": AttributeSpec("seed", AttributeCategory.FIXED, AttrType.INT, DEFAULT_SEED, doc="RNG seed for reproducible electricity profiles (default: 42)"),
     "use_provided_elecLoad": AttributeSpec("use_provided_elecLoad", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="If true, keep provided elecLoad even when force=True"),
-    "weather_provider": AttributeSpec("weather_provider", AttributeCategory.FIXED, AttrType.STR, "era5-land",
-                                       doc="Weather source for the dynamic per-location fetch: 'era5-land' (default), 'cosmo-rea6', or 'merra-2'. Only used when the optional weather package is installed."),
-    "use_provided_weather": AttributeSpec("use_provided_weather", AttributeCategory.BOOLEAN, AttrType.BOOL, False,
-                                           doc="If true, keep the provided weather DataFrame instead of dynamically fetching one for (latitude, longitude, year)."),
+    "weather_provider": AttributeSpec(
+        "weather_provider", AttributeCategory.FIXED, AttrType.STR, DEFAULT_WEATHER_PROVIDER,
+        doc="Weather source for the per-location fetch: 'merra-2' (default), 'era5-land', or 'cosmo-rea6'."
+    ),
+    "use_provided_weather": AttributeSpec(
+        "use_provided_weather", AttributeCategory.BOOLEAN, AttrType.BOOL, False,
+        doc="If true, keep the provided weather DataFrame instead of dynamically fetching one for (latitude, longitude, year)."
+    ),
 }
 
 # Legacy default cfg dict (keeps existing API for other modules)

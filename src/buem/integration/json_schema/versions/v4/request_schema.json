@@ -66,10 +66,11 @@
     "buem": {
       "type": "object",
       "required": ["building"],
-      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings.",
+      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. weather selects which real-world weather-module data source feeds the thermal model.",
       "properties": {
         "building": { "$ref": "#/$defs/building" },
-        "solver":   { "$ref": "#/$defs/solver" }
+        "solver":   { "$ref": "#/$defs/solver" },
+        "weather":  { "$ref": "#/$defs/weather_source" }
       }
     },
 
@@ -290,6 +291,25 @@
           "allOf": [{ "$ref": "#/$defs/dimensionless_qty" }],
           "description": "Intermittent heating reduction factor (ISO 13790 §13.2.2) — reduces effective transmission losses to account for night/weekend setback. TABULA F_red_htr1: 0.95 (AB/MFH) or 0.90 (SFH/TH).",
           "default": { "value": 1.0, "unit": "-" }
+        }
+      }
+    },
+
+    "weather_source": {
+      "type": "object",
+      "description": "DRAFT v4 addition. Selects the real-world weather-module data source (T/GHI/DHI/DNI) for this building's location -- see UU-BUEM/weather. buem has no bundled/local-file weather fallback; every request is served by a real per-location fetch.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["era5-land", "cosmo-rea6", "merra-2"],
+          "default": "merra-2",
+          "description": "Which processed weather archive to fetch the location's T/GHI/DHI/DNI from."
+        },
+        "year": {
+          "type": "integer",
+          "minimum": 1940,
+          "maximum": 2100,
+          "description": "Calendar year to fetch weather for. Defaults to the top-level start_time's calendar year when omitted."
         }
       }
     },

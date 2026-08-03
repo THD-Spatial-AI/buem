@@ -30,6 +30,7 @@ classifiers = [
 ]
 dependencies = [
     "cvxpy",
+    "dask[array]",  # required at runtime by weather's xr.open_mfdataset point-query path; not declared by weather[pointquery] itself
     "flask",
     "flask-swagger-ui",
     "joblib",
@@ -48,21 +49,22 @@ dependencies = [
     "pyarrow",
     "python-dotenv",
     "scipy",
+    # weather: https://github.com/UU-BUEM/weather -- compulsory (2026-08-03): all
+    # solar/T/GHI/DHI/DNI attributes come from this package's real per-location
+    # fetch, no bundled/local-file fallback. Not on PyPI/conda yet, so a direct
+    # git reference (PEP 508), tracked at @main -- see infrastructure/env/
+    # buem_env.yml's header comment for the reproducibility trade-off.
+    "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main",
 ]
 
 [project.optional-dependencies]
-# Optional sub-packages now in independent repos within the UU-BUEM organisation.
-# Neither is published to PyPI or a conda channel yet, so these are direct
-# git references (PEP 508). Tracked at @main (latest) rather than a pinned
-# tag -- see infrastructure/env/buem_env.yml's header comment for the
-# reproducibility trade-off and how to pin instead.
-# occupancy: https://github.com/UU-BUEM/occupancy
-# weather:   https://github.com/UU-BUEM/weather
+# occupancy (https://github.com/UU-BUEM/occupancy) remains optional -- unlike
+# weather, it has a documented synthetic fallback when absent (see
+# cfg_attribute.py). Not published to PyPI/conda yet, so a direct git
+# reference (PEP 508), tracked at @main -- see infrastructure/env/
+# buem_env.yml's header comment for the reproducibility trade-off.
 occupancy = [
     "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main",
-]
-weather = [
-    "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main",
 ]
 server = [
     "gunicorn",

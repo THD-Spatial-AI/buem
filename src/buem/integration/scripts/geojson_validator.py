@@ -11,7 +11,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from marshmallow import Schema, ValidationError, fields, post_load, validates, validates_schema
+from marshmallow import Schema, ValidationError, fields, post_load, validate, validates, validates_schema
+
+# Canonical + alias provider strings accepted by weather.point_query.get_point_weather.
+WEATHER_PROVIDERS = ("era5-land", "era5", "cosmo-rea6", "cosmo", "merra-2", "merra2")
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +227,14 @@ class BuildingAttributesSchema(Schema):
     # Location
     latitude = fields.Float(required=True, validate=lambda x: -90 <= x <= 90)
     longitude = fields.Float(required=True, validate=lambda x: -180 <= x <= 180)
-    
+
+    # Weather source: which calendar year and which provider's per-location
+    # data to fetch (see buem.config.weather_cache / cfg_attribute.py).
+    # Both optional -- year defaults to the request's own start_time, and
+    # weather_provider defaults to ATTRIBUTE_SPECS["weather_provider"].
+    year = fields.Int(required=False, allow_none=True, validate=lambda x: 1940 <= x <= 2100)
+    weather_provider = fields.Str(required=False, allow_none=True, validate=validate.OneOf(WEATHER_PROVIDERS))
+
     # Basic building properties
     A_ref = fields.Float(validate=lambda x: x > 0, load_default=100.0)
     h_room = fields.Float(validate=lambda x: x > 0, load_default=2.5)
@@ -665,7 +675,7 @@ class GeoJsonValidator:
         
         # Optional building metadata
         for key in ('building_type', 'construction_period', 'country', 'n_storeys',
-                     'neighbour_status', 'attic_condition', 'cellar_condition'):
+                    'neighbour_status', 'attic_condition', 'cellar_condition'):
             if key in building:
                 building_attributes[key] = building[key]
         

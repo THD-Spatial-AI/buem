@@ -1,4 +1,4 @@
-"""Location-keyed on-disk cache wrapping the optional weather package.
+"""Location-keyed on-disk cache wrapping the (compulsory) weather package.
 
 Before weather became per-location, buem loaded exactly one bundled CSV at
 module-import time and cached its (expensive, ~2-3s pvlib DISC) processed
@@ -17,20 +17,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from weather import get_point_weather  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
-
-try:
-    from weather import get_point_weather  # type: ignore[import]
-    _WEATHER_AVAILABLE = True
-except ImportError:
-    _WEATHER_AVAILABLE = False
-    get_point_weather = None  # type: ignore[assignment,misc]
-
-
-def weather_available() -> bool:
-    """Whether the optional `weather` package is importable."""
-    return _WEATHER_AVAILABLE
 
 
 def _cache_dir() -> Path:
@@ -55,18 +44,10 @@ def get_or_fetch_weather(
 
     Raises
     ------
-    ImportError
-        If the optional `weather` package is not installed.
     FileNotFoundError
-        If `weather` is installed but has no processed archive for
-        (provider, year) at the requested location.
+        If `weather` has no processed archive for (provider, year) at the
+        requested location (set ``BUEM_WEATHER_DATA_DIR`` to point at one).
     """
-    if not _WEATHER_AVAILABLE:
-        raise ImportError(
-            "weather package is required for dynamic weather fetching. "
-            "Install it with: pip install buem[weather]"
-        )
-
     path = _cache_path(provider, latitude, longitude, year)
     if path.exists():
         df = pd.read_feather(path)

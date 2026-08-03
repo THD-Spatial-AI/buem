@@ -54,9 +54,10 @@ def test_dummy_fixture_runs_end_to_end(fixture_name, expected_building_type):
     building_attrs = _load_building_attributes(fixture_name)
     assert building_attrs["building_type"] == expected_building_type
 
-    # No real per-location weather data is available in CI/dev -- opt into
-    # the documented bundled-CSV fallback.
-    merged = AttributeBuilder(payload_attrs=building_attrs, allow_weather_fallback=True).build()
+    # Real per-location weather fetch (weather is a compulsory dependency;
+    # requires BUEM_WEATHER_DATA_DIR / WEATHER_DATA_DIR to point at
+    # processed provider archives -- see .env.example).
+    merged = AttributeBuilder(payload_attrs=building_attrs).build()
     cfg = CfgBuilding(merged).to_cfg_dict()
 
     model = ModelBUEM(cfg)

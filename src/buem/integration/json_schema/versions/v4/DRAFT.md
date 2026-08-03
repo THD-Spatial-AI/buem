@@ -7,8 +7,11 @@ and are mirrored here for buem's own development — v3 there is current.
 
 ## What's in this draft
 
-Both changes are additive/services-building related, accumulated while
-wiring up `ServiceBuildingProfile` support in buem:
+Three changes so far. The first two are additive/services-building
+related, accumulated while wiring up `ServiceBuildingProfile` support in
+buem. The third (2026-08-03) is part of making the `weather` package a
+compulsory, real-fetch-only data source (buem has no bundled/local-file
+weather fallback anymore -- see buem's own `CLAUDE.md`):
 
 - `building.building_type` gets an `enum` (previously free-text): the 4
   TABULA residential codes (`SFH`/`MFH`/`TH`/`AB`) plus 8 occupancy
@@ -20,6 +23,20 @@ wiring up `ServiceBuildingProfile` support in buem:
 - `building.capacity` (new optional integer field, service-building
   occupancy sizing) — this one alone would be MINOR (backward-compatible
   addition).
+- New `buem.weather` object (sibling to `building`/`solver`): optional
+  `provider` (`era5-land`/`cosmo-rea6`/`merra-2`, default `merra-2` as of
+  2026-08-04 -- era5-land was the original default but currently fails at
+  buem's own default test cell, see CLAUDE.md) and `year` (defaults to
+  `start_time`'s calendar year) selecting the real per-location weather-
+  module fetch. Additive/MINOR. The equivalent v2-format fields
+  (`building_attributes.year`/`weather_provider`) are already live in
+  `geojson_validator.py`'s `BuildingAttributesSchema` (not gated behind this
+  draft — that schema isn't part of the versioned contract). **Not yet
+  reachable from a real v3 (live) request**: `geojson_validator.py`'s
+  `_convert_v3_to_v2()` doesn't read any `weather`-equivalent block from
+  v3 input yet, so today only true v2-format requests (or direct
+  `AttributeBuilder` calls) can set `year`/`weather_provider` -- see
+  CLAUDE.md "Weather is compulsory" for what extending that would need.
 
 ## Status
 
