@@ -18,7 +18,6 @@ dist/
 .coverage
 coverage.xml
 *.csv
-!src/buem/data/weather/COSMO_Year__ix_390_650.csv
 *.xlsx
 !src/buem/data/default_2016.xlsx
 *.h5
@@ -54,3 +53,11 @@ docs/source/_autosummary/
 
 # Local conda environment (use global instead)
 .conda/
+
+# Claude Code context (CLAUDE.md, .claude/) -- local-only, not pushed to
+# GitHub (2026-08-04): internal AI-agent working notes/incident log, not
+# meant for external partners (EnerPlanET) browsing this repo. Previously
+# tracked and already present in prior pushed commits/tags -- this only
+# stops future changes from being committed, it doesn't rewrite history.
+CLAUDE.md
+.claude/

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-04
+
+### Added
+
+- `latitude`/`longitude`/`year`/`weather_provider` now flow end-to-end from
+  a request to the weather fetch: `year` defaults to a request's own
+  `start_time` calendar year when not explicit (`geojson_processor.py`);
+  `year`/`weather_provider` added as optional, validated fields on
+  `geojson_validator.py`'s `BuildingAttributesSchema` (v2 request format).
+  Mirrored (documentation only, not yet wired into any live request path)
+  in the `versions/v4/` draft schema as a new `buem.weather: {provider,
+  year}` object.
+
+### Changed
+
+- **`weather` (UU-BUEM/weather) is now a compulsory dependency**, not an
+  optional extra — moved from `[project.optional-dependencies]` to core
+  `dependencies` in `pyproject.toml`/`buem_env.yml`. All `try/except
+  ImportError` guards around `import weather` are removed; it's imported
+  unconditionally like pandas/pvlib. `occupancy` remains optional.
+- **The bundled offline weather CSV is retired**
+  (`src/buem/data/weather/COSMO_Year__ix_390_650.csv`, one static
+  COSMO-REA6 grid cell) — deleted, along with every code path that read
+  it. `cfg_attribute.py`'s module-level weather default is now a real
+  `weather.get_point_weather()` fetch for a documented default location
+  (`DEFAULT_LATITUDE`/`DEFAULT_LONGITUDE`/`DEFAULT_YEAR`/
+  `DEFAULT_WEATHER_PROVIDER`), cached locally (gitignored feather file)
+  exactly like any other building's fetch.
+- `model_buem.py::_calcRadiation`'s defensive DNI-to-extraterrestrial clip
+  and hard 1200 W/m² POA cap are removed — DNI/DHI/GHI are used as
+  provided by the weather fetch, trusting it's already physically bounded,
+  instead of buem re-sanitising a second time.
+- `DEFAULT_WEATHER_PROVIDER` switched `era5-land` → `merra-2` (see Known
+  Issues below for why).
+
+### Removed
+
+- **`allow_weather_fallback` removed entirely** from `AttributeBuilder`
+  and `GeoJsonProcessor` (breaking: passing this keyword now raises
+  `TypeError`). A failed per-building weather fetch always raises now —
+  there is no fallback, since substituting any other location's weather
+  (real fetch or static file) would silently model the wrong building.
+
+### Known Issues
+
+- **The `weather` package's real-simulation path is not fully verified
+  yet.** Comparing `era5-land`/`merra-2`/`cosmo-rea6` at buem's own
+  default test cell surfaced three upstream bugs in `weather`
+  (`merra-2`'s `T` column NaN outside one month; `cosmo-rea6` point-query
+  raising on a dataset-concat error; `era5-land` returning an implausible
+  GHI spike from an unrepaired month-boundary de-accumulation issue).
+  `merra-2` and `cosmo-rea6` are fixed in `weather`'s upstream working
+  tree but **not yet released/installed here** — running the full test
+  suite against the currently-pinned `weather` version fails 4/14 tests
+  with `RuntimeError: Problem data contains NaN` (merra-2's still-present
+  bug). `era5-land` remains blocked on its own unrepaired archive
+  regardless. Do not treat a real thermal-model run against any
+  `weather_provider` as verified until `weather` is upgraded past these
+  fixes and the affected archive(s) are repaired.
+
 ## [2.0.1] - 2026-07-31
 
 ### Fixed
