@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class GeoJsonProcessor:
     """
     Process GeoJSON FeatureCollection with building energy model specifications.
-    
+
     Workflow:
     1. Extract building attributes from GeoJSON feature
     2. Merge with database/defaults via AttributeBuilder
@@ -37,7 +37,7 @@ class GeoJsonProcessor:
     4. Compute summary statistics
     5. Save timeseries .gz file (optional)
     6. Return results in GeoJSON format
-    
+
     Parameters
     ----------
     payload : Dict[str, Any]
@@ -68,42 +68,42 @@ class GeoJsonProcessor:
             import os
             default_dir = Path(__file__).resolve().parents[1] / "results"
             self.result_save_dir = Path(os.environ.get("BUEM_RESULTS_DIR", str(default_dir)))
-    
+
     def process(self) -> Dict[str, Any]:
         """
         Process all features and return GeoJSON FeatureCollection with results.
-        
+
         Returns
         -------
         Dict[str, Any]
             GeoJSON FeatureCollection with thermal_load_profile added to each feature.
-            
+
         Raises
         ------
         ValueError
             If payload validation fails with critical errors.
         """
         start_time = time.time()
-        
+
         # Step 1: Validate payload structure and format
         validation_result = validate_geojson_request(self.payload)
-        
+
         if not validation_result.is_valid:
             errors = validation_result.get_errors()
             error_msgs = [issue.message for issue in errors]
             validation_report = create_validation_report(validation_result)
             logger.error(f"Payload validation failed:\n{validation_report}")
             raise ValueError(f"Invalid GeoJSON payload: {'; '.join(error_msgs[:3])}")
-        
+
         # Log validation warnings if any
         warnings = validation_result.get_warnings()
         if warnings:
             warning_msgs = [issue.message for issue in warnings]
             logger.warning(f"Validation warnings: {'; '.join(warning_msgs)}")
-        
+
         # Use validated data (with any format conversions applied)
         validated_payload = validation_result.validated_data or self.payload
-        
+
         # Extract features from validated payload
         if validated_payload.get("type") == "Feature":
             features = [validated_payload]
@@ -111,11 +111,11 @@ class GeoJsonProcessor:
             features = validated_payload.get("features", [])
         else:
             raise ValueError("Validated payload has unexpected structure")
-        
+
         # Process each feature
         out_features = []
         processing_errors = []
-        
+
         for i, feat in enumerate(features):
             try:
                 processed = self._process_single_feature(feat, validation_result)
@@ -124,7 +124,7 @@ class GeoJsonProcessor:
                 error_msg = f"Feature {feat.get('id', f'index_{i}')} failed: {exc}"
                 logger.exception(error_msg)
                 processing_errors.append(error_msg)
-                
+
                 # Include error in feature response
                 feat.setdefault("properties", {}).setdefault("buem", {})
                 feat["properties"]["buem"]["error"] = {
@@ -134,7 +134,7 @@ class GeoJsonProcessor:
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 out_features.append(feat)
-        
+
         # Build response with metadata
         response = {
             "type": "FeatureCollection",
@@ -148,16 +148,16 @@ class GeoJsonProcessor:
                 "validation_warnings": len(warnings)
             }
         }
-        
+
         # Include validation issues in response if any
         if warnings or processing_errors:
             response["validation_report"] = {
                 "warnings": [{"path": w.path, "message": w.message} for w in warnings],
                 "processing_errors": processing_errors
             }
-        
+
         return response
-    
+
     @staticmethod
     def _v3_to_internal(
         building: Optional[Dict[str, Any]],
@@ -333,13 +333,16 @@ class GeoJsonProcessor:
             coords=coords,
         )
 
-        # Weather always comes from the caller's buem.weather block (e.g.
-        # an Orchestrator that already resolved it). BuEM doesn't fetch its
-        # own -- see AttributeBuilder/DEFAULT_CFG for the last-resort
-        # default when no weather is supplied at all.
+        # Weather must come from the caller (e.g. an Orchestrator that already
+        # resolved it). Defaulting would silently produce a plausible but wrong
+        # heating number with no signal that real weather was missing.
         caller_weather = self._weather_from_payload(buem.get("weather"))
-        if caller_weather is not None:
-            internal_attrs["weather"] = caller_weather
+        if caller_weather is None:
+            raise ValueError(
+                'buem.weather is required and must include "index" plus at least '
+                "one of T/GHI/DNI/DHI (see CHANGELOG [Unreleased], enerplanet/buem#10)"
+            )
+        internal_attrs["weather"] = caller_weather
 
         # User-provided electricity load profile (buem.inputs.electricity_load_profile).
         # Referenced by file path, not inlined — see electricity_load_profile.py.
@@ -428,7 +431,7 @@ class GeoJsonProcessor:
 
         logger.info(f"Successfully processed feature {building_id} in {elapsed:.2f}s")
         return feature
-    
+
     @staticmethod
     def _weather_from_payload(weather_json: Optional[Dict[str, Any]]) -> Optional[pd.DataFrame]:
         """Convert a caller-supplied buem.weather block into a DataFrame
@@ -451,14 +454,14 @@ class GeoJsonProcessor:
     def _validate_array(self, data, array_name: str) -> np.ndarray:
         """
         Validate and sanitize numerical arrays for thermal loads.
-        
+
         Parameters
         ----------
         data : Any
             Input data to be converted to array.
         array_name : str
             Name of the array for logging.
-            
+
         Returns
         -------
         np.ndarray
@@ -466,22 +469,22 @@ class GeoJsonProcessor:
         """
         try:
             arr = np.asarray(data, dtype=float)
-            
+
             # Sanitize NaN/inf
             arr = np.nan_to_num(arr, nan=0.0, posinf=1e9, neginf=-1e9)
-            
+
             # Check for remaining NaN
             nan_count = np.isnan(arr).sum()
             if nan_count > 0:
                 logger.warning(f"Array {array_name}: {nan_count}/{arr.size} NaN values replaced with 0")
                 arr = np.nan_to_num(arr, nan=0.0)
-            
+
             return arr
-            
+
         except Exception as e:
             logger.error(f"Failed to validate array {array_name}: {e}")
             return np.array([], dtype=float)
-    
+
     def _build_thermal_load_profile(
         self, times, heating, cooling, electricity, elapsed,
         start_time, end_time, resolution, resolution_unit,
@@ -592,11 +595,11 @@ class GeoJsonProcessor:
             profile["timeseries"] = timeseries
 
         return profile
-    
+
     def _save_timeseries(self, times, heating, cooling, electricity) -> str:
         """
         Save timeseries as gzipped JSON.
-        
+
         Returns
         -------
         str
@@ -610,7 +613,7 @@ class GeoJsonProcessor:
         if isinstance(times, pd.DatetimeIndex):
             time_list = [t.isoformat() for t in times]
         else:
-            time_list = [t.isoformat() for t in times]       
+            time_list = [t.isoformat() for t in times]
 
         payload = {
             "index": time_list,
@@ -618,9 +621,9 @@ class GeoJsonProcessor:
             "cool": [float(x) for x in cooling.tolist()],
             "electricity": [float(x) for x in electricity.tolist()] if len(electricity) else [],
         }
-        
+
         with gzip.open(full_path, "wt", encoding="utf-8") as gz:
             json.dump(payload, gz, indent=None)
-        
+
         logger.info(f"Saved timeseries: {full_path}")
         return fname

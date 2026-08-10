@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking**: `/api/process` now requires `buem.weather` on every
+  feature -- a request with no weather (or a `weather` block missing
+  `index`/all of T,GHI,DNI,DHI) fails loudly with a per-feature error
+  instead of silently substituting `AttributeBuilder`'s generic default
+  weather. A scientific model producing a plausible-looking result from
+  the wrong (or missing) input, with no signal that it happened, is worse
+  than an explicit failure. See #11.
+
 ### Added
 
 - `buem.weather` field in the v4 request schema (`index`/`T`/`GHI`/`DNI`/`DHI`)
