@@ -66,10 +66,28 @@
     "buem": {
       "type": "object",
       "required": ["building"],
-      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings.",
+      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. weather is an optional pre-resolved timeseries.",
       "properties": {
         "building": { "$ref": "#/$defs/building" },
-        "solver":   { "$ref": "#/$defs/solver" }
+        "solver":   { "$ref": "#/$defs/solver" },
+        "weather":  { "$ref": "#/$defs/weather" }
+      }
+    },
+
+    "weather": {
+      "type": "object",
+      "description": "DRAFT v4 addition (new optional field, additive). Caller-supplied hourly weather timeseries, taking priority over BuEM's own location-based MERRA-2 lookup when present. Shape matches weather serve's GET /v1/weather/point?format=json response.",
+      "required": ["index", "T", "GHI", "DNI", "DHI"],
+      "properties": {
+        "index": {
+          "type": "array",
+          "items": { "type": "string", "format": "date-time" },
+          "description": "Hourly timestamps, ISO 8601"
+        },
+        "T":   { "type": "array", "items": { "type": "number" }, "description": "Air temperature, degC" },
+        "GHI": { "type": "array", "items": { "type": "number" }, "description": "Global horizontal irradiance, W/m2" },
+        "DNI": { "type": "array", "items": { "type": "number" }, "description": "Direct normal irradiance, W/m2" },
+        "DHI": { "type": "array", "items": { "type": "number" }, "description": "Diffuse horizontal irradiance, W/m2" }
       }
     },
 

@@ -275,6 +275,12 @@ class BuemSchema(Schema):
     # v4: buem.inputs.electricity_load_profile — see electricity_load_profile.py
     inputs = fields.Dict(required=False, allow_none=True)
 
+    # v4: buem.weather — caller-supplied weather timeseries, takes priority
+    # over BuEM's own location-based MERRA-2 lookup when present. Structure
+    # (index/T/GHI/DNI/DHI) validated by geojson_processor's conversion, not
+    # here — same "structure validated elsewhere" pattern as building/envelope.
+    weather = fields.Dict(required=False, allow_none=True)
+
     @validates_schema
     def require_v2_or_v3(self, data, **kwargs):
         """Ensure either v2 (building_attributes) or v3 (building with envelope) is present."""

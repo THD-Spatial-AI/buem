@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `buem.weather` field in the v4 request schema (`index`/`T`/`GHI`/`DNI`/`DHI`)
+  -- caller-supplied hourly weather timeseries, shaped to match
+  `weather serve`'s `GET /v1/weather/point?format=json` response, so an
+  Orchestrator (or any caller) can hand BuEM pre-resolved weather with no
+  BuEM-side parsing beyond `geojson_processor.py::_weather_from_payload()`.
+  See #10.
+
+### Changed
+
+- `geojson_processor.py` now uses a request's `buem.weather` block when
+  present, instead of resolving weather itself.
+
+### Removed
+
+- **Breaking for any caller relying on it**: `geojson_processor.py`'s
+  per-request MERRA-2 lookup (`_load_feature_weather()`,
+  `BUEM_WEATHER_DIR`-based, via `MerraWeatherData`) is gone. It was
+  fork-local dev scaffolding added before `weather serve` existed, not
+  part of upstream BuEM's design -- upstream's `geojson_processor.py`
+  already only reads weather from the payload. `AttributeBuilder`'s own
+  package-wide default weather (`cfg_attribute.py`, still MERRA-2-backed)
+  is unaffected; this only removes the per-request, location-specific
+  lookup the payload path now replaces. See #10.
+
 ## [2.0.0] - 2026-07-31
 
 ### Added

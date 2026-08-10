@@ -22,7 +22,6 @@ from buem.integration.scripts.geojson_validator import (
 )
 from buem.config.cfg_building import CfgBuilding
 from buem.main import run_model
-from buem.weather.from_merra import MerraWeatherData
 
 logger = logging.getLogger(__name__)
 
@@ -334,16 +333,13 @@ class GeoJsonProcessor:
             coords=coords,
         )
 
-        # Inject location-specific MERRA-2 weather when available.
-        # This overrides the module-level default weather with data matched to
-        # the actual building location and simulation year.
-        feature_weather = self._load_feature_weather(
-            lat=internal_attrs.get("latitude"),
-            lon=internal_attrs.get("longitude"),
-            start_time=props.get("start_time"),
-        )
-        if feature_weather is not None:
-            internal_attrs["weather"] = feature_weather
+        # Weather always comes from the caller's buem.weather block (e.g.
+        # an Orchestrator that already resolved it). BuEM doesn't fetch its
+        # own -- see AttributeBuilder/DEFAULT_CFG for the last-resort
+        # default when no weather is supplied at all.
+        caller_weather = self._weather_from_payload(buem.get("weather"))
+        if caller_weather is not None:
+            internal_attrs["weather"] = caller_weather
 
         # User-provided electricity load profile (buem.inputs.electricity_load_profile).
         # Referenced by file path, not inlined — see electricity_load_profile.py.
@@ -434,57 +430,23 @@ class GeoJsonProcessor:
         return feature
     
     @staticmethod
-    def _load_feature_weather(
-        lat: Optional[float],
-        lon: Optional[float],
-        start_time: Optional[str],
-    ) -> Optional[pd.DataFrame]:
-        """Load MERRA-2 weather for the feature's location and year.
+    def _weather_from_payload(weather_json: Optional[Dict[str, Any]]) -> Optional[pd.DataFrame]:
+        """Convert a caller-supplied buem.weather block into a DataFrame
+        (DatetimeIndex, columns T/GHI/DNI/DHI) for AttributeBuilder/
+        WeatherConfig to consume.
 
-        Returns None when BUEM_WEATHER_DIR is not set, no matching NetCDF file
-        exists, or required packages are unavailable — allowing the caller to
-        fall back to the module-level default weather.
-
-        Parameters
-        ----------
-        lat, lon : float or None
-            Building coordinates in decimal degrees.
-        start_time : str or None
-            ISO 8601 timestamp string; the year is used to select the MERRA-2 file.
-
-        Returns
-        -------
-        pd.DataFrame or None
-            Hourly DataFrame with columns T, GHI, DNI, DHI, or None on failure.
+        Expected shape matches weather serve's GET .../point?format=json
+        response: {"index": [ISO 8601 strings], "T": [...], "GHI": [...],
+        "DNI": [...], "DHI": [...]}. Returns None if weather_json is falsy
+        or has no usable columns, in which case AttributeBuilder's own
+        default weather (cfg_attribute.py) applies.
         """
-        import os
-
-        weather_dir = os.environ.get("BUEM_WEATHER_DIR")
-        if not weather_dir:
+        if not weather_json or "index" not in weather_json:
             return None
-
-        if lat is None or lon is None:
+        cols = {c: weather_json[c] for c in ("T", "GHI", "DNI", "DHI") if c in weather_json}
+        if not cols:
             return None
-
-        # Determine simulation year from start_time; default to 2018
-        year = 2018
-        if start_time:
-            try:
-                year = int(str(start_time)[:4])
-            except (ValueError, IndexError):
-                pass
-
-        try:
-            loader = MerraWeatherData(weather_dir, lat=lat, lon=lon)
-            return loader.get_weather_df(year=year)
-        except FileNotFoundError:
-            logger.warning(
-                "No MERRA-2 file for year %d in %s; using default weather.", year, weather_dir
-            )
-            return None
-        except Exception as exc:
-            logger.warning("MERRA-2 weather load failed (%s); using default weather.", exc)
-            return None
+        return pd.DataFrame(cols, index=pd.to_datetime(weather_json["index"]))
 
     def _validate_array(self, data, array_name: str) -> np.ndarray:
         """
