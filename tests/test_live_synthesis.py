@@ -18,6 +18,27 @@ from buem.buildings.mapping.live_synthesis import (
     FALLBACK_WINDOW_RATIO_PER_DIRECTION,
     synthesize_missing_openings,
 )
+from buem.buildings.pipeline import DEFAULT_WORKBOOK
+
+# The bundled TABULA reference workbook is *.xlsx-gitignored (repo-wide rule,
+# predates this test file) -- present on a dev machine that's run the offline
+# pipeline before, but not part of a fresh git checkout (confirmed: this is
+# why these tests failed in CI on first push, 2026-08-11 -- nothing exercised
+# ExcelBuildingSource/LOD2Mapper in CI before this file existed, so the gap
+# was never caught). Real TABULA-archetype matching (tabula_helpers
+# .lookup_tabula_archetype()) and the offline batch pipeline both need this
+# file at runtime, not just for these tests -- see CLAUDE.md's "Open
+# follow-ups" for the now-flagged, not-yet-decided fix (mirroring how
+# weather's archive-access gap was eventually resolved with a small
+# committed CI fixture). Skip cleanly rather than assert something false
+# for any environment without the file, instead of failing outright.
+_workbook_missing_reason = (
+    None if DEFAULT_WORKBOOK.exists()
+    else f"bundled TABULA workbook not present: {DEFAULT_WORKBOOK}"
+)
+requires_bundled_workbook = pytest.mark.skipif(
+    _workbook_missing_reason is not None, reason=_workbook_missing_reason or "",
+)
 from buem.buildings.mapping.tabula_helpers import lookup_tabula_archetype
 
 
@@ -80,6 +101,7 @@ def test_synthesize_openings_shared_wall_excluded_and_net_area_reduced():
 # ── tabula_helpers.lookup_tabula_archetype (bundled reference sheet) ─────────
 
 
+@requires_bundled_workbook
 def test_lookup_tabula_archetype_real_match():
     row = lookup_tabula_archetype("AB", "03", "DE")
     assert row is not None
@@ -89,6 +111,7 @@ def test_lookup_tabula_archetype_real_match():
     assert ".Gen." in row["Code_BuildingVariant"]
 
 
+@requires_bundled_workbook
 def test_lookup_tabula_archetype_accepts_prefixed_year_class_too():
     bare = lookup_tabula_archetype("AB", "03", "DE")
     prefixed = lookup_tabula_archetype("AB", "DE.03", "DE")
@@ -96,13 +119,17 @@ def test_lookup_tabula_archetype_accepts_prefixed_year_class_too():
 
 
 def test_lookup_tabula_archetype_no_match_returns_none():
-    # Country not covered by the bundled (Germany-only) reference sheet.
+    # Country not covered by the bundled (Germany-only) reference sheet --
+    # true whether or not the workbook itself is present in this
+    # environment (missing sheet and "sheet present but no match" both
+    # correctly return None), so this one needs no skip marker.
     assert lookup_tabula_archetype("MFH", "1965-1974", "NL") is None
     # Literal year-range string (EnerPlanET's actual v3 format) doesn't match
     # TABULA's class-code format either -- see CLAUDE.md's known-gap note.
     assert lookup_tabula_archetype("MFH", "1965-1974", "DE") is None
 
 
+@requires_bundled_workbook
 def test_lookup_tabula_archetype_explicit_code_override():
     row = lookup_tabula_archetype(
         "AB", None, None, bldg_tabula_id="DE.N.AB.03.Gen.ReEx.001.001",
@@ -195,10 +222,10 @@ def test_synthesize_missing_openings_noop_without_walls():
 # identify_front_back out of lod2_mapper.py had no direct coverage before.)
 
 
+@requires_bundled_workbook
 def test_lod2mapper_end_to_end_with_bundled_workbook():
     from buem.buildings.datasources.excel_source import ExcelBuildingSource
     from buem.buildings.mapping.lod2_mapper import LOD2Mapper
-    from buem.buildings.pipeline import DEFAULT_WORKBOOK
 
     source = ExcelBuildingSource(DEFAULT_WORKBOOK)
     building_ids = source.get_building_ids(limit=5)

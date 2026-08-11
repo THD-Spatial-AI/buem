@@ -120,6 +120,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   module-level example-house defaults) is retired along with the guards
   that triggered it — that was the only code path where it still fired.
 
+### Fixed
+
+- `tests/test_live_synthesis.py`'s 4 tests exercising the bundled TABULA
+  reference workbook now skip cleanly (`requires_bundled_workbook`,
+  mirroring `test_cache.py`'s existing `_skip_reason` pattern) in any
+  environment without it, instead of failing — found immediately by this
+  version's own CI run: the workbook is `.gitignore`d (repo-wide `*.xlsx`
+  rule) and was never actually part of the git repository, only present
+  on the developer machine these tests were first written against. A
+  pre-existing gap (the offline `LOD2Mapper` pipeline needed this same
+  file since it was written, just never had test coverage before), not
+  introduced by this release — see `CLAUDE.md`'s new
+  `tabula-workbook-access` open follow-up for the still-unresolved
+  underlying question (real TABULA-archetype matching only works on a
+  machine that happens to have this file today).
+
 ## [3.0.0] - 2026-08-04
 
 ### Added
