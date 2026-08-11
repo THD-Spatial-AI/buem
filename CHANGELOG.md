@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-08-11
+
+### Added
+
+- **Internal LOD2 → LOD3 envelope synthesis**: windows/doors/ventilation
+  are now computed internally by buem whenever a caller supplies wall/
+  roof/floor geometry without them, instead of silently defaulting to
+  zero — via new `buem.buildings.mapping.live_synthesis
+  .synthesize_missing_openings()`, wired into `CfgBuilding.to_cfg_dict()`
+  so both the live API path (`AttributeBuilder` → `CfgBuilding`) and the
+  config-only/demo path are covered by one change. Reuses the same
+  TABULA-ratio window/door/ventilation sizing rules
+  `LOD2Mapper`'s offline Excel/PostgreSQL batch pipeline already
+  implemented (`docs/source/modules/buildings.rst`), now shared via new
+  `element_factory.synthesize_openings()`. Resolves a real TABULA
+  archetype via new `tabula_helpers.lookup_tabula_archetype()` (matched
+  from `building_type`/`construction_period`/`country`, or an explicit
+  `bldg_tabula_id` override) against the bundled reference sheet; falls
+  back to new, clearly-flagged safe-default ratios (15% window-to-wall
+  per direction, 5% door-to-wall, logged as a warning) when no archetype
+  matches, rather than leaving a building with zero glazing. Never
+  overrides an explicitly-supplied, non-empty component. **No API
+  contract or schema changes** — `building_type`/`construction_period`/
+  `country` were already forwarded end-to-end by
+  `geojson_validator.py::_convert_v3_to_v2()`; the only gap was that
+  `CfgBuilding` silently dropped `construction_period`/`country` because
+  they weren't registered `ATTRIBUTE_SPECS`, now fixed.
+- `weather_cache.get_or_fetch_weather()` gained a second fetch backend:
+  `_fetch_remote()` calls `weather`'s own point-query HTTP API
+  (`UU-BUEM/weather`'s `GET /v1/weather/point`) instead of reading local
+  processed archives directly, selected by whether `WEATHER_API_URL` is
+  set (`WEATHER_API_KEY` sent as an `X-API-Key` header); unset, behavior
+  is unchanged from the existing local-archive path. Answers the
+  production-BUEM-microservice half of the still-open "how does buem
+  reach weather's archives" question (see `CLAUDE.md`'s "Open
+  follow-ups") for any deployment that can reach that HTTP API but not
+  the archive filesystem directly — actually configuring
+  `WEATHER_API_URL`/`WEATHER_API_KEY` for a real deployment remains
+  separate, unstarted work. New `requests` dependency.
+- New optional `archetype` building attribute, passed to
+  `occupancy.HouseholdProfile` for residential buildings. When omitted,
+  `cfg_attribute.DEFAULT_ARCHETYPE_BY_BUILDING_TYPE` maps `building_type`
+  (`SFH`/`TH`/`MFH`/`AB`) to one of occupancy's registered archetypes as a
+  first-pass default (a heuristic, not a derivation — `num_persons`
+  remains the dominant signal).
+- `num_persons`/`archetype` added to the `versions/v4/` draft schema's
+  `building` object, next to the existing `capacity` field (tier 2, not
+  yet reconciled with EnerPlanET). `seed` deliberately not added — see
+  below.
+- Floor-area-normalized internal gains for service buildings:
+  `AttributeBuilder.generate_electricity_profile()` now passes `A_ref` as
+  `floor_area_m2` to occupancy's `to_buem_profiles()`, which blends an
+  area-normalized equipment/lighting component into `Q_ig` (all 8 service
+  types now carry a `gain_w_per_m2`). Residential unaffected. Closes
+  `occupancy_gains_handoff.md` Gap 1 on buem's side.
+- `geojson_validator.py::_convert_v3_to_v2()` now forwards
+  `capacity`/`num_persons`/`archetype` from a v3 request's `building`
+  object into `building_attributes` (tier-1 file, edited with explicit
+  user direction). Closes `occupancy_gains_handoff.md` Gap 2.
+  Deliberately excludes `seed` — see "Changed" below.
+- `tests/test_building_types.py::test_v4_building_type_enum_matches_occupancy`:
+  a drift guard asserting the `versions/v4/` draft schema's
+  `building_type` enum matches `occupancy.SERVICE_BUILDING_TYPES` exactly.
+  Closes `occupancy_gains_handoff.md` Gap 3.
+- All of the above re-verified (2026-08-10) against
+  [`occupancy` v3.1.0](https://github.com/UU-BUEM/occupancy/releases/tag/v3.1.0)
+  (commit `3a99029`), the real tagged/pushed release, not just the local
+  working tree it was originally developed and tested against —
+  `buem_env`'s `occupancy` reinstalled fresh from the `git+...@main` pin
+  already declared in `pyproject.toml`/`buem_env.yml` (no pin change
+  needed). Full pytest suite (21/21), `buem validate`, and manual Gap 1/2
+  checks all pass identically.
+
+### Removed
+
+- Dead `cfg_attribute.py` attributes, never read anywhere else in the
+  codebase: `A_Window_North`/`East`/`South`/`West`/`Horizontal`, `roofs`.
+- `seed` removed from the `versions/v4/` draft schema (was briefly added,
+  now reverted) and excluded from `_convert_v3_to_v2()`'s forwarding — an
+  internal RNG-reproducibility knob, not an EnerPlanET-contract concept.
+  `cfg_attribute.py`'s `ATTRIBUTE_SPECS["seed"]` documents this
+  explicitly. See `.claude/occupancy_gains_handoff.md`'s "Seed ownership"
+  note for the proposal that `occupancy` itself own a deterministic
+  default instead of buem managing/exposing one.
+
+### Changed
+
+- `cfg_attribute.py`'s module-level demo `components` default now carries
+  gross `Walls`/`Roof`/`Floor` geometry only (no hand-picked `Windows`/
+  `Doors`/`Ventilation`) — the new internal synthesis pipeline fills the
+  rest, so this example follows `buildings.rst`'s documented rules
+  instead of arbitrary numbers. New `country`/`construction_period`
+  `ATTRIBUTE_SPECS` (both optional, defaults `"NL"`/`""`); `bldg_tabula_id`
+  (previously declared but unused) is now a real TABULA-archetype lookup
+  override.
+- `WallInfo` and front/back wall identification moved from
+  `lod2_mapper.py` to `element_factory.py` (shared with the new live-path
+  synthesis); `LOD2Mapper.map_building`'s window/door/ventilation logic
+  refactored to call the new shared `synthesize_openings()` — behavior-
+  preserving for the offline pipeline (covered by a new end-to-end test
+  against the bundled reference workbook, `tests/test_live_synthesis.py`).
+- **`occupancy` (UU-BUEM/occupancy) is now a compulsory dependency**, not
+  an optional extra — moved from `[project.optional-dependencies]` to
+  core `dependencies` in `pyproject.toml`/`buem_env.yml`. All `try/except
+  ImportError` guards around `import occupancy` are removed; it's
+  imported unconditionally like weather/pandas/pvlib. This mostly
+  formalizes existing behavior: the real per-request path
+  (`AttributeBuilder.generate_electricity_profile`) already had no
+  fallback and raised if occupancy was missing.
+- The synthetic sinusoidal fallback profile (`cfg_attribute.py`'s
+  module-level example-house defaults) is retired along with the guards
+  that triggered it — that was the only code path where it still fired.
+
 ## [3.0.0] - 2026-08-04
 
 ### Added
@@ -340,7 +453,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CsvWeatherData.reconstruct_dni_from_ghi()` — pvlib DISC-based DNI
   reconstruction replacing the divergent `(GHI-DHI)/cos(θ)` formula.
 
-[Unreleased]: https://github.com/UU-BUEM/buem/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/UU-BUEM/buem/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/UU-BUEM/buem/compare/v3.0.0...v3.1.0
+[3.0.0]: https://github.com/UU-BUEM/buem/compare/v2.0.1...v3.0.0
+[2.0.1]: https://github.com/UU-BUEM/buem/compare/v2.0.0...v2.0.1
+[2.0.0]: https://github.com/UU-BUEM/buem/compare/v1.2.1...v2.0.0
+[1.2.1]: https://github.com/UU-BUEM/buem/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/UU-BUEM/buem/compare/v1.1...v1.2.0
 [1.1]: https://github.com/UU-BUEM/buem/compare/v1.0.2...v1.1
 [1.0.2]: https://github.com/UU-BUEM/buem/compare/v1.0.1...v1.0.2
