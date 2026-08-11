@@ -132,9 +132,11 @@ def synthesize_missing_openings(
     area a partially-supplied request already accounted for.
     """
     walls_comp = components.get("Walls")
-    wall_elements = walls_comp.get("elements") if isinstance(walls_comp, dict) else None
-    if not wall_elements:
+    if not isinstance(walls_comp, dict):
         # Nothing to synthesize from -- leave components untouched.
+        return components
+    wall_elements = walls_comp.get("elements")
+    if not wall_elements:
         return components
 
     missing = [

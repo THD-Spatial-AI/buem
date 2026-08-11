@@ -60,9 +60,12 @@ def _fetch_remote(latitude: float, longitude: float, year: int, provider: str) -
     """
     api_url = os.environ["WEATHER_API_URL"].rstrip("/")
     api_key = os.environ.get("WEATHER_API_KEY", "")
+    params: dict[str, str | int | float] = {
+        "provider": provider, "lat": latitude, "lon": longitude, "year": year,
+    }
     resp = requests.get(
         f"{api_url}/v1/weather/point",
-        params={"provider": provider, "lat": latitude, "lon": longitude, "year": year},
+        params=params,
         headers={"X-API-Key": api_key},
         timeout=30,
     )
