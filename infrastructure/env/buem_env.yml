@@ -103,9 +103,10 @@ dependencies:
     # @main note above). All of their own dependencies are already
     # conda-installed above, so these two lines only add the package code
     # itself.
-    # occupancy is still optional -- remove it if you don't need real
-    # occupancy-driven loads; buem falls back to a synthetic profile
-    # without it.
+    # occupancy is COMPULSORY (2026-08-07): every Q_ig/elecLoad/
+    # occ_nothome/occ_sleeping attribute comes from its real
+    # HouseholdProfile/ServiceBuildingProfile generation, no synthetic
+    # fallback -- buem will not import without it.
     # weather is COMPULSORY (2026-08-03): every T/GHI/DHI/DNI attribute
     # comes from its real per-location get_point_weather() fetch, no
     # bundled/local-file fallback -- buem will not import without it.

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://buem.energy/schemas/v4/response",
   "title": "BUEM GeoJSON Response Schema v4 (DRAFT)",
-  "description": "DRAFT, not yet agreed with EnerPlanET -- see versions/v4/DRAFT.md. No structural changes from v3 -- the request-side building_type enum and capacity field are simply echoed back unchanged, since building.building_type/building.capacity in the response is an untyped passthrough of whatever the request contained. Response schema for the BUEM building energy model. Echoes the full v4 request structure and adds thermal_load_profile and model_metadata to each feature's buem node. All output quantities carry explicit unit fields. Timeseries arrays declare their unit once at the array level.",
+  "description": "DRAFT, not yet agreed with EnerPlanET -- see versions/v4/DRAFT.md. Reconciled against EnerPlanET's real v4 on 2026-08-06 (https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4): buem.inputs is now echoed, cooling is conditional on solver.compute_cooling (was unconditionally required), and model_metadata gained simulations_run/electricity_source. building_type enum and capacity remain buem-side-only proposals (not in EnerPlanET's real v4), simply echoed back unchanged since building.building_type/building.capacity in the response is an untyped passthrough of whatever the request contained. Response schema for the BUEM building energy model. Echoes the full v4 request structure and adds thermal_load_profile and model_metadata to each feature's buem node. All output quantities carry explicit unit fields. Timeseries arrays declare their unit once at the array level.",
   "type": "object",
   "required": ["type", "features"],
   "properties": {
@@ -120,10 +120,11 @@
     "buem": {
       "type": "object",
       "required": ["building", "thermal_load_profile"],
-      "description": "Echoes the request buem node (building contains envelope and thermal) and appends thermal_load_profile and model_metadata",
+      "description": "Echoes the request buem node (building, solver, inputs) and appends thermal_load_profile and model_metadata",
       "properties": {
-        "building":             { "type": "object", "description": "Echoed from request — contains envelope and thermal as nested objects" },
+        "building":             { "type": "object", "description": "Echoed from request — contains name (optional display label), envelope, thermal, and all classification fields" },
         "solver":               { "type": "object", "description": "Echoed from request" },
+        "inputs":               { "type": "object", "description": "Echoed from request — user-provided timeseries inputs, if any were supplied. Reconciled from EnerPlanET's real v4 (2026-08-06)." },
         "thermal_load_profile": { "$ref": "#/$defs/thermal_load_profile" },
         "model_metadata":       { "$ref": "#/$defs/model_metadata" }
       }
@@ -163,8 +164,8 @@
 
     "load_summary": {
       "type": "object",
-      "required": ["heating", "cooling", "electricity"],
-      "description": "Aggregated statistics over the full simulation period",
+      "required": ["heating", "electricity"],
+      "description": "Aggregated statistics over the full simulation period. heating and electricity are always present. cooling is present only when compute_cooling was true in the request solver. Reconciled from EnerPlanET's real v4 (2026-08-06) -- cooling was previously unconditionally required here.",
       "properties": {
         "heating":     { "$ref": "#/$defs/energy_summary" },
         "cooling":     { "$ref": "#/$defs/energy_summary" },
@@ -222,8 +223,8 @@
 
     "load_timeseries": {
       "type": "object",
-      "required": ["unit", "timestamps", "heating", "cooling", "electricity"],
-      "description": "Hourly timeseries arrays — only present when ?include_timeseries=true is passed to the endpoint. Unit applies to all three load arrays.",
+      "required": ["unit", "timestamps", "heating", "electricity"],
+      "description": "Hourly timeseries arrays — only present when ?include_timeseries=true is passed to the endpoint. Unit applies to all load arrays. cooling is present only when compute_cooling was true in the request solver. Reconciled from EnerPlanET's real v4 (2026-08-06) -- cooling was previously unconditionally required here.",
       "properties": {
         "unit": {
           "type": "string",
@@ -273,6 +274,16 @@
         "weather_year": {
           "type": "integer",
           "description": "Calendar year of the weather data used"
+        },
+        "simulations_run": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["heating", "cooling", "electricity"] },
+          "description": "Reconciled from EnerPlanET's real v4 (2026-08-06). Load types that were computed in this model run. heating and electricity are always present. cooling is present only when compute_cooling was true in the request."
+        },
+        "electricity_source": {
+          "type": "string",
+          "enum": ["model_generated", "client_provided"],
+          "description": "Reconciled from EnerPlanET's real v4 (2026-08-06). Whether the electricity load profile was generated by the occupancy model or supplied by the client in inputs.electricity_load_profile."
         },
         "parallel_thermal": {
           "type": "boolean",

@@ -66,19 +66,23 @@
     "buem": {
       "type": "object",
       "required": ["building"],
-      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. weather selects which real-world weather-module data source feeds the thermal model.",
+      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. inputs contains optional user-provided timeseries that override model-generated values. weather selects which real-world weather-module data source feeds the thermal model -- DRAFT v4 addition, not yet in EnerPlanET's own v4 (see DRAFT.md), layered alongside their real inputs/solver.compute_cooling additions reconciled into this draft on 2026-08-06.",
       "properties": {
         "building": { "$ref": "#/$defs/building" },
         "solver":   { "$ref": "#/$defs/solver" },
+        "inputs":   { "$ref": "#/$defs/inputs" },
         "weather":  { "$ref": "#/$defs/weather_source" }
       }
     },
 
     "building": {
       "type": "object",
-      "required": ["envelope"],
-      "description": "Complete physical description of the building. Classification fields (type, country, etc.) sit at this level. Geometry and per-element thermal properties are in envelope. Building-wide thermal parameters are in thermal.",
+      "description": "Complete physical description of the building. Classification fields (type, country, etc.) sit at this level. Geometry and per-element thermal properties are in envelope. Building-wide thermal parameters are in thermal. When envelope is omitted, the model derives surface areas and U-values from the TABULA variant identified by building_type + construction_period + country. Reconciled against EnerPlanET's real v4 (2026-08-06): envelope is no longer required for this reason -- see https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4.",
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable building label (e.g. '3434 · Single-family House'). Display only -- no effect on simulation. Reconciled from EnerPlanET's real v4 (2026-08-06)."
+        },
         "A_ref": {
           "allOf": [{ "$ref": "#/$defs/area_qty" }],
           "description": "Reference floor area. Derived from floor element areas if omitted.",
@@ -97,16 +101,26 @@
         "building_type": {
           "type": "string",
           "enum": ["SFH", "MFH", "TH", "AB", "supermarket", "office", "restaurant", "school", "hotel", "bakery", "warehouse", "clinic"],
-          "description": "DRAFT v4 change: enum added (v3 was a free-text string). TABULA residential size class (SFH single-family, MFH multi-family, AB apartment block, TH terraced house) or an occupancy service-building type id (supermarket, office, restaurant, school, hotel, bakery, warehouse, clinic). Determines whether internal-gains/electricity generation uses a household or service-building occupancy model."
+          "description": "DRAFT v4 change: enum added (v3 was a free-text string). Not present in EnerPlanET's real v4 (still free-text there as of 2026-08-06, https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4) -- this stays a buem-side proposal, not yet reconciled/agreed. TABULA residential size class (SFH single-family, MFH multi-family, AB apartment block, TH terraced house) or an occupancy service-building type id (supermarket, office, restaurant, school, hotel, bakery, warehouse, clinic). Determines whether internal-gains/electricity generation uses a household or service-building occupancy model."
         },
         "capacity": {
           "type": "integer",
           "minimum": 1,
-          "description": "DRAFT v4 addition (new optional field, additive). Service-building capacity (seats/beds/staff) for occupancy generation. Ignored for residential building_type values, where household size applies instead. Omit to use the service type's own default capacity."
+          "description": "DRAFT v4 addition (new optional field, additive). Not present in EnerPlanET's real v4 as of 2026-08-06 -- buem-side proposal, not yet reconciled/agreed. Service-building capacity (seats/beds/staff) for occupancy generation. Ignored for residential building_type values, where household size applies instead. Omit to use the service type's own default capacity."
+        },
+        "num_persons": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "DRAFT v4 addition (new optional field, additive, 2026-08-07). Not present in EnerPlanET's real v4 -- buem-side proposal, not yet reconciled/agreed. Household size passed to occupancy.HouseholdProfile. Ignored for service-building building_type values, where capacity applies instead. Omit to use cfg_attribute.DEFAULT_NUM_PERSONS."
+        },
+        "archetype": {
+          "type": "string",
+          "enum": ["generic", "working_couple", "family_with_children", "retired_single", "student_shared"],
+          "description": "DRAFT v4 addition (new optional field, additive, 2026-08-07). Not present in EnerPlanET's real v4 -- buem-side proposal, not yet reconciled/agreed. occupancy household archetype (occupancy.households.archetypes.HOUSEHOLD_ARCHETYPES), selecting the occupancy-probability schedule shape. Residential only -- ignored for service-building building_type values. Omit to use cfg_attribute.DEFAULT_ARCHETYPE_BY_BUILDING_TYPE.get(building_type, 'generic') -- a first-pass heuristic, not a derivation; num_persons remains the dominant signal."
         },
         "construction_period": {
           "type": "string",
-          "description": "Construction period range (e.g. 1965-1974)"
+          "description": "TABULA construction-year class code for the building's country (e.g. \"01\", \"02\"), not a literal year range. Class boundaries are defined per country by each national TABULA dataset and are not consistent across countries. When envelope is omitted, this is looked up directly against the TABULA variant code (<country>.N.<building_type>.<construction_period>...) -- there is no year-range-to-class translation. Reconciled from EnerPlanET's real v4 (2026-08-06); buem's own example data still uses an older year-range convention pending a check of what buem's own TABULA lookup actually parses -- not changed here, see DRAFT.md."
         },
         "country": {
           "type": "string",
@@ -155,6 +169,10 @@
           "type": "string",
           "minLength": 1,
           "description": "User-defined unique identifier for this surface element"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable label for this surface (e.g. 'South Facade', 'Main Roof'). Display only -- no effect on simulation. Reconciled from EnerPlanET's real v4 (2026-08-06)."
         },
         "type": {
           "type": "string",
@@ -275,16 +293,18 @@
         },
         "phi_int": {
           "allOf": [{ "$ref": "#/$defs/measurement" }],
-          "description": "Specific internal heat gains from occupants and appliances — TABULA: phi_int",
+          "description": "Internal heat gains from occupants, appliances, and lighting per unit floor area. Used in the ISO 13790 energy balance as a heat source that reduces heating demand and increases cooling demand. TABULA: phi_int. Typical residential: 3-5 W/m2. Default/description reconciled from EnerPlanET's real v4 (2026-08-06) -- previously had no default here.",
+          "default": { "value": 3.0, "unit": "W/m2" },
           "properties": {
             "unit": { "enum": ["W/m2"], "default": "W/m2" }
           }
         },
         "q_w_nd": {
           "allOf": [{ "$ref": "#/$defs/measurement" }],
-          "description": "Specific annual hot-water energy demand — TABULA: q_w_nd",
+          "description": "Net energy need for domestic hot water per unit floor area per year. Added to the heating energy need in the final energy balance. TABULA: q_w_nd. Typical residential: ~12.5 kWh/(m2.a). Unit fixed 2026-08-06: was \"kWh/(m2a)\" (no dot), which didn't match EnerPlanET's real v4 -- a real EnerPlanET request using their own documented unit string would have failed validation against this draft. Now matches theirs exactly.",
+          "default": { "value": 12.5, "unit": "kWh/(m2.a)" },
           "properties": {
-            "unit": { "enum": ["kWh/(m2a)"], "default": "kWh/(m2a)" }
+            "unit": { "enum": ["kWh/(m2.a)"], "default": "kWh/(m2.a)" }
           }
         },
         "F_red_htr": {
@@ -297,7 +317,7 @@
 
     "weather_source": {
       "type": "object",
-      "description": "DRAFT v4 addition. Selects the real-world weather-module data source (T/GHI/DHI/DNI) for this building's location -- see UU-BUEM/weather. buem has no bundled/local-file weather fallback; every request is served by a real per-location fetch.",
+      "description": "DRAFT v4 addition. Not present in EnerPlanET's real v4 as of 2026-08-06 (https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4) -- their schema resolves weather from geometry.coordinates alone (\"used for weather station lookup\"), with no client-specified provider/year/percentile. This stays a buem-side proposal, not yet reconciled/agreed. Selects the real-world weather-module data source (T/GHI/DHI/DNI) for this building's location -- see UU-BUEM/weather. buem has no bundled/local-file weather fallback; every request is served by a real per-location fetch. year and use_percentile/percentile are alternative ways to pick which year's data is used -- see each field's own description for how they interact.",
       "properties": {
         "provider": {
           "type": "string",
@@ -309,19 +329,35 @@
           "type": "integer",
           "minimum": 1940,
           "maximum": 2100,
-          "description": "Calendar year to fetch weather for. Defaults to the top-level start_time's calendar year when omitted."
+          "description": "Calendar year to fetch weather for. Defaults to the top-level start_time's calendar year when omitted. Ignored if use_percentile is true -- percentile selects the year instead."
+        },
+        "use_percentile": {
+          "type": "boolean",
+          "default": false,
+          "description": "DRAFT v4 addition (2026-08-06). If true, select weather from a percentile climate year (see percentile) computed across the provider's full multi-year archive at this location, instead of the single specific year field. Schema-only so far, same as weather_source itself was initially -- not yet wired through buem's request-handling path; see DRAFT.md."
+        },
+        "percentile": {
+          "type": "string",
+          "enum": ["P10", "P50", "P90"],
+          "default": "P50",
+          "description": "DRAFT v4 addition (2026-08-06). Which percentile climate year to use when use_percentile is true, ranked across the provider's available archive years for this location: P10 a cold/harsh-end year, P50 a typical/median year, P90 a mild/warm-end year. Ignored when use_percentile is false or omitted."
         }
       }
     },
 
     "solver": {
       "type": "object",
-      "description": "Execution settings for the BUEM thermal solver. These control how the model runs, not what it simulates.",
+      "description": "Execution settings for the BUEM thermal solver. These control how the model runs and what it simulates.",
       "properties": {
         "use_milp": {
           "type": "boolean",
           "default": false,
           "description": "Use Mixed Integer Linear Programming solver (CVXPY + CBC) instead of the default scipy sparse solver. Slower but handles inequality constraints exactly."
+        },
+        "compute_cooling": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reconciled from EnerPlanET's real v4 (2026-08-06). Enforce the upper comfort temperature bound in the LP solver. When false (default), the cooling constraint is omitted -- appropriate for buildings without active cooling, common in northern European residential buildings. When true, building.thermal.comfortT_ub is required and a cooling load profile is returned in the response."
         },
         "parallel_thermal": {
           "type": "boolean",
@@ -332,6 +368,30 @@
           "type": "boolean",
           "default": true,
           "description": "Process the 8760-hour timeseries in chunks to limit memory usage"
+        }
+      }
+    },
+
+    "inputs": {
+      "type": "object",
+      "description": "Reconciled from EnerPlanET's real v4 (2026-08-06, https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4). Optional user-provided timeseries inputs. When a field is present, it overrides the model-generated equivalent. When absent, the model generates the value from occupancy simulation.",
+      "properties": {
+        "electricity_load_profile": {
+          "type": "object",
+          "required": ["path"],
+          "description": "Hourly electricity consumption profile for the building, referenced by file path. The file must be accessible inside the model container -- use the shared Docker volume (BUEM_DATA_DIR) to make client files available. When provided, the profile is used directly as the internal heat gain input instead of the model-generated occupancy-based profile. Electricity consumption heats the building interior and therefore affects heating and cooling demand. Supported formats: CSV (single column of values), JSON array, or gzipped JSON (.gz).",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute path to the profile file inside the container (e.g. /data/profiles/5.3453464_52.4353446_electricity_2018.csv)"
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["kWh", "Wh", "kW"],
+              "default": "kWh",
+              "description": "Unit of the values in the file. Defaults to kWh when omitted."
+            }
+          }
         }
       }
     },

@@ -23,10 +23,18 @@ mapping
 ^^^^^^^
 Orchestration of the LOD2 + TABULA pipeline:
 
-- ``lod2_mapper.LOD2Mapper`` — main pipeline entry point
-- ``wall_classifier.SharedWallDetector`` — party wall detection
-- ``element_factory`` — window, door, ventilation element creation
-- ``tabula_helpers`` — TABULA variant selection, window ratios, safe numerics
+- ``lod2_mapper.LOD2Mapper`` — main pipeline entry point (offline
+  Excel/PostgreSQL batch pipeline)
+- ``wall_classifier.SharedWallDetector`` — party wall detection (offline
+  pipeline only — needs a full cross-building surface table)
+- ``element_factory`` — ``WallInfo``, front/back wall identification, and
+  window/door/ventilation element creation — shared by both the offline
+  pipeline and the live request-handling path below
+- ``tabula_helpers`` — TABULA variant selection, window ratios, safe
+  numerics, and archetype lookup-by-match (for the live path)
+- ``live_synthesis`` — internal LOD2 → LOD3 synthesis for the live
+  request-handling path (no attached LOD2 surface table); see
+  :ref:`buildings-live-path` below
 
 datasources
 ^^^^^^^^^^^
@@ -35,6 +43,58 @@ Data ingestion from PostgreSQL (``pg_source``) or Excel (``excel_source``).
 generator
 ^^^^^^^^^
 v3 GeoJSON file writer (``json_generator``).
+
+
+.. _buildings-live-path:
+
+LOD2 → LOD3 in the live request-handling path
+-----------------------------------------------
+
+Everything documented on this page was originally written for the *offline*
+Excel/PostgreSQL batch pipeline (``LOD2Mapper`` above, run via
+``python -m buem.buildings.pipeline``). EnerPlanET's API contract
+deliberately does **not** require window/door/ventilation ("LOD3") detail
+from a client — their UI avoids asking general users to fill it in — so
+buem must compute it internally whenever a caller (a live API request,
+buem's own module-level config default, or a direct ``CfgBuilding``/
+``AttributeBuilder`` call) supplies wall/roof/floor ("LOD2") geometry
+without it.
+
+``buem.buildings.mapping.live_synthesis.synthesize_missing_openings()``
+applies the *same* documented rules on this page (front/back wall
+identification, proportional window/door ratios, ventilation opening
+sizing) to that geometry, reusing
+:func:`~buem.buildings.mapping.element_factory.synthesize_openings` — the
+one function both this offline pipeline and the live path call. It is
+wired into ``CfgBuilding.to_cfg_dict()``, the single point both the live
+API path (``AttributeBuilder`` → ``CfgBuilding``) and the config-only path
+converge on, so both are covered uniformly. Three differences from the
+offline pipeline, each a consequence of not having a full per-building
+LOD2 surface table available for a single-building request:
+
+- **Party (shared) wall detection** uses each wall's own
+  ``b_transmission == 0`` instead of cross-building ``surface_feature_id``
+  matching — see "Party (Shared) Walls" below; the resulting rule (no
+  windows/doors/ventilation on shared walls) is identical.
+- **The TABULA archetype is *matched*, not looked up by a per-building
+  foreign key**: from ``building_type`` + ``construction_period`` +
+  ``country`` (already forwarded end-to-end from a real v3 API request —
+  see ``CLAUDE.md`` "v2 vs v3/v4 request formats"), or an explicit
+  ``bldg_tabula_id`` override, via
+  :func:`~buem.buildings.mapping.tabula_helpers.lookup_tabula_archetype`
+  against the same bundled TABULA reference sheet
+  (``tabula_building_child_features.xlsx``, currently ``Code_Country ==
+  "DE"`` only).
+- **No match falls back to documented safe-default ratios** (below)
+  instead of failing — windows measurably affect heat loss/gain even at a
+  modest share of envelope area, so buem always synthesizes something
+  physically plausible rather than leaving a building with zero glazing.
+  A ``logging.warning`` names exactly which component(s) were filled this
+  way, so it is visible, not silent.
+
+An explicitly-supplied, non-empty ``Windows``/``Doors``/``Ventilation``
+component is never overridden — EnerPlanET "can provide [LOD3 detail]...
+but does not have to".
 
 
 .. _buildings-assumptions:
@@ -267,6 +327,20 @@ Thermal Properties
    * - Missing TABULA values use safe defaults: ``n_air_infiltration`` = 0.5 1/h,
        ``n_air_use`` = 0.5 1/h, ``c_m`` = 165 kJ/(m²K), ``h_room`` = 2.5 m
      - ISO 13790 / TABULA typical values for existing residential buildings.
+
+   * - **Live request-handling path only** (see
+       :ref:`buildings-live-path`): when no TABULA archetype can be matched
+       for a caller-supplied ``building_type``/``construction_period``/
+       ``country``, window/door/ventilation sizing falls back to a flat
+       15 % window-to-wall ratio per cardinal direction, a 5 % door-to-wall
+       ratio, ``U_Window`` = 2.8 W/(m²K), ``g_gl`` = 0.5, ``U_Door`` =
+       3.0 W/(m²K), ``n_air_use`` = 0.5 1/h
+     - Not TABULA-derived — a first-pass heuristic, logged as a warning
+       naming the affected component(s) rather than applied silently. 15 %
+       sits mid-range for existing European residential stock (the bundled
+       TABULA archetypes here run roughly 8–25 % depending on era/type);
+       the door ratio gives a ~2 m² door on a typical ~40 m² front wall.
+       See ``buem.buildings.mapping.live_synthesis``.
 
    * - ``phi_int`` — specific internal heat gains [W/m²] from TABULA
      - Per-typology internal gains (occupants + appliances).  ``None`` when not

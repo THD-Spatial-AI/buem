@@ -8,22 +8,22 @@ from typing import Any
 
 import pandas as pd
 
-from buem.config.cfg_attribute import ATTRIBUTE_SPECS, RESIDENTIAL_BUILDING_TYPES
+from buem.config.cfg_attribute import (
+    ATTRIBUTE_SPECS,
+    DEFAULT_ARCHETYPE_BY_BUILDING_TYPE,
+    RESIDENTIAL_BUILDING_TYPES,
+)
 from buem.config.validator import validate_cfg
 from buem.config.weather_cache import get_or_fetch_weather
 
-# occupancy is an optional independent package (https://github.com/UU-BUEM/occupancy)
-# Install with: pip install buem[occupancy]  (or `pip install occupancy` directly)
-try:
-    from occupancy import (  # type: ignore[import]
-        ElectricityConsumptionProfile,
-        HouseholdProfile,
-        ServiceBuildingProfile,
-        to_buem_profiles,
-    )
-    _OCCUPANCY_AVAILABLE = True
-except ImportError:
-    _OCCUPANCY_AVAILABLE = False
+# occupancy (https://github.com/UU-BUEM/occupancy) is compulsory (2026-08-07),
+# same treatment as weather -- imported unconditionally like pandas/pvlib.
+from occupancy import (  # type: ignore[import]
+    ElectricityConsumptionProfile,
+    HouseholdProfile,
+    ServiceBuildingProfile,
+    to_buem_profiles,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,16 +204,23 @@ class AttributeBuilder:
         seed = self.merged_attrs.get("seed", ATTRIBUTE_SPECS["seed"].default)
 
         try:
-            # Generate profile
-            if not _OCCUPANCY_AVAILABLE:
-                raise ImportError(
-                    "occupancy package is required for electricity profile generation. "
-                    "Install it with: pip install buem[occupancy]"
-                )
+            # floor_area_m2 for occupancy's area-normalized gain component
+            # (occupancy_gains_handoff.md Gap 1) -- residential only stays
+            # None: household archetypes deliberately carry no gain_w_per_m2
+            # (occupancy's own CHANGELOG), so passing a floor area there
+            # would just raise. Non-residential resolves it below.
+            floor_area_m2: float | None = None
 
             if building_type in RESIDENTIAL_BUILDING_TYPES:
                 num_persons = int(self.merged_attrs.get("num_persons", ATTRIBUTE_SPECS["num_persons"].default))
-                household = HouseholdProfile(num_persons=num_persons, year=weather_year, seed=seed)
+                # Archetype: explicit caller value wins; otherwise a first-pass
+                # building_type-based default (see DEFAULT_ARCHETYPE_BY_BUILDING_TYPE's
+                # docstring in cfg_attribute.py for the caveats), falling back to
+                # occupancy's own "generic" for anything unmapped.
+                archetype = self.merged_attrs.get("archetype") or DEFAULT_ARCHETYPE_BY_BUILDING_TYPE.get(
+                    building_type, "generic"
+                )
+                household = HouseholdProfile(num_persons=num_persons, year=weather_year, seed=seed, archetype=archetype)
                 elec_gen = ElectricityConsumptionProfile(household, seed=seed)
                 result = elec_gen.to_result()
             else:
@@ -239,8 +246,17 @@ class AttributeBuilder:
                         "occupancy service-building type."
                     ) from exc
                 result = service.to_result()
+                # A_ref is in REQUIRED_FROM_CALLER, so merged_attrs always has a
+                # real value here -- but it may still be the flat 100.0
+                # placeholder `_convert_v3_to_v2` substitutes when a v3 client
+                # omits A_ref (see .claude/open.md's "A_ref fallback" bug note),
+                # not the true geometry-derived floor area CfgBuilding computes
+                # afterwards. All 8 service-building types now carry a
+                # gain_w_per_m2 (occupancy CHANGELOG [Unreleased]), so this is
+                # safe to pass unconditionally for the service-building branch.
+                floor_area_m2 = float(self.merged_attrs.get("A_ref", ATTRIBUTE_SPECS["A_ref"].default))
 
-            buem_inputs = to_buem_profiles(result)
+            buem_inputs = to_buem_profiles(result, floor_area_m2=floor_area_m2)
 
             # Align index with weather (8760 hourly points)
             if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:

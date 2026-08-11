@@ -36,20 +36,23 @@ Front / back wall identification
 After filtering out party walls, the **front wall** is the exposed wall with the
 largest area.  The **back wall** is the exposed wall whose azimuth is closest
 to 180° opposite the front wall's azimuth (within a 90° tolerance; if no
-candidate is close enough, there is no back wall).
+candidate is close enough, there is no back wall).  See
+:func:`~buem.buildings.mapping.element_factory.identify_front_back`.
 
 Window / door / ventilation sizing
 -----------------------------------
 Window and door areas are **proportional** to actual LOD2 wall areas via TABULA
 ratios.  Ventilation openings (1.0 m² front, 0.5 m² back) are capped at 10 %
 of wall area and subtracted from the wall's opaque area.  See
-:mod:`~buem.buildings.mapping.element_factory` for details.
+:func:`~buem.buildings.mapping.element_factory.synthesize_openings` — this
+same function (and the same documented rules) also drives the live
+request-handling path when a caller doesn't supply its own window/door/
+ventilation detail; see :mod:`buem.buildings.mapping.live_synthesis`.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Protocol
 
 import pandas as pd
@@ -57,14 +60,11 @@ import pandas as pd
 from buem.buildings.building import Building, BuildingIdentity, ThermalProperties
 from buem.buildings.components.base import EnvelopeElement
 from buem.buildings.mapping.element_factory import (
-    assign_vent_areas,
-    create_door,
-    create_ventilation,
-    create_windows,
+    WallInfo,
+    identify_front_back,
+    synthesize_openings,
 )
 from buem.buildings.mapping.tabula_helpers import (
-    azimuth_diff,
-    azimuth_to_direction,
     compute_window_ratios,
     safe_series_float,
     select_primary_variant,
@@ -78,11 +78,6 @@ logger = logging.getLogger(__name__)
 OBJECTCLASS_WALL = 709
 OBJECTCLASS_GROUND = 710
 OBJECTCLASS_ROOF = 712
-
-# Maximum acceptable angular deviation (°) between a candidate back wall and
-# the ideal opposite azimuth.  Beyond this threshold no true back wall exists
-# (all exposed surfaces face roughly the same way → no cross-ventilation).
-_BACK_WALL_ANGLE_LIMIT = 90.0
 
 
 class BuildingSource(Protocol):
@@ -100,26 +95,6 @@ class BuildingSource(Protocol):
     def get_surfaces_for_building(self, building_feature_id: int) -> pd.DataFrame: ...
 
     def get_tabula_row(self, tabula_id: float) -> pd.Series | None: ...
-
-
-@dataclass
-class _WallInfo:
-    """Internal record for a classified wall surface."""
-
-    wall_id: str
-    surface_feature_id: int
-    area: float
-    azimuth: float
-    is_shared: bool
-    direction: str = ""       # cardinal direction (north/east/south/west)
-    window_area: float = 0.0  # proportional window area placed on this wall
-    door_area: float = 0.0    # proportional door area placed on this wall
-    vent_area: float = 0.0    # ventilation opening area on this wall
-
-    @property
-    def net_area(self) -> float:
-        """Opaque wall area after subtracting windows, doors, and vent openings."""
-        return max(0.0, self.area - self.window_area - self.door_area - self.vent_area)
 
 
 class LOD2Mapper:
@@ -201,24 +176,30 @@ class LOD2Mapper:
         )
 
         # 7. Identify front wall (largest exposed) and back wall (opposite)
-        front_wall, back_wall = self._identify_front_back(exposed_walls)
+        front_wall, back_wall = identify_front_back(exposed_walls)
 
-        # 8. Compute proportional window/door areas on each exposed wall
+        # 8. Compute proportional window/door ratios from TABULA, then
+        #    synthesize window/door/ventilation elements (shared with the
+        #    live request-handling path — see element_factory.synthesize_openings).
         a_wall_1 = safe_series_float(tabula_row, "A_Wall_1", 0.0)
         win_ratios = compute_window_ratios(tabula_row, a_wall_1)
         door_ratio = (
             safe_series_float(tabula_row, "A_Door_1", 0.0) / a_wall_1
             if a_wall_1 > 0 else 0.0
         )
+        horizontal = safe_series_float(tabula_row, "A_Window_Horizontal", 0.0)
+        n_air_use = safe_series_float(tabula_row, "n_air_use", 0.5)
 
-        for w in exposed_walls:
-            w.direction = azimuth_to_direction(w.azimuth)
-            w.window_area = win_ratios.get(w.direction, 0.0) * w.area
-        if front_wall is not None:
-            front_wall.door_area = door_ratio * front_wall.area
-
-        # Assign ventilation opening areas to front/back walls
-        assign_vent_areas(front_wall, back_wall)
+        opening_elements = synthesize_openings(
+            exposed_walls, front_wall, back_wall,
+            window_ratios=win_ratios,
+            door_ratio=door_ratio,
+            window_U=window_U,
+            window_g_gl=window_g_gl,
+            door_U=door_U,
+            n_air_use=n_air_use,
+            horizontal_window_area=horizontal,
+        )
 
         # 9. Build envelope elements
         #    (steps 10-12 follow below: identity, thermal, A_ref)
@@ -272,30 +253,8 @@ class LOD2Mapper:
                 b_transmission=floor_b,
             ))
 
-        # --- windows (proportional, only on exposed walls) ---
-        elements.extend(create_windows(exposed_walls, window_U, window_g_gl))
-
-        # Horizontal / skylight windows from TABULA (independent of walls)
-        horizontal = safe_series_float(tabula_row, "A_Window_Horizontal", 0.0)
-        if horizontal > 0:
-            elements.append(EnvelopeElement(
-                id="win_horizontal",
-                element_type="window",
-                area=horizontal,
-                azimuth=0.0,
-                tilt=0.0,
-                U=window_U,
-                g_gl=window_g_gl,
-            ))
-
-        # --- door (proportional, on front wall) ---
-        door_elem = create_door(front_wall, door_U)
-        if door_elem is not None:
-            elements.append(door_elem)
-
-        # --- ventilation (front wall + back wall) ---
-        n_air_use = safe_series_float(tabula_row, "n_air_use", 0.5)
-        elements.extend(create_ventilation(front_wall, back_wall, n_air_use))
+        # --- windows, door, ventilation (computed together in step 8 above) ---
+        elements.extend(opening_elements)
 
         # 10. Build identity
         building_type = self._extract_building_type(tabula_row)
@@ -382,14 +341,14 @@ class LOD2Mapper:
 
     # ── wall classification ──────────────────────────────────────────────────
 
-    def _classify_walls(self, walls_df: pd.DataFrame) -> list[_WallInfo]:
+    def _classify_walls(self, walls_df: pd.DataFrame) -> list[WallInfo]:
         """Classify each wall as shared (party) or exposed using surface_feature_id.
 
-        Returns a list of ``_WallInfo`` in the same iteration order as the
+        Returns a list of ``WallInfo`` in the same iteration order as the
         input DataFrame, with sequential IDs ``wall_1``, ``wall_2``, etc.
         Logs a warning when an exposed wall has a negative (unknown) azimuth.
         """
-        result: list[_WallInfo] = []
+        result: list[WallInfo] = []
         for idx, (_, row) in enumerate(walls_df.iterrows(), start=1):
             sfid = int(row["surface_feature_id"])
             raw_az = row["azimuth"]
@@ -410,7 +369,7 @@ class LOD2Mapper:
                         idx, sfid, float(raw_az),
                     )
 
-            result.append(_WallInfo(
+            result.append(WallInfo(
                 wall_id=f"wall_{idx}",
                 surface_feature_id=sfid,
                 area=float(row["surface_area"]),
@@ -418,51 +377,6 @@ class LOD2Mapper:
                 is_shared=is_shared,
             ))
         return result
-
-    # ── front / back wall identification ─────────────────────────────────────
-
-    @staticmethod
-    def _identify_front_back(
-        exposed_walls: list[_WallInfo],
-    ) -> tuple[_WallInfo | None, _WallInfo | None]:
-        """Identify the front wall (largest exposed) and the back wall (opposite).
-
-        The front wall is the exposed wall with the largest area.
-        The back wall is the exposed wall whose azimuth is closest to 180°
-        from the front wall's azimuth (i.e. facing the opposite direction).
-        If only one exposed wall exists, it serves as both front and back.
-
-        Returns
-        -------
-        (front_wall, back_wall) — either may be ``None`` if no exposed walls.
-        """
-        if not exposed_walls:
-            return None, None
-
-        # Front wall = largest area among exposed walls
-        front = max(exposed_walls, key=lambda w: w.area)
-
-        if len(exposed_walls) == 1:
-            return front, front
-
-        # Back wall = closest to 180° opposite front azimuth, within threshold
-        opposite_az = (front.azimuth + 180.0) % 360.0
-        best_back: _WallInfo | None = None
-        best_delta = float("inf")
-        for w in exposed_walls:
-            if w.wall_id == front.wall_id:
-                continue
-            delta = abs(azimuth_diff(w.azimuth, opposite_az))
-            if delta < best_delta:
-                best_delta = delta
-                best_back = w
-
-        # Only accept the candidate if it is within the angular limit;
-        # otherwise there is no true opposite wall for cross-ventilation.
-        if best_delta > _BACK_WALL_ANGLE_LIMIT:
-            best_back = None
-
-        return front, best_back
 
     # ── generic helpers ──────────────────────────────────────────────────────
 

@@ -23,6 +23,7 @@ import pytest
 project_root = Path(__file__).resolve().parent.parent
 os.environ.setdefault("BUEM_WEATHER_DIR", str(project_root / "src" / "buem" / "data" / "weather"))
 
+from buem.config.cfg_attribute import RESIDENTIAL_BUILDING_TYPES
 from buem.config.cfg_attribute import cfg as DEFAULT_CFG
 from buem.config.cfg_building import CfgBuilding
 from buem.integration.scripts.attribute_builder import AttributeBuilder
@@ -92,3 +93,37 @@ def test_time_varying_comfort_bounds_change_heating_shape():
 
     assert not np.allclose(model_series.heating_load, model_scalar.heating_load)
     assert model_series.heating_load[night_mask].sum() <= model_scalar.heating_load[night_mask].sum()
+
+
+def test_v4_building_type_enum_matches_occupancy():
+    """Drift guard for occupancy_gains_handoff.md's Gap 3 (registry
+    duplication risk): versions/v4/request_schema.json's building_type
+    enum hand-copies occupancy's service-building type ids (JSON Schema is
+    static, so it can't import them at load time). occupancy.
+    SERVICE_BUILDING_TYPES is the real, top-level, live source of truth
+    (promoted there 2026-08-07 specifically for this); this test fails
+    loudly the moment the two fall out of sync, instead of the enum
+    silently going stale."""
+    import occupancy
+
+    schema_path = (
+        project_root
+        / "src"
+        / "buem"
+        / "integration"
+        / "json_schema"
+        / "versions"
+        / "v4"
+        / "request_schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    enum_values = set(
+        schema["$defs"]["building"]["properties"]["building_type"]["enum"]
+    )
+    service_type_values = enum_values - RESIDENTIAL_BUILDING_TYPES
+    assert service_type_values == set(occupancy.SERVICE_BUILDING_TYPES), (
+        "versions/v4/request_schema.json's building_type enum has drifted "
+        "from occupancy.SERVICE_BUILDING_TYPES -- update the enum (and its "
+        "description) in request_schema.json to match, and note the change "
+        "in DRAFT.md."
+    )

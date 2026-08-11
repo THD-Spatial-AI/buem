@@ -5,6 +5,17 @@ Extracted from ``lod2_mapper.py`` to keep the mapper focused on orchestration.
 Each factory function receives pre-classified wall information and TABULA
 parameters, and returns ready-to-use ``EnvelopeElement`` instances.
 
+``WallInfo``, ``identify_front_back``, and ``synthesize_openings`` here are
+source-agnostic: they operate on plain wall geometry (area/azimuth/
+is_shared), not on a pandas DataFrame or a specific TABULA row. This is what
+lets :func:`synthesize_openings` serve both :class:`~buem.buildings.mapping.
+lod2_mapper.LOD2Mapper` (real per-building LOD2 + TABULA data, the offline
+Excel/PostgreSQL batch pipeline) and the live request-handling path
+(:mod:`buem.buildings.mapping.live_synthesis`, wall geometry from an
+EnerPlanET API request or buem's own config, no attached LOD2 surface
+table) — see ``docs/source/modules/buildings.rst`` for the documented
+sizing rules both paths implement identically.
+
 Ventilation opening sizes
 -------------------------
 .. data:: VENT_AREA_FRONT
@@ -16,12 +27,90 @@ Ventilation opening sizes
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
 from buem.buildings.components.base import EnvelopeElement
+from buem.buildings.mapping.tabula_helpers import azimuth_diff, azimuth_to_direction
 
-if TYPE_CHECKING:
-    from buem.buildings.mapping.lod2_mapper import _WallInfo
+# ── shared wall-geometry record ──────────────────────────────────────────────
+
+# Maximum acceptable angular deviation (°) between a candidate back wall and
+# the ideal opposite azimuth.  Beyond this threshold no true back wall exists
+# (all exposed surfaces face roughly the same way → no cross-ventilation).
+_BACK_WALL_ANGLE_LIMIT = 90.0
+
+
+@dataclass
+class WallInfo:
+    """Source-agnostic record for a single exterior/shared wall.
+
+    Built by :class:`~buem.buildings.mapping.lod2_mapper.LOD2Mapper` from
+    per-building LOD2 surfaces (party-wall status via cross-building
+    ``surface_feature_id`` matching), and by
+    :mod:`buem.buildings.mapping.live_synthesis` from a caller-supplied
+    ``components.Walls.elements`` list (party-wall status inferred from each
+    wall's own ``b_transmission == 0`` — see buildings.rst "Party (Shared)
+    Walls").
+    """
+
+    wall_id: str
+    surface_feature_id: int
+    area: float
+    azimuth: float
+    is_shared: bool
+    direction: str = ""       # cardinal direction (north/east/south/west)
+    window_area: float = 0.0  # proportional window area placed on this wall
+    door_area: float = 0.0    # proportional door area placed on this wall
+    vent_area: float = 0.0    # ventilation opening area on this wall
+
+    @property
+    def net_area(self) -> float:
+        """Opaque wall area after subtracting windows, doors, and vent openings."""
+        return max(0.0, self.area - self.window_area - self.door_area - self.vent_area)
+
+
+def identify_front_back(
+    exposed_walls: list[WallInfo],
+) -> tuple[WallInfo | None, WallInfo | None]:
+    """Identify the front wall (largest exposed) and the back wall (opposite).
+
+    The front wall is the exposed wall with the largest area.
+    The back wall is the exposed wall whose azimuth is closest to 180°
+    from the front wall's azimuth (i.e. facing the opposite direction).
+    If only one exposed wall exists, it serves as both front and back.
+
+    Returns
+    -------
+    (front_wall, back_wall) — either may be ``None`` if no exposed walls.
+    """
+    if not exposed_walls:
+        return None, None
+
+    # Front wall = largest area among exposed walls
+    front = max(exposed_walls, key=lambda w: w.area)
+
+    if len(exposed_walls) == 1:
+        return front, front
+
+    # Back wall = closest to 180° opposite front azimuth, within threshold
+    opposite_az = (front.azimuth + 180.0) % 360.0
+    best_back: WallInfo | None = None
+    best_delta = float("inf")
+    for w in exposed_walls:
+        if w.wall_id == front.wall_id:
+            continue
+        delta = abs(azimuth_diff(w.azimuth, opposite_az))
+        if delta < best_delta:
+            best_delta = delta
+            best_back = w
+
+    # Only accept the candidate if it is within the angular limit;
+    # otherwise there is no true opposite wall for cross-ventilation.
+    if best_delta > _BACK_WALL_ANGLE_LIMIT:
+        best_back = None
+
+    return front, best_back
+
 
 # ── ventilation opening constants ────────────────────────────────────────────
 
@@ -33,8 +122,8 @@ MIN_WALL_AREA_FOR_WINDOWS = 5.0  # m² — walls smaller than this do not receiv
 
 
 def assign_vent_areas(
-    front_wall: _WallInfo | None,
-    back_wall: _WallInfo | None,
+    front_wall: WallInfo | None,
+    back_wall: WallInfo | None,
 ) -> None:
     """Assign ventilation opening areas to front and back walls in-place.
 
@@ -50,7 +139,7 @@ def assign_vent_areas(
 
 
 def create_windows(
-    exposed_walls: list[_WallInfo],
+    exposed_walls: list[WallInfo],
     window_U: float,
     window_g_gl: float,
 ) -> list[EnvelopeElement]:
@@ -92,7 +181,7 @@ def create_windows(
 
 
 def create_door(
-    front_wall: _WallInfo | None,
+    front_wall: WallInfo | None,
     door_U: float,
 ) -> EnvelopeElement | None:
     """Create a door element on the front wall.
@@ -114,8 +203,8 @@ def create_door(
 
 
 def create_ventilation(
-    front_wall: _WallInfo | None,
-    back_wall: _WallInfo | None,
+    front_wall: WallInfo | None,
+    back_wall: WallInfo | None,
     n_air_use: float,
 ) -> list[EnvelopeElement]:
     """Create ventilation elements on the front and back walls.
@@ -175,5 +264,76 @@ def create_ventilation(
             air_changes=n_air_use,
             surface=front_wall.wall_id,
         ))
+
+    return elements
+
+
+def synthesize_openings(
+    exposed_walls: list[WallInfo],
+    front_wall: WallInfo | None,
+    back_wall: WallInfo | None,
+    *,
+    window_ratios: dict[str, float],
+    door_ratio: float,
+    window_U: float,
+    window_g_gl: float,
+    door_U: float,
+    n_air_use: float,
+    horizontal_window_area: float = 0.0,
+) -> list[EnvelopeElement]:
+    """Compute proportional window/door/ventilation areas and build elements.
+
+    Single entry point for the documented Window/Door/Ventilation sizing
+    rules (``docs/source/modules/buildings.rst``): applies the per-direction
+    window ratio and door ratio to each wall, assigns ventilation opening
+    areas, then builds the window/door/ventilation ``EnvelopeElement``
+    list — identically for :class:`~buem.buildings.mapping.lod2_mapper.
+    LOD2Mapper` (extracted from here, previously inline in
+    ``LOD2Mapper.map_building``) and for
+    :mod:`buem.buildings.mapping.live_synthesis`.
+
+    Mutates each wall's ``direction``/``window_area``/``door_area``/
+    ``vent_area`` in place (callers that also need the resulting opaque
+    ``net_area`` — e.g. to shrink a wall element's area by its openings —
+    read it off the same ``WallInfo`` objects afterwards).
+
+    Parameters
+    ----------
+    window_ratios : dict
+        ``{"north": ratio, "east": ratio, "south": ratio, "west": ratio}``,
+        each ``A_Window_<Direction> / A_Wall_1`` (real TABULA) or a
+        documented safe-default ratio.
+    door_ratio : float
+        ``A_Door_1 / A_Wall_1`` (real TABULA) or a documented safe default.
+    horizontal_window_area : float
+        Skylight/horizontal window area, independent of wall geometry
+        (TABULA ``A_Window_Horizontal``). ``0`` when not available.
+    """
+    for w in exposed_walls:
+        w.direction = azimuth_to_direction(w.azimuth)
+        w.window_area = window_ratios.get(w.direction, 0.0) * w.area
+    if front_wall is not None:
+        front_wall.door_area = door_ratio * front_wall.area
+
+    assign_vent_areas(front_wall, back_wall)
+
+    elements: list[EnvelopeElement] = list(create_windows(exposed_walls, window_U, window_g_gl))
+
+    if horizontal_window_area > 0:
+        elements.append(EnvelopeElement(
+            id="win_horizontal",
+            element_type="window",
+            area=horizontal_window_area,
+            azimuth=0.0,
+            tilt=0.0,
+            U=window_U,
+            g_gl=window_g_gl,
+        ))
+
+    door_elem = create_door(front_wall, door_U)
+    if door_elem is not None:
+        elements.append(door_elem)
+
+    elements.extend(create_ventilation(front_wall, back_wall, n_air_use))
 
     return elements

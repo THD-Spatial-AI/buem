@@ -673,9 +673,17 @@ class GeoJsonValidator:
         if 'g_gl' in win_comp:
             building_attributes['g_gl_n_Window'] = win_comp['g_gl']
         
-        # Optional building metadata
+        # Optional building metadata. capacity/num_persons/archetype forward
+        # occupancy generation inputs (occupancy_gains_handoff.md Gap 2,
+        # 2026-08-07) -- AttributeBuilder.generate_electricity_profile()
+        # already reads all three from merged_attrs and does its own
+        # int() casts on capacity/num_persons, so a plain passthrough here
+        # is sufficient. seed is deliberately NOT forwarded: it's an
+        # internal reproducibility knob, not part of the EnerPlanET
+        # request contract -- see CLAUDE.md "Occupancy is compulsory".
         for key in ('building_type', 'construction_period', 'country', 'n_storeys',
-                    'neighbour_status', 'attic_condition', 'cellar_condition'):
+                    'neighbour_status', 'attic_condition', 'cellar_condition',
+                    'capacity', 'num_persons', 'archetype'):
             if key in building:
                 building_attributes[key] = building[key]
         

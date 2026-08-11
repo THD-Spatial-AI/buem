@@ -48,6 +48,7 @@ dependencies = [
     "pvlib",
     "pyarrow",
     "python-dotenv",
+    "requests",  # weather_cache.py's optional remote (WEATHER_API_URL) fetch backend
     "scipy",
     # weather: https://github.com/UU-BUEM/weather -- compulsory (2026-08-03): all
     # solar/T/GHI/DHI/DNI attributes come from this package's real per-location
@@ -55,17 +56,16 @@ dependencies = [
     # git reference (PEP 508), tracked at @main -- see infrastructure/env/
     # buem_env.yml's header comment for the reproducibility trade-off.
     "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main",
+    # occupancy: https://github.com/UU-BUEM/occupancy -- compulsory (2026-08-07):
+    # all Q_ig/elecLoad/occ_nothome/occ_sleeping attributes come from this
+    # package's real HouseholdProfile/ServiceBuildingProfile generation, no
+    # synthetic fallback. Not on PyPI/conda yet, so a direct git reference
+    # (PEP 508), tracked at @main -- see infrastructure/env/buem_env.yml's
+    # header comment for the reproducibility trade-off.
+    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main",
 ]
 
 [project.optional-dependencies]
-# occupancy (https://github.com/UU-BUEM/occupancy) remains optional -- unlike
-# weather, it has a documented synthetic fallback when absent (see
-# cfg_attribute.py). Not published to PyPI/conda yet, so a direct git
-# reference (PEP 508), tracked at @main -- see infrastructure/env/
-# buem_env.yml's header comment for the reproducibility trade-off.
-occupancy = [
-    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main",
-]
 server = [
     "gunicorn",
 ]
@@ -116,3 +116,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# run_test.py is a standalone manual smoke script (no test_ functions/asserts,
+# prints results) that happens to match pytest's default *_test.py collection
+# glob and runs ModelBUEM.sim_model() at import time -- a failure there aborts
+# collection for the entire suite rather than just itself. Run it directly
+# (`python tests/run_test.py`) when needed instead of via pytest.
+addopts = "--ignore=tests/run_test.py"
