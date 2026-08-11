@@ -8,14 +8,6 @@ from typing import Any
 
 import pandas as pd
 
-from buem.config.cfg_attribute import (
-    ATTRIBUTE_SPECS,
-    DEFAULT_ARCHETYPE_BY_BUILDING_TYPE,
-    RESIDENTIAL_BUILDING_TYPES,
-)
-from buem.config.validator import validate_cfg
-from buem.config.weather_cache import get_or_fetch_weather
-
 # occupancy (https://github.com/UU-BUEM/occupancy) is compulsory (2026-08-07),
 # same treatment as weather -- imported unconditionally like pandas/pvlib.
 from occupancy import (  # type: ignore[import]
@@ -24,6 +16,14 @@ from occupancy import (  # type: ignore[import]
     ServiceBuildingProfile,
     to_buem_profiles,
 )
+
+from buem.config.cfg_attribute import (
+    ATTRIBUTE_SPECS,
+    DEFAULT_ARCHETYPE_BY_BUILDING_TYPE,
+    RESIDENTIAL_BUILDING_TYPES,
+)
+from buem.config.validator import validate_cfg
+from buem.config.weather_cache import get_or_fetch_weather
 
 logger = logging.getLogger(__name__)
 
