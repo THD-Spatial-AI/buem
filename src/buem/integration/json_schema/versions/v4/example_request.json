@@ -334,6 +334,15 @@
             "use_milp": false,
             "parallel_thermal": true,
             "use_chunked_processing": true
+          },
+          "weather": {
+            "index": ["2018-01-01T00:30:00Z", "2018-01-01T01:30:00Z", "2018-01-01T02:30:00Z"],
+            "variables": {
+              "T": [0.89, 0.72, 0.61],
+              "GHI": [0.0, 0.0, 0.0],
+              "DNI": [0.0, 0.0, 0.0],
+              "DHI": [0.0, 0.0, 0.0]
+            }
           }
         }
       }
@@ -496,6 +505,15 @@
             "use_milp": false,
             "parallel_thermal": true,
             "use_chunked_processing": true
+          },
+          "weather": {
+            "index": ["2018-01-01T00:30:00Z", "2018-01-01T01:30:00Z", "2018-01-01T02:30:00Z"],
+            "variables": {
+              "T": [0.72, 0.58, 0.44],
+              "GHI": [0.0, 0.0, 0.0],
+              "DNI": [0.0, 0.0, 0.0],
+              "DHI": [0.0, 0.0, 0.0]
+            }
           }
         }
       }

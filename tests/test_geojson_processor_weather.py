@@ -69,12 +69,17 @@ def test_weather_from_payload_no_known_columns_returns_none():
 
 
 def test_weather_from_payload_builds_dataframe_matching_load_feature_weather_shape():
+    """Matches weather serve's actual GET .../point?format=json shape --
+    variables nested under "variables", not top-level keys alongside
+    "index" (weather enerplanet/weather#13)."""
     weather_json = {
         "index": ["2018-01-01T00:00:00", "2018-01-01T01:00:00"],
-        "T": [1.0, 2.0],
-        "GHI": [0.0, 10.0],
-        "DNI": [0.0, 5.0],
-        "DHI": [0.0, 5.0],
+        "variables": {
+            "T": [1.0, 2.0],
+            "GHI": [0.0, 10.0],
+            "DNI": [0.0, 5.0],
+            "DHI": [0.0, 5.0],
+        },
     }
 
     df = GeoJsonProcessor._weather_from_payload(weather_json)
@@ -87,8 +92,21 @@ def test_weather_from_payload_builds_dataframe_matching_load_feature_weather_sha
 
 
 def test_weather_from_payload_handles_partial_columns():
-    weather_json = {"index": ["2018-01-01T00:00:00"], "T": [1.0]}
+    weather_json = {"index": ["2018-01-01T00:00:00"], "variables": {"T": [1.0]}}
 
     df = GeoJsonProcessor._weather_from_payload(weather_json)
 
     assert list(df.columns) == ["T"]
+
+
+def test_weather_from_payload_rejects_stale_flat_shape():
+    """weather_json's old flat shape (variables as top-level keys, not
+    nested under "variables") must not be silently accepted as if it had
+    no usable columns -- it should behave exactly like "no columns given",
+    i.e. return None, not partially/incorrectly parse."""
+    weather_json = {
+        "index": ["2018-01-01T00:00:00"],
+        "T": [1.0],  # old flat shape -- no longer recognized
+    }
+
+    assert GeoJsonProcessor._weather_from_payload(weather_json) is None

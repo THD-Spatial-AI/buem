@@ -7,7 +7,16 @@ and are mirrored here for buem's own development — v3 there is current.
 
 ## What's in this draft
 
-Both changes are additive/services-building related, accumulated while
+- `buem.weather` (caller-supplied hourly timeseries, shape matching
+  weather serve's `GET /v1/weather/point?format=json`) is **required**,
+  not optional -- `geojson_processor.py::_process_single_feature` already
+  enforces this at runtime (raises if missing, no fallback to BuEM's own
+  location-based lookup; see `enerplanet/buem#10`), this draft just makes
+  the schema match. `weather.variables` nests T/GHI/DNI/DHI, matching
+  weather's actual response shape (`enerplanet/weather#13` changed it
+  from flat top-level keys to nested under `variables`).
+
+Both remaining changes are additive/services-building related, accumulated while
 wiring up `ServiceBuildingProfile` support in buem:
 
 - `building.building_type` gets an `enum` (previously free-text): the 4

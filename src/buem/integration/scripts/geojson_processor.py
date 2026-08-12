@@ -439,14 +439,16 @@ class GeoJsonProcessor:
         WeatherConfig to consume.
 
         Expected shape matches weather serve's GET .../point?format=json
-        response: {"index": [ISO 8601 strings], "T": [...], "GHI": [...],
-        "DNI": [...], "DHI": [...]}. Returns None if weather_json is falsy
-        or has no usable columns, in which case AttributeBuilder's own
-        default weather (cfg_attribute.py) applies.
+        response: {"index": [ISO 8601 strings], "variables": {"T": [...],
+        "GHI": [...], "DNI": [...], "DHI": [...]}}. Returns None if
+        weather_json is falsy or has no usable columns -- the caller
+        (_process_single_feature) raises rather than silently defaulting
+        when this returns None.
         """
         if not weather_json or "index" not in weather_json:
             return None
-        cols = {c: weather_json[c] for c in ("T", "GHI", "DNI", "DHI") if c in weather_json}
+        variables = weather_json.get("variables", {})
+        cols = {c: variables[c] for c in ("T", "GHI", "DNI", "DHI") if c in variables}
         if not cols:
             return None
         return pd.DataFrame(cols, index=pd.to_datetime(weather_json["index"]))

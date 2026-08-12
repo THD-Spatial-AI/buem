@@ -65,8 +65,8 @@
 
     "buem": {
       "type": "object",
-      "required": ["building"],
-      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. weather is an optional pre-resolved timeseries.",
+      "required": ["building", "weather"],
+      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. weather is a required caller-supplied timeseries -- the model never falls back to its own location-based lookup for EnerPlanET requests (see enerplanet/buem#10).",
       "properties": {
         "building": { "$ref": "#/$defs/building" },
         "solver":   { "$ref": "#/$defs/solver" },
@@ -76,18 +76,24 @@
 
     "weather": {
       "type": "object",
-      "description": "DRAFT v4 addition (new optional field, additive). Caller-supplied hourly weather timeseries, taking priority over BuEM's own location-based MERRA-2 lookup when present. Shape matches weather serve's GET /v1/weather/point?format=json response.",
-      "required": ["index", "T", "GHI", "DNI", "DHI"],
+      "description": "Caller-supplied hourly weather timeseries. Required -- the model raises rather than silently substituting its own default when this is missing. Shape matches weather serve's GET /v1/weather/point?format=json response exactly (see enerplanet/weather#13): variables nested under \"variables\", not top-level keys alongside \"index\".",
+      "required": ["index", "variables"],
       "properties": {
         "index": {
           "type": "array",
           "items": { "type": "string", "format": "date-time" },
-          "description": "Hourly timestamps, ISO 8601"
+          "description": "Hourly timestamps, ISO 8601 (Z-suffixed UTC)"
         },
-        "T":   { "type": "array", "items": { "type": "number" }, "description": "Air temperature, degC" },
-        "GHI": { "type": "array", "items": { "type": "number" }, "description": "Global horizontal irradiance, W/m2" },
-        "DNI": { "type": "array", "items": { "type": "number" }, "description": "Direct normal irradiance, W/m2" },
-        "DHI": { "type": "array", "items": { "type": "number" }, "description": "Diffuse horizontal irradiance, W/m2" }
+        "variables": {
+          "type": "object",
+          "description": "At least one of T/GHI/DNI/DHI must be present.",
+          "properties": {
+            "T":   { "type": "array", "items": { "type": "number" }, "description": "Air temperature, degC" },
+            "GHI": { "type": "array", "items": { "type": "number" }, "description": "Global horizontal irradiance, W/m2" },
+            "DNI": { "type": "array", "items": { "type": "number" }, "description": "Direct normal irradiance, W/m2" },
+            "DHI": { "type": "array", "items": { "type": "number" }, "description": "Diffuse horizontal irradiance, W/m2" }
+          }
+        }
       }
     },
 
