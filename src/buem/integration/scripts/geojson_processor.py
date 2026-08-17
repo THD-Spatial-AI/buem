@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class GeoJsonProcessor:
     """
     Process GeoJSON FeatureCollection with building energy model specifications.
-    
+
     Workflow:
     1. Extract building attributes from GeoJSON feature
     2. Merge with database/defaults via AttributeBuilder
@@ -34,7 +34,7 @@ class GeoJsonProcessor:
     4. Compute summary statistics
     5. Save timeseries .gz file (optional)
     6. Return results in GeoJSON format
-    
+
     Parameters
     ----------
     payload : Dict[str, Any]
@@ -65,42 +65,42 @@ class GeoJsonProcessor:
             import os
             default_dir = Path(__file__).resolve().parents[1] / "results"
             self.result_save_dir = Path(os.environ.get("BUEM_RESULTS_DIR", str(default_dir)))
-    
+
     def process(self) -> dict[str, Any]:
         """
         Process all features and return GeoJSON FeatureCollection with results.
-        
+
         Returns
         -------
         Dict[str, Any]
             GeoJSON FeatureCollection with thermal_load_profile added to each feature.
-            
+
         Raises
         ------
         ValueError
             If payload validation fails with critical errors.
         """
         start_time = time.time()
-        
+
         # Step 1: Validate payload structure and format
         validation_result = validate_geojson_request(self.payload)
-        
+
         if not validation_result.is_valid:
             errors = validation_result.get_errors()
             error_msgs = [issue.message for issue in errors]
             validation_report = create_validation_report(validation_result)
             logger.error(f"Payload validation failed:\n{validation_report}")
             raise ValueError(f"Invalid GeoJSON payload: {'; '.join(error_msgs[:3])}")
-        
+
         # Log validation warnings if any
         warnings = validation_result.get_warnings()
         if warnings:
             warning_msgs = [issue.message for issue in warnings]
             logger.warning(f"Validation warnings: {'; '.join(warning_msgs)}")
-        
+
         # Use validated data (with any format conversions applied)
         validated_payload = validation_result.validated_data or self.payload
-        
+
         # Extract features from validated payload
         if validated_payload.get("type") == "Feature":
             features = [validated_payload]
@@ -108,11 +108,11 @@ class GeoJsonProcessor:
             features = validated_payload.get("features", [])
         else:
             raise ValueError("Validated payload has unexpected structure")
-        
+
         # Process each feature
         out_features = []
         processing_errors = []
-        
+
         for i, feat in enumerate(features):
             try:
                 processed = self._process_single_feature(feat, validation_result)
@@ -121,7 +121,7 @@ class GeoJsonProcessor:
                 error_msg = f"Feature {feat.get('id', f'index_{i}')} failed: {exc}"
                 logger.exception(error_msg)
                 processing_errors.append(error_msg)
-                
+
                 # Include error in feature response
                 feat.setdefault("properties", {}).setdefault("buem", {})
                 feat["properties"]["buem"]["error"] = {
@@ -131,7 +131,7 @@ class GeoJsonProcessor:
                     "timestamp": datetime.now(UTC).isoformat()
                 }
                 out_features.append(feat)
-        
+
         # Build response with metadata
         response = {
             "type": "FeatureCollection",
@@ -145,27 +145,27 @@ class GeoJsonProcessor:
                 "validation_warnings": len(warnings)
             }
         }
-        
+
         # Include validation issues in response if any
         if warnings or processing_errors:
             response["validation_report"] = {
                 "warnings": [{"path": w.path, "message": w.message} for w in warnings],
                 "processing_errors": processing_errors
             }
-        
+
         return response
-    
+
     def _process_single_feature(self, feature: dict[str, Any], validation_result) -> dict[str, Any]:
         """
         Process single GeoJSON feature: build attributes, run model, add results.
-        
+
         Parameters
         ----------
         feature : Dict[str, Any]
             GeoJSON Feature with properties.buem.building_attributes.
         validation_result : ValidationResult
             Validation result from input validation.
-        
+
         Returns
         -------
         Dict[str, Any]
@@ -186,7 +186,7 @@ class GeoJsonProcessor:
 
         # Log feature processing start
         logger.info(f"Processing feature {building_id}")
-        
+
         # Build complete attributes
         builder = AttributeBuilder(
             payload_attrs=payload_attrs,
@@ -194,16 +194,16 @@ class GeoJsonProcessor:
             db_fetcher=self.db_fetcher,
         )
         merged_attrs = builder.build()
-        
+
         # Convert to model config
         cfg = CfgBuilding(merged_attrs).to_cfg_dict()
-        
+
         # Run thermal model (single-pass LP solver, CLARABEL)
         # Check result cache first — identical configs produce identical outputs.
         use_milp = bool(buem.get("use_milp", False))
         cache_key = compute_cfg_hash(cfg)
         cached = get_cached_result(cache_key)
-        
+
         start = time.time()
         if cached is not None:
             res = cached
@@ -213,12 +213,12 @@ class GeoJsonProcessor:
             res = run_model(cfg, plot=False, use_milp=use_milp)
             elapsed = time.time() - start
             store_result(cache_key, res)
-        
+
         # Extract results with validation
         times = res.get("times", [])
         heating = self._validate_array(res.get("heating", []), "heating")
         cooling = self._validate_array(res.get("cooling", []), "cooling")
-        
+
         # Electricity: prefer model output, else use cfg elecLoad
         if "electricity" in res:
             electricity = self._validate_array(res["electricity"], "electricity")
@@ -228,23 +228,25 @@ class GeoJsonProcessor:
                 electricity = self._validate_array(elec_cfg.values, "electricity")
             else:
                 electricity = self._validate_array(elec_cfg or [], "electricity")
-        
+
         # Build comprehensive thermal load profile
         profile = self._build_thermal_load_profile(
-            times, heating, cooling, electricity, elapsed, 
+            times, heating, cooling, electricity, elapsed,
             props.get("start_time"), props.get("end_time"),
             props.get("resolution", "60"), props.get("resolution_unit", "minutes")
         )
-        
-        # Add model metadata
-        profile["model_metadata"] = {
-            "model_version": "BUEM-v2.0",
+
+        # Add model metadata -- a sibling of thermal_load_profile directly
+        # under buem (per response_schema.json's `buem` $def and the
+        # gateway's ResponseBlock struct), not nested inside profile.
+        buem["model_metadata"] = {
+            "model_version": "BUEM-v3.0",
             "solver_used": "MILP" if use_milp else "LP (CLARABEL)",
-            "processing_time_s": round(elapsed, 3),
+            "processing_time": {"value": round(elapsed, 3), "unit": "s"},
             "weather_year": int(getattr(cfg.get("weather", pd.DataFrame()).index, "year", [2018])[0]) if hasattr(cfg.get("weather", pd.DataFrame()).index, "year") else 2018,
             "validation_warnings": [w.message for w in validation_result.get_warnings()]
         }
-        
+
         # Save timeseries if requested
         if self.include_timeseries and len(times):
             try:
@@ -252,25 +254,25 @@ class GeoJsonProcessor:
                 profile["timeseries_file"] = f"/api/files/{fname}"
             except Exception:
                 logger.exception(f"Timeseries save failed for {building_id}")
-        
+
         # Attach results
         buem["thermal_load_profile"] = profile
-        
+
         logger.info(f"Successfully processed feature {building_id} in {elapsed:.2f}s")
-        
+
         return feature
-    
+
     def _validate_array(self, data, array_name: str) -> np.ndarray:
         """
         Validate and sanitize numerical arrays for thermal loads.
-        
+
         Parameters
         ----------
         data : Any
             Input data to be converted to array.
         array_name : str
             Name of the array for logging.
-            
+
         Returns
         -------
         np.ndarray
@@ -278,29 +280,29 @@ class GeoJsonProcessor:
         """
         try:
             arr = np.asarray(data, dtype=float)
-            
+
             # Sanitize NaN/inf
             arr = np.nan_to_num(arr, nan=0.0, posinf=1e9, neginf=-1e9)
-            
+
             # Check for remaining NaN
             nan_count = np.isnan(arr).sum()
             if nan_count > 0:
                 logger.warning(f"Array {array_name}: {nan_count}/{arr.size} NaN values replaced with 0")
                 arr = np.nan_to_num(arr, nan=0.0)
-            
+
             return arr
-            
+
         except (TypeError, ValueError) as e:
             logger.error(f"Failed to validate array {array_name}: {e}")
             return np.array([], dtype=float)
-    
+
     def _build_thermal_load_profile(
-        self, times, heating, cooling, electricity, elapsed, 
+        self, times, heating, cooling, electricity, elapsed,
         start_time, end_time, resolution, resolution_unit
     ) -> dict[str, Any]:
         """
         Build comprehensive thermal load profile matching response schema.
-        
+
         Parameters
         ----------
         times : pd.DatetimeIndex or list
@@ -313,7 +315,7 @@ class GeoJsonProcessor:
             Time range strings.
         resolution, resolution_unit : str
             Time resolution specification.
-            
+
         Returns
         -------
         Dict[str, Any]
@@ -336,35 +338,45 @@ class GeoJsonProcessor:
         else:
             start_iso = start_time or "2018-01-01T00:00:00Z"
             end_iso = end_time or "2018-12-31T23:00:00Z"
-        
-        # Calculate summary statistics
-        def safe_stats(arr):
-            """Calculate safe statistics for array."""
+
+        # Calculate summary statistics -- {value, unit} measurement objects
+        # matching response_schema.json's `energy_summary` $def (and the
+        # gateway's LoadStats/Quantity structs).
+        def safe_stats(arr, power_unit="kW"):
+            """Calculate safe {value, unit} statistics for array."""
             if len(arr) == 0:
-                return {"total_kwh": 0.0, "max_kw": 0.0, "min_kw": 0.0, "mean_kw": 0.0, "median_kw": 0.0, "std_kw": 0.0}
-            
+                zero_power = {"value": 0.0, "unit": power_unit}
+                return {
+                    "total": {"value": 0.0, "unit": "kWh"},
+                    "max": dict(zero_power),
+                    "min": dict(zero_power),
+                    "mean": dict(zero_power),
+                    "median": dict(zero_power),
+                    "std": dict(zero_power),
+                }
+
             return {
-                "total_kwh": float(np.sum(arr)),
-                "max_kw": float(np.max(arr)),
-                "min_kw": float(np.min(arr)),
-                "mean_kw": float(np.mean(arr)),
-                "median_kw": float(np.median(arr)),
-                "std_kw": float(np.std(arr))
+                "total": {"value": float(np.sum(arr)), "unit": "kWh"},
+                "max": {"value": float(np.max(arr)), "unit": power_unit},
+                "min": {"value": float(np.min(arr)), "unit": power_unit},
+                "mean": {"value": float(np.mean(arr)), "unit": power_unit},
+                "median": {"value": float(np.median(arr)), "unit": power_unit},
+                "std": {"value": float(np.std(arr)), "unit": power_unit}
             }
-        
+
         heating_stats = safe_stats(heating)
         cooling_stats = safe_stats(np.abs(cooling))  # Ensure positive for cooling
         electricity_stats = safe_stats(electricity)
-        
+
         # Calculate overall metrics
-        total_energy = heating_stats["total_kwh"] + cooling_stats["total_kwh"] + electricity_stats["total_kwh"]
-        peak_heating = heating_stats["max_kw"]
-        peak_cooling = cooling_stats["max_kw"]
-        
+        total_energy = heating_stats["total"]["value"] + cooling_stats["total"]["value"] + electricity_stats["total"]["value"]
+        peak_heating = heating_stats["max"]["value"]
+        peak_cooling = cooling_stats["max"]["value"]
+
         # Estimate floor area for energy intensity (if available)
         energy_intensity = None
         # This would need to be calculated from building attributes if available
-        
+
         profile = {
             "start_time": start_iso,
             "end_time": end_iso,
@@ -374,31 +386,32 @@ class GeoJsonProcessor:
                 "heating": heating_stats,
                 "cooling": cooling_stats,
                 "electricity": electricity_stats,
-                "total_energy_demand_kwh": total_energy,
-                "peak_heating_load_kw": peak_heating,
-                "peak_cooling_load_kw": peak_cooling
+                "total_energy_demand": {"value": total_energy, "unit": "kWh"},
+                "peak_heating_load": {"value": peak_heating, "unit": "kW"},
+                "peak_cooling_load": {"value": peak_cooling, "unit": "kW"}
             }
         }
-        
+
         # Add energy intensity if floor area is available
         if energy_intensity is not None:
-            profile["summary"]["energy_intensity_kwh_m2"] = energy_intensity
-        
+            profile["summary"]["energy_intensity"] = {"value": energy_intensity, "unit": "kWh/m2"}
+
         # Include timeseries data if specifically requested in response (not just for saving)
         if self.include_timeseries and has_times:
             profile["timeseries"] = {
+                "unit": "kW",
                 "timestamps": [t.isoformat() for t in times] if isinstance(times, pd.DatetimeIndex) else [str(t) for t in times],
-                "heating_kw": heating.tolist(),
-                "cooling_kw": cooling.tolist(),
-                "electricity_kw": electricity.tolist()
+                "heating": heating.tolist(),
+                "cooling": cooling.tolist(),
+                "electricity": electricity.tolist()
             }
-        
+
         return profile
-    
+
     def _save_timeseries(self, times, heating, cooling, electricity) -> str:
         """
         Save timeseries as gzip-compressed JSON.
-        
+
         Returns
         -------
         str

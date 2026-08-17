@@ -16,6 +16,7 @@ from buem.buildings.mapping.element_factory import (
 from buem.buildings.mapping.live_synthesis import (
     FALLBACK_DOOR_RATIO,
     FALLBACK_WINDOW_RATIO_PER_DIRECTION,
+    normalize_opening_azimuths,
     synthesize_missing_openings,
 )
 from buem.buildings.pipeline import DEFAULT_WORKBOOK
@@ -96,6 +97,73 @@ def test_synthesize_openings_shared_wall_excluded_and_net_area_reduced():
     assert front.net_area < front.area
     assert front.window_area == pytest.approx(0.2 * 50.0)
     assert front.door_area == pytest.approx(0.05 * 50.0)
+
+
+def test_synthesize_openings_skips_window_on_unknown_azimuth_wall():
+    """Regression test for the 2026-08-16 fix: a wall with azimuth_known=
+    False (LOD2Mapper's "unknown orientation" sentinel, or any other
+    caller that can't determine a real azimuth) must not receive a
+    window -- a fabricated orientation shouldn't drive where a
+    solar-gain-relevant opening goes, even though the wall still counts
+    fully as opaque envelope area."""
+    front = WallInfo(wall_id="w1", surface_feature_id=1, area=50.0, azimuth=180.0, is_shared=False)
+    unknown = WallInfo(
+        wall_id="w2", surface_feature_id=2, area=50.0, azimuth=0.0, is_shared=False,
+        azimuth_known=False,
+    )
+    elements = synthesize_openings(
+        [front, unknown], front, unknown,
+        window_ratios={"north": 0.1, "east": 0.1, "south": 0.2, "west": 0.1},
+        door_ratio=0.05,
+        window_U=2.8, window_g_gl=0.5, door_U=3.0, n_air_use=0.5,
+    )
+    window_surfaces = [e.surface for e in elements if e.element_type == "window"]
+    assert "w1" in window_surfaces
+    assert "w2" not in window_surfaces  # unknown-azimuth wall got no window
+    assert unknown.window_area == 0.0
+    assert unknown.direction == "unknown"
+    # Still counts fully as opaque envelope area -- net_area only reflects
+    # its (unaffected) ventilation opening, not a fabricated window/door.
+    assert unknown.net_area == pytest.approx(unknown.area - unknown.vent_area)
+
+
+def test_synthesize_openings_small_wall_gets_no_window_and_keeps_full_area():
+    """Regression test: a wall below MIN_WALL_AREA_FOR_WINDOWS (5 m2) must
+    not receive a window element (create_windows()'s own cutoff, unchanged)
+    -- AND its window_area must stay 0 so net_area isn't shrunk for a
+    window that was never actually created. Before this fix, window_area
+    was assigned from the ratio regardless of the cutoff, so the "removed"
+    area belonged to neither the opaque wall (net_area shrank) nor a
+    window (none was built) -- it silently vanished from the envelope."""
+    front = WallInfo(wall_id="w1", surface_feature_id=1, area=50.0, azimuth=180.0, is_shared=False)
+    small = WallInfo(wall_id="w2", surface_feature_id=2, area=3.0, azimuth=0.0, is_shared=False)
+    elements = synthesize_openings(
+        [front, small], front, small,
+        window_ratios={"north": 0.2, "east": 0.1, "south": 0.2, "west": 0.1},
+        door_ratio=0.05,
+        window_U=2.8, window_g_gl=0.5, door_U=3.0, n_air_use=0.5,
+    )
+    window_surfaces = [e.surface for e in elements if e.element_type == "window"]
+    assert "w2" not in window_surfaces  # too small for a window element
+    assert small.window_area == 0.0
+    # Full gross area preserved as opaque -- nothing silently lost.
+    assert small.net_area == pytest.approx(small.area - small.vent_area)
+
+
+def test_synthesize_openings_skips_door_when_front_wall_azimuth_unknown():
+    front_unknown = WallInfo(
+        wall_id="w1", surface_feature_id=1, area=60.0, azimuth=0.0, is_shared=False,
+        azimuth_known=False,
+    )
+    back = WallInfo(wall_id="w2", surface_feature_id=2, area=50.0, azimuth=180.0, is_shared=False)
+    elements = synthesize_openings(
+        [front_unknown, back], front_unknown, back,
+        window_ratios={"north": 0.1, "east": 0.1, "south": 0.2, "west": 0.1},
+        door_ratio=0.05,
+        window_U=2.8, window_g_gl=0.5, door_U=3.0, n_air_use=0.5,
+    )
+    assert not any(e.element_type == "door" for e in elements)
+    assert front_unknown.door_area == 0.0
 
 
 # ── tabula_helpers.lookup_tabula_archetype (bundled reference sheet) ─────────
@@ -217,6 +285,87 @@ def test_synthesize_missing_openings_noop_without_walls():
     assert result is comps
 
 
+# ── normalize_opening_azimuths: window/door inherit parent surface azimuth/tilt ──
+
+
+def test_normalize_opening_azimuths_corrects_mismatched_window():
+    """A caller-supplied window whose azimuth/tilt disagree with its
+    declared parent wall must be corrected to the wall's values, not left
+    inconsistent or rejected."""
+    comps = _walls_only_components()  # Wall_1 azimuth=180, Wall_2 azimuth=0
+    comps["Windows"] = {
+        "elements": [{"id": "Win_1", "area": 3.0, "surface": "Wall_1", "azimuth": 90.0, "tilt": 45.0}],
+    }
+    result = normalize_opening_azimuths(comps)
+    win = result["Windows"]["elements"][0]
+    assert win["azimuth"] == 180.0
+    assert win["tilt"] == 90.0
+    # area/id untouched -- only azimuth/tilt are corrected
+    assert win["area"] == 3.0
+    assert win["id"] == "Win_1"
+
+
+def test_normalize_opening_azimuths_noop_when_already_consistent():
+    comps = _walls_only_components()
+    comps["Windows"] = {
+        "elements": [{"id": "Win_1", "area": 3.0, "surface": "Wall_1", "azimuth": 180.0, "tilt": 90.0}],
+    }
+    result = normalize_opening_azimuths(comps)
+    assert result["Windows"] == comps["Windows"]
+
+
+def test_normalize_opening_azimuths_leaves_unlinked_elements_alone():
+    """No `surface` reference, or one that doesn't resolve, is left as-is --
+    nothing to normalize against."""
+    comps = _walls_only_components()
+    comps["Windows"] = {
+        "elements": [
+            {"id": "Win_no_parent", "area": 2.0, "azimuth": 45.0, "tilt": 90.0},
+            {"id": "Win_unknown_parent", "area": 2.0, "surface": "Wall_99", "azimuth": 45.0, "tilt": 90.0},
+        ],
+    }
+    result = normalize_opening_azimuths(comps)
+    assert result["Windows"]["elements"][0]["azimuth"] == 45.0
+    assert result["Windows"]["elements"][1]["azimuth"] == 45.0
+
+
+def test_normalize_opening_azimuths_skylight_inherits_roof_tilt():
+    """A window whose parent is a Roof element (a skylight) inherits the
+    roof's own tilt (e.g. 30 degrees), not a hardcoded vertical 90."""
+    comps = _walls_only_components()  # Roof_1: azimuth=180, tilt=30
+    comps["Windows"] = {
+        "elements": [{"id": "Skylight_1", "area": 1.5, "surface": "Roof_1", "azimuth": 0.0, "tilt": 0.0}],
+    }
+    result = normalize_opening_azimuths(comps)
+    win = result["Windows"]["elements"][0]
+    assert win["azimuth"] == 180.0
+    assert win["tilt"] == 30.0
+
+
+def test_normalize_opening_azimuths_ignores_ventilation():
+    """Ventilation azimuth/tilt play no role in the ISO 13790 model
+    (air-change-rate only) -- left untouched even if inconsistent."""
+    comps = _walls_only_components()
+    comps["Ventilation"] = {
+        "elements": [{"id": "Vent_1", "surface": "Wall_1", "azimuth": 999.0, "air_changes": 0.5}],
+    }
+    result = normalize_opening_azimuths(comps)
+    assert result["Ventilation"] == comps["Ventilation"]
+
+
+def test_normalize_opening_azimuths_is_noop_after_synthesis():
+    """Internally-synthesized Windows/Doors already inherit their parent
+    wall's azimuth by construction (element_factory.py) -- running
+    normalize_opening_azimuths afterwards must not change anything."""
+    comps = _walls_only_components()
+    synthesized = synthesize_missing_openings(
+        comps, building_type="AB", construction_period="03", country="DE",
+    )
+    normalized = normalize_opening_azimuths(synthesized)
+    assert normalized["Windows"] == synthesized["Windows"]
+    assert normalized["Doors"] == synthesized["Doors"]
+
+
 # ── LOD2Mapper: end-to-end regression check against the bundled workbook ────
 # (previously untested -- the extraction of synthesize_openings/
 # identify_front_back out of lod2_mapper.py had no direct coverage before.)
@@ -244,3 +393,63 @@ def test_lod2mapper_end_to_end_with_bundled_workbook():
         assert wall.area >= 0.0
     for vent in bldg.ventilation_elements():
         assert vent.air_changes is not None
+
+
+@requires_bundled_workbook
+def test_lod2mapper_uses_real_roof_azimuth_not_hardcoded_zero():
+    """Regression test for the 2026-08-18 fix: LOD2Mapper used to hardcode
+    every roof element's azimuth to 0.0 on the (checked-and-found-wrong)
+    claim that roof azimuth has no role in the model --
+    model_buem._calcRadiation() actually passes every element's own
+    azimuth through pvlib, so this silently modeled every non-flat German
+    roof as due-north-facing. Building 30542 (used elsewhere in this
+    session's regression suite) has real, non-zero roof azimuths in the
+    source DB -- must survive into the mapped Building, not collapse to
+    a uniform placeholder."""
+    from buem.buildings.datasources.excel_source import ExcelBuildingSource
+    from buem.buildings.mapping.lod2_mapper import LOD2Mapper
+
+    source = ExcelBuildingSource(DEFAULT_WORKBOOK)
+    mapper = LOD2Mapper(source, country="DE")
+    bldg = mapper.map_building(30542)
+    assert bldg is not None
+    roof_azimuths = [e.azimuth for e in bldg.elements if e.element_type == "roof"]
+    assert roof_azimuths, "expected at least one roof element"
+    assert any(az != 0.0 for az in roof_azimuths), (
+        "expected at least one non-zero roof azimuth from real source data"
+    )
+
+
+@requires_bundled_workbook
+def test_lod2mapper_reads_theta_i_as_comfortT_lb():
+    """The matched TABULA archetype's own indoor setpoint (theta_i) must
+    drive comfortT_lb -- previously never read anywhere, silently leaving
+    every LOD2-mapped building at ThermalProperties' generic 21.0 default
+    regardless of what its archetype actually specifies (2026-08-15 fix,
+    found while investigating a large buem-vs-TABULA heating-demand gap
+    for DE.N.SFH.01.Gen -- theta_i=20.0 for that archetype)."""
+    from buem.buildings.datasources.excel_source import ExcelBuildingSource
+    from buem.buildings.mapping.lod2_mapper import LOD2Mapper
+
+    source = ExcelBuildingSource(DEFAULT_WORKBOOK)
+    mapper = LOD2Mapper(source, country="DE")
+    bldg = mapper.map_building(52203)  # SFH, DE.N.SFH.01.Gen, theta_i=20.0
+    assert bldg is not None
+    assert bldg.thermal.comfortT_lb == 20.0
+    # comfortT_ub has no TABULA row equivalent -- unchanged from the
+    # ThermalProperties default.
+    assert bldg.thermal.comfortT_ub == 24.0
+
+
+def test_lod2mapper_falls_back_to_default_lb_without_theta_i():
+    """A row with no theta_i value must keep the original 21.0 default --
+    the fix is additive, not a blanket lower setpoint for every building."""
+    import pandas as pd
+
+    from buem.buildings.building import ThermalProperties
+    from buem.buildings.mapping.tabula_helpers import safe_series_float
+
+    row_without_theta_i = pd.Series({"c_m": 165.0})
+    lb = safe_series_float(row_without_theta_i, "theta_i", 21.0)
+    assert lb == 21.0
+    assert ThermalProperties(comfortT_lb=lb).comfortT_lb == 21.0

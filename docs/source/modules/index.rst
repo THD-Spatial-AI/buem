@@ -10,6 +10,7 @@ users and developers.
    :maxdepth: 2
 
    buildings
+   netherlands
    thermal
    config
    weather

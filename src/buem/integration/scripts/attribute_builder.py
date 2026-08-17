@@ -4,6 +4,7 @@ Generate weather and electricity profiles, and align timeseries indices.
 """
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import pandas as pd
@@ -20,6 +21,7 @@ from occupancy import (  # type: ignore[import]
 from buem.config.cfg_attribute import (
     ATTRIBUTE_SPECS,
     DEFAULT_ARCHETYPE_BY_BUILDING_TYPE,
+    HOUSEHOLD_EQUIPMENT_TYPES,
     RESIDENTIAL_BUILDING_TYPES,
 )
 from buem.config.validator import validate_cfg
@@ -50,6 +52,73 @@ def _reindex_or_raise(series: pd.Series, target_index: pd.DatetimeIndex, name: s
             "same year/timezone as the weather data."
         )
     return aligned
+
+def _resolve_equipment_table(
+    household: HouseholdProfile, seed: int | None, equipment_spec: Any
+) -> dict[str, Any] | None:
+    """Build a filtered occupancy equipment table from the optional
+    ``equipment`` attribute: a per-item boolean map, e.g.
+    ``{"washing_machine": True, "oven": False}``.
+
+    ``True`` forces that item to be treated as owned -- sets its
+    ``ownership_probability`` to 1.0, guaranteeing inclusion rather than
+    just making it more likely (occupancy still gates on ``probability >=
+    1.0`` in ``_owned_by_name()``, confirmed against occupancy's real
+    source). ``False`` omits the item from the returned table entirely,
+    guaranteeing exclusion regardless of ``enabled``/``ownership_probability``
+    (an item absent from the dict never reaches
+    ``ElectricityConsumptionProfile.generate()``'s iteration at all). An id
+    not mentioned in ``equipment_spec`` is left exactly as occupancy's own
+    default produces it for this household.
+
+    Deliberately reads the *archetype-adjusted* base table via a throwaway
+    ``ElectricityConsumptionProfile(household, seed=seed)
+    .get_equipment_table()`` (a real public method) rather than the raw
+    ``occupancy.households.electricity.default_equipment_table()`` --
+    ``ElectricityConsumptionProfile.__post_init__`` applies the household's
+    ``archetype.equipment_overrides`` on top of the raw default table, and
+    reaching for the raw table directly would silently lose that per-archetype
+    tuning for every unmentioned item.
+
+    Returns ``None`` (occupancy's own default equipment set, unchanged) when
+    no selector is supplied. Raises ``ValueError`` for a malformed selector
+    or an unrecognized/non-boolean item value, naming the offending value(s),
+    rather than failing inside occupancy with a less legible error.
+    """
+    if not equipment_spec:
+        return None
+    if not isinstance(equipment_spec, dict):
+        # ValueError deliberately, matching the other two malformed-input
+        # branches below (unrecognized id / non-bool value) -- a consistent
+        # exception type across all three lets callers catch one type for
+        # "malformed equipment input", not three. TRY004 would suggest
+        # TypeError here; tests/test_equipment_selection.py::
+        # test_resolve_equipment_table_non_dict_raises asserts ValueError.
+        raise ValueError(  # noqa: TRY004
+            "equipment must be a dict of {equipment_id: bool}, "
+            f"got {type(equipment_spec).__name__}."
+        )
+    unknown = sorted(set(equipment_spec) - HOUSEHOLD_EQUIPMENT_TYPES)
+    if unknown:
+        raise ValueError(
+            f"equipment contains unrecognized id(s) {unknown} -- expected "
+            f"a subset of {sorted(HOUSEHOLD_EQUIPMENT_TYPES)}."
+        )
+    non_bool = {k: v for k, v in equipment_spec.items() if not isinstance(v, bool)}
+    if non_bool:
+        raise ValueError(f"equipment values must be true/false, got {non_bool!r}.")
+
+    base_table = ElectricityConsumptionProfile(household, seed=seed).get_equipment_table()
+    result: dict[str, Any] = {}
+    for key, spec in base_table.items():
+        if key not in equipment_spec:
+            result[key] = spec
+            continue
+        if equipment_spec[key]:
+            result[key] = replace(spec, ownership_probability=1.0)
+        # False -> forced exclusion: simply omit from the returned table.
+    return result
+
 
 # Attributes that identify *which building* is being modeled -- there is no
 # safe generic default for these (unlike thermal-class-type assumptions), so
@@ -186,11 +255,27 @@ class AttributeBuilder:
             ) from exc
 
     def generate_electricity_profile(self):
-        """Generate Q_ig/elecLoad/occ_nothome/occ_sleeping via occupancy, unless opted out."""
-        use_provided = bool(self.merged_attrs.get("use_provided_elecLoad", False))
+        """Generate Q_ig/elecLoad/occ_nothome/occ_sleeping via occupancy.
 
-        if use_provided:
-            return  # Keep provided elecLoad (and any provided Q_ig/occ_nothome/occ_sleeping)
+        elecLoad can be overridden with a caller-supplied series
+        (use_provided_elecLoad) -- Q_ig/occ_nothome/occ_sleeping still come
+        from a real occupancy generation in that case, via
+        occupancy.to_buem_profiles(elec_load=...); this no longer skips
+        calling occupancy entirely (pre-2026-08-14 behavior, which also lost
+        Q_ig/occ_nothome/occ_sleeping). Household equipment can optionally be
+        filtered via the "equipment" attribute (residential building_type
+        only).
+        """
+        use_provided_elec = bool(self.merged_attrs.get("use_provided_elecLoad", False))
+        provided_elec_load: pd.Series | None = None
+        if use_provided_elec:
+            # Captured before generation below overwrites merged_attrs["elecLoad"].
+            provided_elec_load = self.merged_attrs.get("elecLoad")
+            if not isinstance(provided_elec_load, pd.Series):
+                raise ValueError(
+                    "use_provided_elecLoad=True requires elecLoad to be a "
+                    f"pandas Series; got {type(provided_elec_load).__name__}."
+                )
 
         # Extract weather to determine year
         weather_df = self.merged_attrs.get("weather", ATTRIBUTE_SPECS["weather"].default)
@@ -202,6 +287,7 @@ class AttributeBuilder:
         # Get generation parameters
         building_type = self.merged_attrs.get("building_type", ATTRIBUTE_SPECS["building_type"].default)
         seed = self.merged_attrs.get("seed", ATTRIBUTE_SPECS["seed"].default)
+        equipment_spec = self.merged_attrs.get("equipment", ATTRIBUTE_SPECS["equipment"].default)
 
         try:
             # floor_area_m2 for occupancy's area-normalized gain component
@@ -221,11 +307,24 @@ class AttributeBuilder:
                     building_type, "generic"
                 )
                 household = HouseholdProfile(num_persons=num_persons, year=weather_year, seed=seed, archetype=archetype)
-                elec_gen = ElectricityConsumptionProfile(household, seed=seed)
+                equipment_table = _resolve_equipment_table(household, seed, equipment_spec)
+                elec_gen = ElectricityConsumptionProfile(household, equipment=equipment_table, seed=seed)
                 result = elec_gen.to_result()
             else:
                 # Non-residential: route through occupancy's ServiceBuildingProfile
                 # instead of forcing every building through HouseholdProfile.
+                # ServiceBuildingProfile has no per-item equipment selection yet
+                # (see .claude/occupancy_module_activities.md) -- a supplied
+                # equipment selector is a no-op here, not an error.
+                if equipment_spec:
+                    logger.warning(
+                        "equipment inclusion/exclusion was supplied for "
+                        "service-building building_type %r, but "
+                        "occupancy.ServiceBuildingProfile has no per-item "
+                        "equipment selection yet -- ignoring (see "
+                        ".claude/occupancy_module_activities.md).",
+                        building_type,
+                    )
                 capacity_raw = self.merged_attrs.get("capacity", ATTRIBUTE_SPECS["capacity"].default)
                 # Explicit cast (mirrors num_persons above) -- a string capacity from
                 # a JSON payload would otherwise reach ServiceBuildingProfile's
@@ -256,7 +355,24 @@ class AttributeBuilder:
                 # safe to pass unconditionally for the service-building branch.
                 floor_area_m2 = float(self.merged_attrs.get("A_ref", ATTRIBUTE_SPECS["A_ref"].default))
 
-            buem_inputs = to_buem_profiles(result, floor_area_m2=floor_area_m2)
+            if provided_elec_load is not None:
+                # occupancy's own result.profile.index is on-the-hour
+                # (00:00, 01:00, ...), while a caller-supplied series aligned
+                # to buem's weather index is typically half-hour-offset
+                # (00:30, 01:30, ... -- interval-midpoint timestamps). to_buem_
+                # profiles()'s internal elec_load reindex is exact-match only,
+                # so realign here first with the same nearest+tolerance
+                # approach already used to align buem_inputs onto weather_df
+                # below, rather than have a realistically-timestamped caller
+                # series fail with a confusing "does not cover the index"
+                # error from inside occupancy.
+                provided_elec_load = _reindex_or_raise(
+                    provided_elec_load, result.profile.index, "elecLoad"
+                )
+
+            buem_inputs = to_buem_profiles(
+                result, floor_area_m2=floor_area_m2, elec_load=provided_elec_load
+            )
 
             # Align index with weather (8760 hourly points)
             if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:

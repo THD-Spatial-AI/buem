@@ -1,8 +1,28 @@
-# v4 — DRAFT, not yet an agreed API version
+# v4 — PROMOTED TO LIVE (2026-08-14)
 
-This folder is a **staging area**, not a released contract version. The
-authoritative, agreed schemas live at
-[enerplanet/buem-gateway](https://github.com/enerplanet/buem-gateway/tree/main/schemas).
+**This is now the live, enforced BUEM-side contract** — `geojson_validator.py`
+validates and converts against this shape (superseding v3). Promoted with
+the user's explicit go-ahead this session, on the basis that the
+EnerPlanET developer told the user (2026-08-13) they are already working
+on their own v5 — i.e. EnerPlanET has itself moved past v3, so buem
+finalizing v4 on its side is a reasonable, timely step rather than staying
+pinned to a contract EnerPlanET is also leaving behind. **This is not the
+same as EnerPlanET having reviewed and agreed to this exact file** — the
+buem-side-only proposals below (`building_type`'s enum, `capacity`,
+`buem.weather`) were never reconciled against EnerPlanET's real schema
+line-by-line; that reconciliation, if EnerPlanET's real v5 turns out to
+look different from what's promoted here, is a follow-up the user owns,
+not assumed by this promotion. `versions/v3/` is retained as an archived,
+deprecated snapshot per `VERSIONING.md`'s convention (see its own note).
+
+This file keeps its original draft-era history below for the historical
+record of what was proposed, why, and what was reconciled against
+EnerPlanET's real schema before promotion. Two schema-documented fields
+are explicitly **not yet wired up** despite being promoted along with
+everything else, and are rejected (not silently ignored) if a request
+sends them — see "Deliberately unwired at promotion" at the bottom of
+this file: `weather.use_percentile`/`percentile`, and
+`solver.compute_cooling`.
 
 **Correction (2026-08-06): this note previously said "v3 there is current" —
 that's now known stale.** EnerPlanET's repo has its own real `schemas/v4/`
@@ -10,17 +30,24 @@ today (confirmed by fetching the actual raw JSON, not just browsing).
 Whether that means v4 is *live* on their end, or is their own
 not-yet-deployed draft mirroring this folder's own status, is not known
 from here — only the user's direct conversation with the EnerPlanET
-developer can settle that (same tier-3 promotion gate as below). Treat
-"which version EnerPlanET actually runs in production" as an open question,
-not settled by this file.
+developer can settle that. Treat "which version EnerPlanET actually runs
+in production" as an open question, not settled by this file — the
+promotion above is buem finalizing its *own* side, not a claim that
+EnerPlanET has adopted it.
 
 ## What's in this draft
 
-Four changes so far. The first two are additive/services-building
+Several changes so far. The first two are additive/services-building
 related, accumulated while wiring up `ServiceBuildingProfile` support in
 buem. The third and fourth are part of making the `weather` package a
 compulsory, real-fetch-only data source (buem has no bundled/local-file
-weather fallback anymore -- see buem's own `CLAUDE.md`):
+weather fallback anymore -- see buem's own `CLAUDE.md`). The last three
+(`building.equipment`, `buem.weather.profile`, and the
+`electricity_load_profile` description update) were added together
+2026-08-14, alongside EnerPlanET's original four asks for optional
+electricity-profile/building-categorization/LOD3/equipment/weather-profile
+input -- see `.claude/occupancy_module_activities.md` for the occupancy-side
+asks that same pass surfaced:
 
 - `building.building_type` gets an `enum` (previously free-text): the 4
   TABULA residential codes (`SFH`/`MFH`/`TH`/`AB`) plus 8 occupancy
@@ -81,6 +108,90 @@ weather fallback anymore -- see buem's own `CLAUDE.md`):
   these fields (it hasn't) -- only that buem's own runtime happens to
   read them if a v3-format client sends them, same caveat as `year`/
   `weather_provider` before it.
+- `building.equipment` (new optional field, additive/MINOR, 2026-08-14,
+  **reshaped 2026-08-14 same day** from an initial `{mode: "include"|
+  "exclude", items: [...]}` draft to a per-item boolean map --
+  `{washing_machine: true, oven: false, ...}` -- closer to the original
+  "inclusion/exclusion boolean" request, more expressive (mixes forced
+  include and forced exclude in one request, which a single global `mode`
+  couldn't), and lets JSON Schema reject an unrecognized id itself via
+  `additionalProperties: false` rather than only at runtime). Forwarded to
+  `occupancy.ElectricityConsumptionProfile`'s `equipment=` override (added
+  in occupancy v3.1.0, previously unused by buem): `true` sets that item's
+  `ownership_probability` to 1.0 (guaranteed owned, not just more likely);
+  `false` omits it from the table entirely (guaranteed excluded); an
+  omitted id is left exactly as occupancy's own archetype-adjusted default
+  produces it (`AttributeBuilder._resolve_equipment_table()` reads this
+  base table via `ElectricityConsumptionProfile.get_equipment_table()`,
+  not the raw `default_equipment_table()`, specifically so per-archetype
+  `equipment_overrides` aren't silently lost for unmentioned items).
+  Residential `building_type` only -- ignored, with a logged warning, for
+  service-building types, since `occupancy.ServiceBuildingProfile` has no
+  per-item equipment selection yet (a real occupancy-side gap, not a
+  buem limitation -- see `.claude/occupancy_module_activities.md`). The
+  property list is hand-copied from occupancy's `households/data/
+  equipment.json` -- occupancy has no stable top-level export for this
+  registry yet, the same caveat `building_type`'s enum already carries
+  for `SERVICE_BUILDING_TYPES` pre-promotion (fixed there in v3.1.0;
+  requested for equipment too in `.claude/occupancy_module_activities.md`
+  item 1). **Live as of the v3->v4 promotion (2026-08-14)**:
+  `_convert_v3_to_v2()`'s successor forwards this field from a real
+  request -- no longer a deferred tier-1 step.
+- `buem.weather.profile` (new optional field, additive/MINOR, 2026-08-14)
+  -- caller-supplied T/GHI/DHI/DNI weather timeseries, referenced by file
+  path, mirroring `buem.inputs.electricity_load_profile`'s existing
+  path/format pattern. When provided, used directly instead of fetching
+  from a weather-module archive; `provider`/`year`/`use_percentile`/
+  `percentile` are ignored. The buem-internal equivalent
+  (`AttributeBuilder.generate_weather_profile()`'s `use_provided_weather`
+  flag, and `CfgBuilding.WeatherConfig`'s DataFrame/dict acceptance)
+  already existed before this schema field and needed no change --
+  `_convert_v3_to_v2()` reading this block from a real v3 request is the
+  only remaining (deferred, tier-1) step, same as `buem.weather.provider`/
+  `year` above.
+- **Azimuth/tilt inheritance and LOD3-optional synthesis made visible in
+  the schema itself** (2026-08-14, docs-only, no field/shape change):
+  `envelope_element.azimuth`/`tilt`/`parent_id` and the `envelope`
+  object's own description now state, in the contract text EnerPlanET
+  actually reads, that a window/door's azimuth/tilt are always forced to
+  match its `parent_id`-referenced surface (correcting a mismatch rather
+  than rejecting it), and that omitted window/door/ventilation elements
+  are synthesized internally rather than left empty. Previously this
+  behavior only lived in Python docstrings/`buildings.rst`, invisible to
+  anyone reading just the JSON schema.
+- `buem.inputs.electricity_load_profile`'s description updated
+  (2026-08-14, no field/shape change) to note that the caller-supplied
+  profile is now substituted via `occupancy.to_buem_profiles(elec_load=
+  ...)` rather than bypassing occupancy generation entirely --
+  `Q_ig`/`occ_nothome`/`occ_sleeping` still come from a real occupancy
+  generation. Previously (pre-2026-08-14) buem's internal
+  `use_provided_elecLoad` flag skipped calling occupancy altogether,
+  losing those three too; this field's schema shape is unchanged, only
+  buem's internal handling of it improved to match what occupancy itself
+  actually supports.
+- **Per-provider weather year-range tightening** (2026-08-14, per
+  consultation): `weather_source.provider`/`.year` descriptions now state
+  each provider's real archive coverage (`era5-land` 1980-2025,
+  `cosmo-rea6` 1995-2018, `merra-2` 1950-2025), and `weather_source`
+  gained `allOf`/`if`/`then` blocks enforcing the matching range per
+  provider declaratively (the real enforcement is in
+  `geojson_validator.py`; this is the same value expressed for any other
+  consumer validating directly against the schema file). `year`'s own
+  flat bound loosened from the old placeholder `1940-2100` to `1950-2025`
+  -- the true union across all three providers.
+- **`weather_source.profile.format` gains `json`, now the default**
+  (2026-08-14, confirmed as EnerPlanET's actual format): an array of
+  hourly records, each `{time, T, GHI, DHI, DNI}`. `csv`/`parquet` remain
+  accepted for other/internal callers -- `profile_file_loader
+  .load_weather_profile()` supports all three.
+- **All remaining "DRAFT"/"not yet agreed"/"not yet reconciled" language
+  removed from `request_schema.json`/`response_schema.json`** (2026-08-14,
+  following the promotion above -- these had gone stale the moment
+  `geojson_validator.py` started enforcing this shape). Buem-side-only
+  proposals (`building_type`'s enum, `capacity`, the `buem.weather`
+  object, `equipment`) now read "buem-side proposal, live as of the v4
+  promotion" instead, still noting where each remains absent from
+  EnerPlanET's own real v4 as of the last check.
 
 ## Reconciliation against EnerPlanET's real v4 (2026-08-06)
 
@@ -139,20 +250,47 @@ All four files (`request_schema.json`, `response_schema.json`,
 internally (`jsonschema.validate()` against their own examples) after
 this pass.
 
-## Status
+## Status: PROMOTED (2026-08-14) -- this folder is now tier 1
 
-Not proposed to EnerPlanET yet, and **nothing here is cast in stone** —
-freely edit/extend this draft as good ideas come up, no need to check in
-per change (see `CLAUDE.md` "Guardrails", tier 2). It's inert by
-construction: `geojson_validator.py` doesn't load `json_schema/` at all,
-so nothing here takes live effect just by existing or changing.
+**This folder is no longer freely editable per CLAUDE.md's old tier-2
+framing.** Now that `geojson_validator.py` actually loads/enforces this
+shape (via the constants in `building_registry.py` and the conversion
+logic in `_convert_v3_to_v2`), `versions/v4/*.json` sits alongside
+`geojson_validator.py` itself as the live, agreed-with-the-user contract
+— any further change here needs the same explicit check-in
+`versions/v3/` always required, not the old "no need to check in per
+change" latitude. `versions/v3/` is retained as an archived, deprecated
+snapshot (matching how `v1`/`v2` are already treated per `VERSIONING.md`)
+-- not deleted, kept for historical/rollback reference.
 
-Keep accumulating here until the diff is substantial enough to be worth a
-real new contract version. Promoting it to live is a separate, later,
-two-part step (tier 3): the buem maintainer personally negotiates a new
-agreement with the EnerPlanET developer first, and only after that,
-`geojson_validator.py` + the retired old version get updated together,
-following `VERSIONING.md`'s release process (CHANGELOG entry, validation
-against examples, semver-tagged release). Until both have happened, this
-folder stays draft-only — do not wire it into `geojson_validator.py` or
-any live request-handling path.
+Not formally proposed to or reviewed by EnerPlanET line-by-line -- see
+the promotion note at the top of this file for the reasoning (EnerPlanET
+already moving to their own v5) and its limits (this is buem finalizing
+its own side, not a claim of EnerPlanET sign-off on every field here).
+
+### Deliberately unwired at promotion
+
+Two schema-documented fields were promoted along with everything else
+but are **explicitly rejected**, not silently accepted-and-ignored, if a
+request supplies them -- `geojson_validator.py::_validate_single_feature`
+adds a validation error naming the field. Both need real, separate
+implementation work before they can be wired for real:
+
+- `weather.use_percentile` / `percentile` -- needs weather's own
+  percentile-year infrastructure (`percentile_index.py`) wired through
+  the point-query HTTP API or local-archive path, neither of which
+  exposes a percentile parameter today.
+- `solver.compute_cooling` -- needs the cooling upper-bound constraint in
+  `ModelBUEM._init5R1C`'s dead-band LP to become conditional (today both
+  heating and cooling are always computed and returned unconditionally,
+  confirmed against the real solver code before deciding to defer this
+  rather than rush a change to the model's numerical core in the same
+  pass as the schema/validation work above).
+
+Also **not** promoted: `building.envelope` becoming non-required (line
+~80 above) -- the corresponding "derive Walls/Roof/Floor from a matched
+TABULA variant when envelope is entirely absent" capability doesn't
+exist in `live_synthesis.py` (only Windows/Doors/Ventilation synthesis
+*from already-supplied* Walls geometry is implemented). `envelope` with
+at least one element remains required, matching today's actual behavior
+-- `require_v2_or_v3` in `geojson_validator.py` is unchanged.

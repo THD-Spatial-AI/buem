@@ -241,3 +241,90 @@ def synthesize_missing_openings(
         result["Walls"] = {**walls_comp, "elements": new_wall_elements}
 
     return result
+
+
+def _parent_lookup(components: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map element id -> element dict across Walls and Roof components --
+    the two component types a Window/Door's parent surface can reference
+    (v3's ``envelope_element.parent_id`` description: "A window is
+    embedded in a wall (or roof for a skylight); a door is embedded in a
+    wall")."""
+    lookup: dict[str, dict[str, Any]] = {}
+    for comp_key in ("Walls", "Roof"):
+        comp = components.get(comp_key)
+        if not isinstance(comp, dict):
+            continue
+        for elem in comp.get("elements") or []:
+            elem_id = elem.get("id")
+            if elem_id is not None:
+                lookup[str(elem_id)] = elem
+    return lookup
+
+
+def normalize_opening_azimuths(components: dict[str, Any]) -> dict[str, Any]:
+    """Force Windows/Doors to inherit their parent surface's azimuth and
+    tilt whenever they reference one via ``surface`` (buem's internal name
+    for v3's ``parent_id`` -- see ``geojson_validator.py::
+    _convert_v3_to_v2``).
+
+    A window or door is physically embedded in its host wall (or roof, for
+    a skylight) and cannot face a different direction or slope than that
+    surface -- azimuth/tilt supplied independently on the opening are not
+    physically meaningful once a parent is known. A caller-supplied
+    mismatch is silently *corrected* here (logged, not rejected), since
+    the parent surface's own azimuth/tilt is the physically authoritative
+    value, and rejecting an otherwise-valid request over a redundant,
+    derivable field would be needlessly strict.
+
+    Internally-synthesized openings (:mod:`element_factory`) already
+    inherit their parent wall's azimuth/tilt by construction, so this is a
+    no-op for them -- it only has an effect on explicitly caller-supplied
+    Windows/Doors that carry a ``surface`` reference.
+
+    Ventilation is intentionally excluded: buildings.rst notes the ISO
+    13790 model uses only air change rates for ventilation, not physical
+    opening azimuth/tilt, and internally-synthesized ventilation elements
+    do not carry those fields at all (see ``_flatten_element``).
+
+    Elements with no ``surface`` reference, or whose reference doesn't
+    resolve to a known Wall/Roof element id, are left untouched -- nothing
+    to normalize against (e.g. a standalone opening with no declared
+    parent).
+    """
+    parents = _parent_lookup(components)
+    if not parents:
+        return components
+
+    result = dict(components)
+    for comp_key in ("Windows", "Doors"):
+        comp = result.get(comp_key)
+        if not isinstance(comp, dict) or not comp.get("elements"):
+            continue
+        new_elements: list[dict[str, Any]] = []
+        changed = False
+        for elem in comp["elements"]:
+            parent = parents.get(str(elem.get("surface", "")))
+            if parent is None:
+                new_elements.append(elem)
+                continue
+            parent_azimuth = float(parent.get("azimuth", 0.0)) % 360.0
+            parent_tilt = float(parent.get("tilt", 90.0))
+            new_elem = dict(elem)
+            if float(new_elem.get("azimuth", parent_azimuth)) % 360.0 != parent_azimuth:
+                logger.warning(
+                    "%s element %r azimuth %s does not match its parent "
+                    "surface %r azimuth %s -- correcting to the parent's "
+                    "value (a window/door cannot face a different "
+                    "direction than the surface it is embedded in).",
+                    comp_key, elem.get("id"), elem.get("azimuth"),
+                    elem.get("surface"), parent_azimuth,
+                )
+                new_elem["azimuth"] = parent_azimuth
+                changed = True
+            if float(new_elem.get("tilt", parent_tilt)) != parent_tilt:
+                new_elem["tilt"] = parent_tilt
+                changed = True
+            new_elements.append(new_elem)
+        if changed:
+            result[comp_key] = {**comp, "elements": new_elements}
+    return result

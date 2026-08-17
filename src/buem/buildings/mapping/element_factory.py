@@ -62,6 +62,15 @@ class WallInfo:
     window_area: float = 0.0  # proportional window area placed on this wall
     door_area: float = 0.0    # proportional door area placed on this wall
     vent_area: float = 0.0    # ventilation opening area on this wall
+    azimuth_known: bool = True
+    """Whether ``azimuth`` reflects real data, vs. a fallback value (e.g.
+    LOD2Mapper normalises a source database's negative/NaN "unknown
+    orientation" sentinel to 0.0/north — see ``lod2_mapper._normalise_
+    azimuth``). ``synthesize_openings()`` skips window/door placement on
+    a wall with ``azimuth_known=False`` — a fabricated orientation
+    shouldn't drive where solar-gain-relevant openings go, even though
+    the wall still counts fully toward opaque envelope area/conductance.
+    Ventilation openings are unaffected (not orientation-sensitive)."""
 
     @property
     def net_area(self) -> float:
@@ -310,9 +319,27 @@ def synthesize_openings(
         (TABULA ``A_Window_Horizontal``). ``0`` when not available.
     """
     for w in exposed_walls:
+        if not w.azimuth_known:
+            # Don't let a fabricated orientation drive window placement --
+            # the wall still counts fully as opaque envelope area/
+            # conductance (unaffected by this), just gets no window.
+            w.direction = "unknown"
+            w.window_area = 0.0
+            continue
         w.direction = azimuth_to_direction(w.azimuth)
-        w.window_area = window_ratios.get(w.direction, 0.0) * w.area
-    if front_wall is not None:
+        if w.area < MIN_WALL_AREA_FOR_WINDOWS:
+            # Mirrors create_windows()'s own cutoff -- a wall too small to
+            # receive a window element must not have window_area subtracted
+            # from its net_area either (WallInfo.net_area below), or that
+            # area vanishes from the envelope entirely: not opaque wall
+            # (net_area shrank), not a window (create_windows() never
+            # built one for it). Previously only create_windows() honored
+            # this cutoff, so window_area survived into net_area regardless
+            # -- fixed here so the two stay consistent.
+            w.window_area = 0.0
+        else:
+            w.window_area = window_ratios.get(w.direction, 0.0) * w.area
+    if front_wall is not None and front_wall.azimuth_known:
         front_wall.door_area = door_ratio * front_wall.area
 
     assign_vent_areas(front_wall, back_wall)

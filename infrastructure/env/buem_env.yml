@@ -82,6 +82,7 @@ dependencies:
   - pulp
   - pvlib
   - pyarrow
+  - pyproj
   - python-dotenv
   - requests
   - scipy

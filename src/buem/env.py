@@ -54,7 +54,7 @@ def load_env() -> None:
             _root = found.parent
             for _var in (
                 "BUEM_WEATHER_DIR", "BUEM_WEATHER_DATA_DIR",
-                "BUEM_RESULTS_DIR", "BUEM_LOG_DIR",
+                "BUEM_RESULTS_DIR", "BUEM_LOG_DIR", "BUEM_DATA_DIR",
                 "BUEM_CBC_EXE", "BUEM_LOG_FILE",
             ):
                 _val = os.environ.get(_var)
@@ -70,7 +70,13 @@ def load_env() -> None:
     #    buem.config.weather_cache). BUEM_WEATHER_DATA_DIR (no default
     #    here) points at the `weather` package's own pre-processed
     #    provider archives; when unset, weather.get_point_weather() falls
-    #    back to its own data_root() convention.
+    #    back to its own data_root() convention. BUEM_DATA_DIR (no default
+    #    either) is the shared volume a deployment mounts client-supplied
+    #    files into, referenced by buem.inputs.electricity_load_profile.path
+    #    / buem.weather.profile.path (see
+    #    buem.integration.scripts.profile_file_loader) -- purely a documented
+    #    convention for where a real deployment's absolute paths resolve;
+    #    buem itself only ever reads whatever absolute path it's given.
     _pkg = Path(__file__).parent
     os.environ.setdefault("BUEM_WEATHER_DIR", str(_pkg / "data" / "weather"))
     os.environ.setdefault("BUEM_RESULTS_DIR", str(_pkg / "results"))

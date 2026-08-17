@@ -18,6 +18,7 @@ dist/
 .coverage
 coverage.xml
 *.csv
+!src/buem/data/buildings/netherlands/u_value_reference.csv
 *.xlsx
 !src/buem/data/default_2016.xlsx
 *.h5

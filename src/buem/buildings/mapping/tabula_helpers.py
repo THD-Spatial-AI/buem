@@ -189,6 +189,7 @@ def lookup_tabula_archetype(
     country: str | None,
     *,
     bldg_tabula_id: str | None = None,
+    sheet: pd.DataFrame | None = None,
 ) -> pd.Series | None:
     """Resolve a TABULA archetype row for the live (non-LOD2) synthesis path.
 
@@ -199,6 +200,19 @@ def lookup_tabula_archetype(
     ``Code_BuildingSizeClass`` / ``Code_ConstructionYearClass`` columns --
     the same sheet :class:`~buem.buildings.datasources.excel_source.
     ExcelBuildingSource`/``LOD2Mapper`` use.
+
+    Parameters
+    ----------
+    sheet : pd.DataFrame or None
+        The TABULA reference table to search. Defaults to the bundled
+        German Excel workbook's sheet (cached, lazily loaded) for
+        backward compatibility with existing callers. Pass the
+        Netherlands ``tabula.csv`` (``CsvBuildingSource(...).tabula``,
+        real Dutch archetype data, ``Code_Country == "NL"``) to resolve
+        against that instead -- added 2026-08-17 for
+        ``nl_archetype_mapper``, which needs the *same* selection logic
+        (prefer a ``.Gen.`` variant, lowest ``id`` for determinism)
+        against a different table, not a reimplementation of it.
 
     ``construction_period`` is accepted either as TABULA's own
     country-prefixed class code (``"DE.04"``) or the bare class code
@@ -220,11 +234,12 @@ def lookup_tabula_archetype(
     Among multiple matches (refurbishment states, sub-variants), prefers a
     generic (``".Gen."``) variant, then the lowest ``id`` for determinism.
     """
-    try:
-        sheet = _tabula_reference_sheet()
-    except (OSError, ValueError) as exc:
-        logger.warning("TABULA archetype reference sheet could not be loaded: %s", exc)
-        return None
+    if sheet is None:
+        try:
+            sheet = _tabula_reference_sheet()
+        except (OSError, ValueError) as exc:
+            logger.warning("TABULA archetype reference sheet could not be loaded: %s", exc)
+            return None
 
     if bldg_tabula_id:
         matches = sheet[sheet["Code_BuildingVariant"] == bldg_tabula_id]

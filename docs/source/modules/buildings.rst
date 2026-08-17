@@ -38,7 +38,14 @@ Orchestration of the LOD2 + TABULA pipeline:
 
 datasources
 ^^^^^^^^^^^
-Data ingestion from PostgreSQL (``pg_source``) or Excel (``excel_source``).
+Data ingestion from PostgreSQL (``pg_source``), Excel (``excel_source``),
+or a plain CSV export in the same schema (``csv_source`` — built for a
+one-off regional drop that isn't an Excel workbook or a live Postgres
+connection). ``cityjson_extractor``/``nl_archetype_mapper``/
+``rivm_energy_labels`` are a related but distinct set of tools: they
+*produce* a ``csv_source``-compatible CSV pair directly from a CityJSON
+(3D BAG) source plus real Dutch archetype/energy-label data, rather than
+reading an existing export — see :doc:`netherlands`.
 
 generator
 ^^^^^^^^^
@@ -96,6 +103,32 @@ An explicitly-supplied, non-empty ``Windows``/``Doors``/``Ventilation``
 component is never overridden — EnerPlanET "can provide [LOD3 detail]...
 but does not have to".
 
+**Window/door azimuth and tilt always match their parent surface**
+(``buem.buildings.mapping.live_synthesis.normalize_opening_azimuths()``,
+added 2026-08-14): a window or door is physically embedded in its host
+wall (or roof, for a skylight) and cannot face a different direction or
+slope than that surface. Whenever a Window/Door element declares a
+``surface``/``parent_id`` reference to a known Wall or Roof element, its
+``azimuth``/``tilt`` are forced to match that surface's own values —
+correcting a caller-supplied mismatch (logged as a warning) rather than
+rejecting the request over a redundant, derivable field. Applied after
+opening synthesis, so it is a no-op for internally-synthesized openings
+(already consistent by construction) and only has an effect on explicit
+caller-supplied LOD3 detail. Ventilation is excluded — the ISO 13790
+model uses only air change rates, not physical opening azimuth/tilt (see
+"Ventilation" below), and internally-synthesized ventilation elements
+don't carry those fields at all. Elements with no resolvable parent are
+left as-is.
+
+**Which walls receive openings stays purely a synthesis-time decision**:
+the front/back/side wall eligibility rules below (which wall gets a door,
+which get windows, party walls get none) only ever apply when buem itself
+is choosing where to place *missing* openings. They are never used to
+validate or reject explicitly caller-supplied Windows/Doors/Ventilation
+placement — a real building may legitimately have openings that don't
+follow this simplified heuristic (e.g. a door on a side wall), and
+EnerPlanET's own data is authoritative when supplied.
+
 
 .. _buildings-assumptions:
 
@@ -133,13 +166,39 @@ Geometry & Surface Classification
    * - Floor tilt is always 0°; azimuth always 0°
      - Ground slabs are horizontal; azimuth is irrelevant for floors.
 
-   * - Roof azimuth is always 0° (placeholder)
-     - Roof azimuth has no role in the ISO 13790 5R1C model; the solar irradiance
-       on roofs (horizontal windows) uses tilt only.
+   * - Roof azimuth: real value when the source DB has one; negative or
+       NaN → 0° (North) — same convention as walls
+     - **Corrected 2026-08-18** — previously hardcoded to 0° unconditionally
+       on the claim that "roof azimuth has no role in the model." Checked
+       against the actual ``model_buem._calcRadiation()`` implementation:
+       every element's own azimuth *and* tilt are passed to
+       ``pvlib.irradiance.get_total_irradiance()``, so roof solar gain is
+       genuinely azimuth-dependent (a west-facing roof plane gets
+       different plane-of-array irradiance than an east-facing one at the
+       same tilt). The real German LOD2 database has a usable azimuth for
+       10,732/16,558 (64.8%) of roof surfaces — was being discarded.
+       Netherlands (:doc:`netherlands`) was unaffected — that path always
+       computed a real per-plane azimuth from CityJSON geometry directly.
 
    * - Wall azimuth: negative or NaN → 0° (North)
      - Some LOD2 databases store −1 for unknown azimuth.  North is chosen as
        a conservative fallback (lowest solar gains in the Northern Hemisphere).
+
+
+.. _buildings-cityjson-geometry:
+
+Netherlands (Loenen) data pipeline
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Everything above this point describes ``LOD2Mapper``'s own assumptions
+about its *input* — a source table where ``surface_area``/``tilt``/
+``azimuth``/``tabula_variant_code_id`` already exist as columns. For
+Germany that table comes from the Excel/PostgreSQL ``city2tabula``
+pipeline. The Netherlands (Loenen) pipeline generates that same input
+shape from scratch instead (geometry directly from CityJSON, archetype
+matching independent of city2tabula) — given how much is specific to it,
+it has its own dedicated page rather than living here alongside the
+German-pipeline assumption tables above: :doc:`netherlands`.
 
 
 Party (Shared) Walls
@@ -357,6 +416,16 @@ Thermal Properties
      - Reduces transmission losses for unheated adjacent spaces (stairwells,
        corridors).  Default 1.0 (no reduction).  German data: 0.85–0.95.
 
+   * - ``comfortT_lb`` — heating setpoint [°C] from TABULA ``theta_i``
+     - The matched archetype's own assumed indoor heating setpoint, applied
+       as a constant lower comfort bound for every hour (no TABULA-equivalent
+       night/weekend setback). Fixed 2026-08-15 — previously never read;
+       every LOD2-mapped building silently used the generic 21.0 °C default
+       regardless of what its archetype specified. Falls back to 21.0 °C
+       when the matched row has no ``theta_i`` value. ``comfortT_ub`` has no
+       TABULA row equivalent (TABULA's residential reference calculation is
+       heating-only) and keeps its own 24.0 °C default unconditionally.
+
 
 TABULA Column Mapping
 ^^^^^^^^^^^^^^^^^^^^^
@@ -429,6 +498,11 @@ TABULA Column Mapping
      - ``F_red_htr1``
      - —
      - 1.0
+
+   * - ``comfortT_lb``
+     - ``theta_i``
+     - °C
+     - 21.0
 
    * - per-element ``U``
      - ``U_Wall_1/2/3``, ``U_Roof_1/2``, ``U_Floor_1/2``, ``U_Window_1``, ``U_Door_1``

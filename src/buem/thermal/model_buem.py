@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from typing import Any, ClassVar
@@ -12,6 +13,8 @@ from dotenv import load_dotenv
 from scipy.sparse import lil_matrix, vstack
 
 from buem.config.validator import validate_cfg
+
+logger = logging.getLogger(__name__)
 
 
 class ModelBUEM:
@@ -346,6 +349,36 @@ class ModelBUEM:
         H_ve = A_ref * h_room * rho_air * C_air * (n_air_inf + n_air_use) / 3600.0
         self.bH.setdefault("Ventilation", {})["Original"] = H_ve
 
+    def _resolve_opaque_element_u(self, comp_name: str, e: dict) -> float:
+        """U-value [W/m²K] to use for one opaque element's own solar-gain
+        term (Walls/Doors/Roof; Windows use ``g_gl``, not U, so this
+        doesn't apply there).
+
+        Mirrors the same two-mode handling ``_initEnvelop`` already uses
+        for the H/conductance calc: prefer the component-level U
+        (``self.bU[comp_name]``) when one was provided; when it's
+        ``None`` (``_initEnvelop``'s documented sentinel for "per-element
+        U was used instead" -- e.g. a component mixing exposed and party
+        walls, where no single value could represent both), fall back to
+        this element's own ``U``. Without this fallback, a component-
+        level-U-less component crashed here with ``TypeError`` (``None``
+        used as a numeric multiplier) even though ``_initEnvelop`` had
+        already validated and used each element's own U correctly a few
+        lines earlier for H -- see CHANGELOG.md / .claude/residential/
+        resolved.md for the fuller writeup.
+        """
+        comp_u = self.bU.get(comp_name)
+        if comp_u is not None:
+            return comp_u
+        eid = e.get("id", "unknown")
+        if e.get("U") is None:
+            raise ValueError(
+                f"components.{comp_name}: element {eid} has no per-element "
+                "U and no component-level U is set -- cannot compute solar "
+                "gain for this element."
+            )
+        return float(e["U"])
+
     # -------- 5R1C & solar --------
     def _init5R1C(self):
         """
@@ -542,8 +575,16 @@ class ModelBUEM:
             win_list.append(qwin)
 
         if not win_list:
-            raise ValueError("No window elements found but windows are configured. Check window element definitions.")
-        self.profiles["bQ_sol_Windows"] = np.sum(np.vstack(win_list), axis=0)
+            # A configured-but-empty Windows component is physically valid
+            # for a building with zero exposed walls (nowhere to
+            # synthesize a window onto) -- zero solar gain, not an error.
+            # Consistent with the H_windows=0.0 fallback a few lines below
+            # (already handled the "no windows" case for conductance) and
+            # with Floor's own "explicitly zero, no solar exposure"
+            # treatment further down this method.
+            self.profiles["bQ_sol_Windows"] = np.zeros(len(self.times))
+        else:
+            self.profiles["bQ_sol_Windows"] = np.sum(np.vstack(win_list), axis=0)
 
         # Window thermal conductance - NO DEFAULTS!
         if "Windows" not in self.bH or "Original" not in self.bH["Windows"]:
@@ -569,7 +610,6 @@ class ModelBUEM:
         R_se_SI = 0.04  # m²K/W — ISO 6946 Table 1 exterior surface resistance
 
         wall_q = []
-        U_walls_SI = self.bU.get("Walls", 1.0)  # W/m²K stored by _initEnvelop
         for e in self.component_elements.get("Walls", []):
             eid = e.get("id", None)
             if "area" not in e:
@@ -579,10 +619,10 @@ class ModelBUEM:
                 poa = self._irrad_surf[eid].values
             else:
                 raise ValueError(f"POA irradiance data missing for opaque element {eid}. Check _calcRadiation output.")
-            wall_q.append(area * alpha * R_se_SI * U_walls_SI * self.F_sh_vert * poa)
+            U_wall_SI = self._resolve_opaque_element_u("Walls", e)
+            wall_q.append(area * alpha * R_se_SI * U_wall_SI * self.F_sh_vert * poa)
 
         # Doors are separate from walls so each uses its own U-value
-        U_doors_SI = self.bU.get("Doors", 1.0)
         for e in self.component_elements.get("Doors", []):
             eid = e.get("id", None)
             if "area" not in e:
@@ -592,13 +632,13 @@ class ModelBUEM:
                 poa = self._irrad_surf[eid].values
             else:
                 raise ValueError(f"POA irradiance data missing for door element {eid}. Check _calcRadiation output.")
-            wall_q.append(area * alpha * R_se_SI * U_doors_SI * self.F_sh_vert * poa)
+            U_door_SI = self._resolve_opaque_element_u("Doors", e)
+            wall_q.append(area * alpha * R_se_SI * U_door_SI * self.F_sh_vert * poa)
 
         if not wall_q:
             raise ValueError("No wall/door elements found but walls are configured. Check wall element definitions.")
         self.profiles["bQ_sol_Walls"] = np.sum(np.vstack(wall_q), axis=0)
 
-        U_roof_SI = self.bU.get("Roof", 1.0)
         roof_q = []
         for e in self.component_elements.get("Roof", []):
             eid = e.get("id", None)
@@ -609,7 +649,8 @@ class ModelBUEM:
                 poa = self._irrad_surf[eid].values
             else:
                 raise ValueError(f"POA irradiance data missing for roof {eid}. Check _calcRadiation output.")
-            roof_q.append(area * alpha * R_se_SI * U_roof_SI * self.F_sh_hor * poa)
+            U_roof_element_SI = self._resolve_opaque_element_u("Roof", e)
+            roof_q.append(area * alpha * R_se_SI * U_roof_element_SI * self.F_sh_hor * poa)
         if not roof_q:
             raise ValueError("No roof elements found but roofs are configured. Check roof element definitions.")
         self.profiles["bQ_sol_Roof"] = np.sum(np.vstack(roof_q), axis=0)
@@ -1106,11 +1147,25 @@ class ModelBUEM:
         A_eq = vstack(eq_rows) if eq_rows else None
         b_eq = np.array(eq_vals) if eq_vals else None
 
-        # milp_meta: parameter bundle forwarded to _build_and_solve_milp
+        # milp_meta: parameter bundle forwarded to _build_and_solve_milp.
+        # Previously swallowed any failure here into a made-up design=1000.0
+        # with no log/warning -- silently masking whatever the real error
+        # was rather than surfacing it (found during a 2026-08-16 audit for
+        # exactly this pattern; see CHANGELOG.md / .claude/residential/
+        # resolved.md). By the time this runs, validate_cfg()/_initEnvelop()
+        # /_init5R1C() have already succeeded earlier in the same
+        # sim_model() call, so this is not expected to fire in practice --
+        # if it ever does, that itself is worth knowing about, not hiding.
         try:
             design = max(1.0, float(self.calcDesignHeatLoad()))
-        except (TypeError, ValueError, KeyError):
-            design = 1000.0
+        except (TypeError, ValueError, KeyError) as exc:
+            logger.warning(
+                "calcDesignHeatLoad() failed while building MILP big-M "
+                "bounds: %s", exc,
+            )
+            raise ValueError(
+                f"Could not compute design heat load for MILP big-M bounds: {exc}"
+            ) from exc
         # bT_comf_ub/lb may vary by timestep -- use the widest gap across the array.
         temp_range = max(0.1, float(np.max(np.abs(self.bT_comf_ub - self.bT_comf_lb))))
         M_array = np.zeros(n)
@@ -1476,9 +1531,12 @@ class ModelBUEM:
             x[0:n] <= self.bT_comf_ub,
         ]
         prob = cp.Problem(obj, constraints)
+        # ASCII-only: a non-cp1252 character here (e.g. U+2208 "element of")
+        # raises UnicodeEncodeError and aborts the solve on a default Windows
+        # console, which doesn't set stdout to UTF-8.
         print(f"Solving LP: {4*n} vars, A_eq {A_eq.shape}, "
-              f"comfort lb∈[{self.bT_comf_lb.min():.1f},{self.bT_comf_lb.max():.1f}], "
-              f"ub∈[{self.bT_comf_ub.min():.1f},{self.bT_comf_ub.max():.1f}] degC ...")
+              f"comfort lb in [{self.bT_comf_lb.min():.1f},{self.bT_comf_lb.max():.1f}], "
+              f"ub in [{self.bT_comf_ub.min():.1f},{self.bT_comf_ub.max():.1f}] degC ...")
         # Try CLARABEL (interior-point, high accuracy) first; fall back to OSQP
         try:
             prob.solve(solver=cp.CLARABEL, verbose=False)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import logging
@@ -6,7 +8,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from buem.buildings.mapping.live_synthesis import synthesize_missing_openings
+from buem.buildings.mapping.live_synthesis import (
+    normalize_opening_azimuths,
+    synthesize_missing_openings,
+)
 from buem.config.attribute_types import AttributeCategory, AttributeSpec, AttrType
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS
 from buem.config.cfg_attribute import cfg as DEFAULT_CFG
@@ -337,6 +342,13 @@ class CfgBuilding:
             country=cfg.get("country"),
             bldg_tabula_id=cfg.get("bldg_tabula_id"),
         )
+        # A window/door cannot face a different direction than the wall (or
+        # roof, for a skylight) it's embedded in -- force azimuth/tilt to
+        # match whenever a `surface` (parent_id) reference resolves, whether
+        # the opening was just synthesized above (already consistent, a
+        # no-op) or explicitly supplied by the caller (corrected here, not
+        # rejected). See live_synthesis.normalize_opening_azimuths.
+        comps = normalize_opening_azimuths(comps)
         cfg["components"] = comps
 
         # compute aggregated A_ref if absent

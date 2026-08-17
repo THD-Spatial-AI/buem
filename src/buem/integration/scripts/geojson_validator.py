@@ -11,27 +11,67 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+import pandas as pd
 from marshmallow import Schema, ValidationError, fields, post_load, validate, validates, validates_schema
+
+# Side-effect-free constants only -- see building_registry.py's own
+# docstring for why this doesn't import from cfg_attribute.py directly
+# (that module does a real, eager weather fetch at import time; request
+# *structure* validation must never require weather archives to be
+# configured).
+from buem.config.building_registry import (
+    DEFAULT_WEATHER_PROVIDER,
+    DEFAULT_YEAR,
+    RESIDENTIAL_BUILDING_TYPES,
+)
+from buem.integration.scripts.profile_file_loader import (
+    load_electricity_load_values,
+    load_weather_profile,
+)
+# occupancy (https://github.com/UU-BUEM/occupancy) is compulsory -- same
+# treatment as elsewhere in buem, imported unconditionally like pandas.
+from occupancy import SERVICE_BUILDING_TYPES  # type: ignore[import]
 
 # Canonical + alias provider strings accepted by weather.point_query.get_point_weather.
 WEATHER_PROVIDERS = ("era5-land", "era5", "cosmo-rea6", "cosmo", "merra-2", "merra2")
+
+# Alias -> canonical provider name (WEATHER_PROVIDERS above accepts both).
+_WEATHER_PROVIDER_CANONICAL = {
+    "era5-land": "era5-land", "era5": "era5-land",
+    "cosmo-rea6": "cosmo-rea6", "cosmo": "cosmo-rea6",
+    "merra-2": "merra-2", "merra2": "merra-2",
+}
+
+# Real per-provider data-availability windows (calendar year, inclusive) --
+# outside these ranges the provider's processed archive doesn't exist or
+# isn't meaningful, so a request for one is rejected here (2026-08-14,
+# tightened per user consultation) rather than failing opaquely deep in
+# weather.get_point_weather()'s own FileNotFoundError. Revisit if the
+# archives' actual coverage changes -- these are data-availability facts
+# about the provider, not a buem design choice, so any correction should
+# come from checking with the `weather` repo, not adjusted freely here.
+WEATHER_PROVIDER_YEAR_RANGES = {
+    "cosmo-rea6": (1995, 2018),
+    "merra-2": (1950, 2025),
+    "era5-land": (1980, 2025),
+}
 
 logger = logging.getLogger(__name__)
 
 
 class SmartComponentsField(fields.Field):
     """Custom field that validates components with proper context for element types."""
-    
+
     def _serialize(self, value, attr, obj, **kwargs):
         return value
-    
+
     def _deserialize(self, value, attr, data, **kwargs):
         if not isinstance(value, dict):
             raise ValidationError("Components must be a dictionary")
-        
+
         errors = {}
         result = {}
-        
+
         for component_type, component_data in value.items():
             try:
                 # Create schema and set context
@@ -40,10 +80,10 @@ class SmartComponentsField(fields.Field):
                 result[component_type] = schema.load(component_data)
             except ValidationError as e:
                 errors[component_type] = e.messages
-        
+
         if errors:
             raise ValidationError(errors)
-        
+
         return result
 
 
@@ -80,22 +120,22 @@ class ValidationResult:
     is_valid: bool
     issues: list[ValidationIssue] = field(default_factory=list)
     validated_data: dict[str, Any] | None = None
-    
-    def add_issue(self, level: ValidationLevel, message: str, path: str, 
+
+    def add_issue(self, level: ValidationLevel, message: str, path: str,
                   value: Any = None, suggestion: str | None = None):
         """Add a validation issue."""
         self.issues.append(ValidationIssue(level, message, path, value, suggestion))
         if level == ValidationLevel.ERROR:
             self.is_valid = False
-    
+
     def get_errors(self) -> list[ValidationIssue]:
         """Get only error-level issues."""
         return [issue for issue in self.issues if issue.level == ValidationLevel.ERROR]
-    
+
     def get_warnings(self) -> list[ValidationIssue]:
         """Get warning-level issues."""
         return [issue for issue in self.issues if issue.level == ValidationLevel.WARNING]
-    
+
     def summary(self) -> str:
         """Get a summary of validation results."""
         errors = len(self.get_errors())
@@ -117,14 +157,14 @@ class ComponentElementSchema(Schema):
     # Optional fields for windows/doors
     surface = fields.Str(required=False, allow_none=True)
     U = fields.Float(validate=lambda x: x > 0, required=False, allow_none=True)  # Allow per-element U-values
-    
+
     @validates('id')
     def validate_id_format(self, value, **kwargs):
         """Validate element ID format."""
         if not value or not value.strip():
             raise ValidationError("Element ID cannot be empty")
         # Add any specific ID format requirements here
-    
+
     @validates('azimuth')
     def validate_azimuth_range(self, value, **kwargs):
         """Validate azimuth is in valid range."""
@@ -136,13 +176,13 @@ class VentilationElementSchema(Schema):
     """Schema for ventilation system elements."""
     id = fields.Str(required=True, validate=lambda x: len(x.strip()) > 0)
     air_changes = fields.Float(required=True, validate=lambda x: x >= 0)
-    
+
     @validates('id')
     def validate_id_format(self, value, **kwargs):
         """Validate element ID format."""
         if not value or not value.strip():
             raise ValidationError("Element ID cannot be empty")
-    
+
     @validates('air_changes')
     def validate_air_changes_range(self, value, **kwargs):
         """Validate air changes is non-negative."""
@@ -156,40 +196,40 @@ class ComponentSchema(Schema):
     g_gl = fields.Float(validate=lambda x: 0 < x < 1, required=False, allow_none=True)  # For windows
     b_transmission = fields.Float(validate=lambda x: x > 0, load_default=1.0)
     elements = fields.Raw(required=True, validate=lambda x: len(x) > 0)
-    
+
     @validates('elements')
     def validate_elements(self, value, **kwargs):
         """
         Validate elements using appropriate schema based on component type.
-        
+
         For Ventilation components, use VentilationElementSchema.
         For other components (Walls, Roof, Floor), use ComponentElementSchema.
         """
         if not isinstance(value, list) or len(value) == 0:
             raise ValidationError("Elements must be a non-empty list")
-        
+
         # Get component type from context
         component_type = self.context.get('component_type')
-        
+
         # Choose appropriate schema based on component type
         if component_type and 'ventilation' in component_type.lower():
             schema_class = VentilationElementSchema
         else:
             schema_class = ComponentElementSchema
-        
+
         # Validate each element
         schema = schema_class()
         errors = {}
-        
+
         for i, element_data in enumerate(value):
             try:
                 schema.load(element_data)
             except ValidationError as e:
                 errors[i] = e.messages
-        
+
         if errors:
             raise ValidationError(errors)
-    
+
     @validates_schema
     def validate_u_value_requirement(self, data, **kwargs):
         """Ensure either component-level or element-level U-values are provided."""
@@ -197,10 +237,10 @@ class ComponentSchema(Schema):
         component_type = self.context.get('component_type')
         if component_type and 'ventilation' in component_type.lower():
             return  # Ventilation components use air_changes, not U-values
-            
+
         component_u = data.get('U')
         elements = data.get('elements', [])
-        
+
         if component_u is None:
             # Check if all elements have U-values
             for i, element in enumerate(elements):
@@ -238,7 +278,7 @@ class BuildingAttributesSchema(Schema):
     # Basic building properties
     A_ref = fields.Float(validate=lambda x: x > 0, load_default=100.0)
     h_room = fields.Float(validate=lambda x: x > 0, load_default=2.5)
-    
+
     # Optional external format fields
     country = fields.Str(required=False, allow_none=True)
     building_type = fields.Str(required=False, allow_none=True)
@@ -246,17 +286,17 @@ class BuildingAttributesSchema(Schema):
     heated_area_m2 = fields.Float(validate=lambda x: x > 0, required=False, allow_none=True)
     volume_m3 = fields.Float(validate=lambda x: x > 0, required=False, allow_none=True)
     height_m = fields.Float(validate=lambda x: x > 0, required=False, allow_none=True)
-    
+
     # Components (nested structure - preferred)
     components = SmartComponentsField(required=False, allow_none=True)
-    
+
     @validates('latitude')
     def validate_latitude(self, value, **kwargs):
         """Validate latitude range."""
         if not -90 <= value <= 90:
             raise ValidationError("Latitude must be between -90 and 90")
-    
-    @validates('longitude')  
+
+    @validates('longitude')
     def validate_longitude(self, value, **kwargs):
         """Validate longitude range."""
         if not -180 <= value <= 180:
@@ -281,6 +321,14 @@ class BuemSchema(Schema):
     envelope = fields.Dict(required=False, allow_none=True)
     thermal = fields.Dict(required=False, allow_none=True)
     solver = fields.Dict(required=False, allow_none=True)
+
+    # v4 additions (v3->v4 promotion, 2026-08-14; sign-off: this session,
+    # see CLAUDE.md "Guardrails") — buem.weather (provider/year/profile,
+    # see versions/v4/request_schema.json's weather_source $def) and
+    # buem.inputs (electricity_load_profile). Structure validated by
+    # _convert_v3_to_v2, same as building/envelope/thermal/solver above.
+    weather = fields.Dict(required=False, allow_none=True)
+    inputs = fields.Dict(required=False, allow_none=True)
 
     @validates_schema
     def require_v2_or_v3(self, data, **kwargs):
@@ -317,7 +365,10 @@ class PropertiesSchema(Schema):
 class GeometrySchema(Schema):
     """Schema for GeoJSON geometry."""
     type = fields.Str(required=True, validate=lambda x: x == "Point")
-    coordinates = fields.List(fields.Float(), required=True, validate=lambda x: len(x) == 2)
+    # 2 or 3 elements: [longitude, latitude, elevation?] -- matches
+    # request_schema.json's minItems:2/maxItems:3 (elevation optional).
+    # Sign-off: 2026-08-12 session, see CLAUDE.md "Guardrails".
+    coordinates = fields.List(fields.Float(), required=True, validate=lambda x: len(x) in (2, 3))
 
 
 class FeatureSchema(Schema):
@@ -335,7 +386,7 @@ class GeoJsonRequestSchema(Schema):
     timeStamp = fields.DateTime(required=False, allow_none=True)
     numberMatched = fields.Int(required=False, allow_none=True)
     numberReturned = fields.Int(required=False, allow_none=True)
-    
+
     @post_load
     def normalize_single_feature(self, data, **kwargs):
         """Convert single Feature to FeatureCollection if needed."""
@@ -352,18 +403,18 @@ class GeoJsonRequestSchema(Schema):
 class GeoJsonValidator:
     """
     Comprehensive GeoJSON validator with hybrid component support.
-    
+
     Supports both:
     1. Nested components structure (preferred): components.Walls.elements[]
     2. Flat child_components structure (external): child_components[]
-    
+
     Provides detailed validation with debugging information.
     """
-    
+
     def __init__(self, strict_mode: bool = False):
         """
         Initialize validator.
-        
+
         Parameters
         ----------
         strict_mode : bool
@@ -371,33 +422,33 @@ class GeoJsonValidator:
         """
         self.strict_mode = strict_mode
         self.schema = GeoJsonRequestSchema()
-    
+
     def validate(self, payload: dict[str, Any]) -> ValidationResult:
         """
         Validate GeoJSON payload with comprehensive error reporting.
-        
+
         Parameters
         ----------
         payload : Dict[str, Any]
             Raw GeoJSON payload to validate.
-            
+
         Returns
         -------
         ValidationResult
             Detailed validation results with errors, warnings, and suggestions.
         """
         result = ValidationResult(is_valid=True)
-        
+
         try:
             # Basic schema validation
             validated_data = self.schema.load(payload)
             result.validated_data = validated_data
-            
+
             # Additional custom validations
             self._validate_features(validated_data['features'], result)
             self._validate_time_consistency(validated_data['features'], result)
             self._convert_components_format(validated_data, result)
-            
+
         except ValidationError as e:
             result.is_valid = False
             self._process_marshmallow_errors(e.messages, result)
@@ -408,14 +459,14 @@ class GeoJsonValidator:
                 "root",
                 suggestion="Check payload format and structure"
             )
-        
+
         return result
-    
+
     def _validate_features(self, features: list[dict], result: ValidationResult):
         """Validate individual features."""
         for i, feature in enumerate(features):
             self._validate_single_feature(feature, f"features[{i}]", result)
-    
+
     def _validate_single_feature(self, feature: dict, path: str, result: ValidationResult):
         """Validate a single feature (supports both v2 and v3 layout)."""
         buem_data = feature.get('properties', {}).get('buem', {})
@@ -433,6 +484,79 @@ class GeoJsonValidator:
                     "No envelope elements found",
                     f"{path}.properties.buem.building.envelope",
                     suggestion="Provide 'elements' list inside 'building.envelope'"
+                )
+
+            # building_type validation (v3->v4 promotion, 2026-08-14;
+            # sign-off: this session, see CLAUDE.md "Guardrails"). MAJOR/
+            # breaking per VERSIONING.md ("validation constraints become
+            # stricter") -- an unrecognized building_type now fails here,
+            # instead of failing later and less legibly, deep inside
+            # AttributeBuilder.generate_electricity_profile() via
+            # ServiceBuildingProfile's own ValueError. Sourced dynamically
+            # from both live registries (RESIDENTIAL_BUILDING_TYPES and
+            # occupancy.SERVICE_BUILDING_TYPES), not a hand-copied enum, so
+            # this check can't itself drift the way a static schema enum
+            # could (see test_v4_building_type_enum_matches_occupancy for
+            # that separate, schema-side drift guard).
+            building_type = building.get('building_type')
+            if building_type is not None:
+                valid_types = RESIDENTIAL_BUILDING_TYPES | set(SERVICE_BUILDING_TYPES)
+                if building_type not in valid_types:
+                    result.add_issue(
+                        ValidationLevel.ERROR,
+                        f"Unknown building_type {building_type!r}",
+                        f"{path}.properties.buem.building.building_type",
+                        suggestion=f"Must be one of: {sorted(valid_types)}",
+                    )
+
+            # Reject, rather than silently ignore, schema fields the v3->v4
+            # promotion deliberately does NOT wire up yet -- an accepted-
+            # but-inert field would otherwise model the wrong building
+            # without telling the caller. Both remain real, documented v4
+            # draft proposals (versions/v4/DRAFT.md); wiring either is a
+            # separate, later task, not attempted in this pass.
+            weather_block = buem_data.get('weather')
+            if isinstance(weather_block, dict) and weather_block.get('use_percentile'):
+                result.add_issue(
+                    ValidationLevel.ERROR,
+                    "weather.use_percentile is not yet implemented",
+                    f"{path}.properties.buem.weather.use_percentile",
+                    suggestion="Omit use_percentile/percentile and supply weather.year instead",
+                )
+
+            # Per-provider year-range validation (2026-08-14, tightened per
+            # user consultation -- see WEATHER_PROVIDER_YEAR_RANGES). A
+            # provider is asked for a year its processed archive doesn't
+            # cover fails here, with a clear message naming the valid
+            # range, instead of an opaque FileNotFoundError three layers
+            # deep in weather.get_point_weather() during AttributeBuilder.
+            if isinstance(weather_block, dict) and weather_block.get('year') is not None:
+                year = weather_block['year']
+                provider_raw = weather_block.get('provider', DEFAULT_WEATHER_PROVIDER)
+                provider = _WEATHER_PROVIDER_CANONICAL.get(provider_raw, provider_raw)
+                year_range = WEATHER_PROVIDER_YEAR_RANGES.get(provider)
+                if year_range is not None and not (year_range[0] <= year <= year_range[1]):
+                    result.add_issue(
+                        ValidationLevel.ERROR,
+                        f"weather.year {year} is outside {provider}'s available range "
+                        f"{year_range[0]}-{year_range[1]}",
+                        f"{path}.properties.buem.weather.year",
+                        suggestion=(
+                            f"Use a year between {year_range[0]} and {year_range[1]} for "
+                            f"provider {provider!r}, or omit provider to use the default "
+                            f"({DEFAULT_WEATHER_PROVIDER!r})."
+                        ),
+                    )
+            solver_block = buem_data.get('solver')
+            if isinstance(solver_block, dict) and solver_block.get('compute_cooling'):
+                result.add_issue(
+                    ValidationLevel.ERROR,
+                    "solver.compute_cooling is not yet implemented",
+                    f"{path}.properties.buem.solver.compute_cooling",
+                    suggestion=(
+                        "Omit compute_cooling -- both heating and cooling loads are "
+                        "always computed and returned unconditionally today"
+                    ),
                 )
         else:
             # v2: building_attributes.components or child_components
@@ -456,20 +580,20 @@ class GeoJsonValidator:
                     f"{path}.properties.buem",
                     suggestion="Use only one component format for clarity"
                 )
-    
+
     def _validate_time_consistency(self, features: list[dict], result: ValidationResult):
         """Validate time range consistency."""
         for i, feature in enumerate(features):
             props = feature.get('properties', {})
             start_time = props.get('start_time')
             end_time = props.get('end_time')
-            
+
             if start_time and end_time:
                 if isinstance(start_time, str):
                     start_time = datetime.fromisoformat(start_time)
                 if isinstance(end_time, str):
                     end_time = datetime.fromisoformat(end_time)
-                
+
                 if start_time >= end_time:
                     result.add_issue(
                         ValidationLevel.ERROR,
@@ -477,29 +601,29 @@ class GeoJsonValidator:
                         f"features[{i}].properties",
                         suggestion="Check time range validity"
                     )
-    
+
     def _convert_components_format(self, data: dict, result: ValidationResult):
         """Convert child_components or v3 envelope to nested components format if needed."""
         for i, feature in enumerate(data.get('features', [])):
             buem_data = feature.get('properties', {}).get('buem', {})
-            
+
             # Check for v3 format: building.envelope.elements
             building = buem_data.get('building')
             if isinstance(building, dict) and isinstance(building.get('envelope'), dict):
                 try:
                     self._convert_v3_to_v2(feature, result, i)
-                except (TypeError, ValueError, KeyError, AttributeError) as e:
+                except (TypeError, ValueError, KeyError, AttributeError, IndexError) as e:
                     result.add_issue(
                         ValidationLevel.ERROR,
                         f"Failed to convert v3 format to internal format: {e!s}",
                         f"features[{i}].properties.buem.building"
                     )
                 continue
-            
+
             # v2 child_components conversion
             building_attrs = buem_data.get('building_attributes', {})
             child_components = buem_data.get('child_components', [])
-            
+
             # If no nested components but have child_components, convert
             if (not building_attrs.get('components') and child_components):
                 try:
@@ -516,16 +640,16 @@ class GeoJsonValidator:
                         f"Failed to convert child_components: {e!s}",
                         f"features[{i}].properties.buem.child_components"
                     )
-    
+
     def _convert_v3_to_v2(self, feature: dict, result: ValidationResult, feature_idx: int):
         """
-        Convert v3 format (building.envelope.elements with {value,unit} objects) 
+        Convert v3 format (building.envelope.elements with {value,unit} objects)
         to v2 format (building_attributes.components) for internal processing.
-        
+
         The v3 format uses:
           - buem.building.envelope.elements[] with type-based grouping
           - Explicit {value, unit} measurement objects
-          
+
         This converts to:
           - buem.building_attributes.components.{Walls,Roof,...}.elements[]
           - Plain numeric values
@@ -535,20 +659,20 @@ class GeoJsonValidator:
         envelope = building.get('envelope', {})
         elements = envelope.get('elements', [])
         thermal = building.get('thermal', {})
-        
+
         # Extract scalar values from {value, unit} objects
         def extract_value(obj):
             """Extract numeric value from either {value, unit} dict or plain value."""
             if isinstance(obj, dict) and 'value' in obj:
                 return obj['value']
             return obj
-        
+
         # Extract building-level attributes
         latitude = feature.get('geometry', {}).get('coordinates', [0, 0])[1]
         longitude = feature.get('geometry', {}).get('coordinates', [0, 0])[0]
         A_ref = extract_value(building.get('A_ref', 100.0))
         h_room = extract_value(building.get('h_room', 2.5))
-        
+
         # Group elements by type → component categories
         type_map = {
             'wall': 'Walls',
@@ -558,7 +682,7 @@ class GeoJsonValidator:
             'door': 'Doors',
             'ventilation': 'Ventilation',
         }
-        
+
         components: dict[str, dict[str, Any]] = {}
         for elem in elements:
             elem_type = elem.get('type', '').lower()
@@ -571,10 +695,10 @@ class GeoJsonValidator:
                     suggestion=f"Valid types: {', '.join(type_map.keys())}"
                 )
                 continue
-            
+
             if comp_key not in components:
                 components[comp_key] = {'elements': []}
-            
+
             if elem_type == 'ventilation':
                 converted_elem = {
                     'id': elem.get('id', f'Vent_{len(components[comp_key]["elements"])+1}'),
@@ -587,28 +711,28 @@ class GeoJsonValidator:
                     'azimuth': extract_value(elem.get('azimuth', 0)),
                     'tilt': extract_value(elem.get('tilt', 0)),
                 }
-                
+
                 # U-value (per-element)
                 if 'U' in elem:
                     converted_elem['U'] = extract_value(elem['U'])
-                
+
                 # b_transmission
                 if 'b_transmission' in elem:
                     converted_elem['b_transmission'] = extract_value(elem['b_transmission'])
-                
+
                 # Window-specific: g_gl, parent_id→surface
                 if elem_type == 'window':
                     if 'g_gl' in elem:
                         components[comp_key].setdefault('g_gl', extract_value(elem['g_gl']))
                     if 'parent_id' in elem:
                         converted_elem['surface'] = elem['parent_id']
-                
+
                 # Door-specific: parent_id→surface
                 if elem_type == 'door' and 'parent_id' in elem:
                     converted_elem['surface'] = elem['parent_id']
-            
+
             components[comp_key]['elements'].append(converted_elem)
-        
+
         # Set component-level U-values from first element if all share the same value
         for comp_key, comp_data in components.items():
             if comp_key == 'Ventilation':
@@ -625,7 +749,7 @@ class GeoJsonValidator:
         for required in ('Walls', 'Windows', 'Roof', 'Floor', 'Doors'):
             if required not in components:
                 components[required] = {'U': _default_U[required], 'elements': []}
-        
+
         # Extract thermal parameters
         n_air_infiltration = extract_value(thermal.get('n_air_infiltration', 0.5))
         n_air_use = extract_value(thermal.get('n_air_use', 0.5))
@@ -637,7 +761,7 @@ class GeoJsonValidator:
         F_sh_vert = extract_value(thermal.get('F_sh_vert', 0.75))
         F_f = extract_value(thermal.get('F_f', 0.2))
         F_w = extract_value(thermal.get('F_w', 1.0))
-        
+
         # Build v2 building_attributes
         building_attributes = {
             'latitude': latitude,
@@ -672,7 +796,7 @@ class GeoJsonValidator:
         win_comp = components.get('Windows', {})
         if 'g_gl' in win_comp:
             building_attributes['g_gl_n_Window'] = win_comp['g_gl']
-        
+
         # Optional building metadata. capacity/num_persons/archetype forward
         # occupancy generation inputs (occupancy_gains_handoff.md Gap 2,
         # 2026-08-07) -- AttributeBuilder.generate_electricity_profile()
@@ -683,32 +807,88 @@ class GeoJsonValidator:
         # request contract -- see CLAUDE.md "Occupancy is compulsory".
         for key in ('building_type', 'construction_period', 'country', 'n_storeys',
                     'neighbour_status', 'attic_condition', 'cellar_condition',
-                    'capacity', 'num_persons', 'archetype'):
+                    'capacity', 'num_persons', 'archetype', 'equipment'):
             if key in building:
                 building_attributes[key] = building[key]
-        
+
+        # Weather source selection (buem.weather.provider/year, v3->v4
+        # promotion 2026-08-14; sign-off: this session, see CLAUDE.md
+        # "Guardrails"). Previously only reachable via a genuine v2-format
+        # request or a direct AttributeBuilder call -- see CLAUDE.md
+        # "Weather is compulsory"'s "Gap found" note. use_percentile/
+        # percentile remain deliberately unforwarded (rejected above, not
+        # silently ignored): they need weather's own percentile-year
+        # infrastructure wired through the point-query HTTP API first, an
+        # unstarted, separate piece of work (see versions/v4/DRAFT.md).
+        #
+        # Deliberately does NOT fall back to start_time's calendar year
+        # despite DRAFT.md's documented intent for the year field:
+        # confirmed against real fixtures that this can silently request a
+        # year for which no local archive exists (start_time is often "now"
+        # in a request, not the archived weather year), turning a working
+        # request into a hard failure. year is forwarded only when the
+        # caller explicitly supplies buem.weather.year -- omitting it keeps
+        # today's AttributeBuilder-default-year behavior unchanged, exactly
+        # as before this promotion.
+        weather_block = buem_data.get('weather') or {}
+        resolved_year = None
+        if isinstance(weather_block, dict) and weather_block.get('year') is not None:
+            resolved_year = int(weather_block['year'])
+            building_attributes['year'] = resolved_year
+        if isinstance(weather_block, dict) and weather_block.get('provider'):
+            building_attributes['weather_provider'] = weather_block['provider']
+
+        # Caller-supplied weather profile file (buem.weather.profile) --
+        # overrides the provider/year fetch entirely when present.
+        weather_profile = weather_block.get('profile') if isinstance(weather_block, dict) else None
+        if isinstance(weather_profile, dict) and weather_profile.get('path'):
+            building_attributes['weather'] = load_weather_profile(
+                weather_profile['path'], weather_profile.get('format', 'json'),
+            )
+            building_attributes['use_provided_weather'] = True
+
+        # Caller-supplied electricity load profile file
+        # (buem.inputs.electricity_load_profile) -- a flat hourly array
+        # with no timestamp column, indexed here against the resolved
+        # year above (or AttributeBuilder's own DEFAULT_YEAR if none was
+        # resolved). A length that doesn't match the real weather index is
+        # not checked here -- AttributeBuilder._reindex_or_raise() catches
+        # a genuine mismatch downstream with a clear error, once the real
+        # weather index is known.
+        inputs_block = buem_data.get('inputs')
+        elec_profile = inputs_block.get('electricity_load_profile') if isinstance(inputs_block, dict) else None
+        if isinstance(elec_profile, dict) and elec_profile.get('path'):
+            values = load_electricity_load_values(
+                elec_profile['path'], elec_profile.get('unit', 'kWh'),
+            )
+            index = pd.date_range(
+                f"{resolved_year or DEFAULT_YEAR}-01-01", periods=len(values), freq="h",
+            )
+            building_attributes['elecLoad'] = pd.Series(values, index=index, name='elecLoad')
+            building_attributes['use_provided_elecLoad'] = True
+
         # Extract solver settings
         solver = buem_data.get('solver', {})
         use_milp = solver.get('use_milp', False)
-        
+
         # Replace buem section with v2 format
         buem_data['building_attributes'] = building_attributes
         buem_data['use_milp'] = use_milp
-        
+
         result.add_issue(
             ValidationLevel.INFO,
             "Converted v3 format (building.envelope) to v2 internal format (building_attributes.components)",
             f"features[{feature_idx}].properties.buem"
         )
-    
+
     def _child_to_nested_components(self, child_components: list[dict]) -> dict[str, Any]:
         """Convert child_components array to nested components structure."""
         components: dict[str, dict[str, Any]] = {}
-        
+
         # Group by component type
         for child in child_components:
             comp_type = child['component_type'].lower()
-            
+
             # Map component types
             if comp_type == 'wall':
                 comp_key = 'Walls'
@@ -722,10 +902,10 @@ class GeoJsonValidator:
                 comp_key = 'Doors'
             else:
                 comp_key = comp_type.title()
-            
+
             if comp_key not in components:
                 components[comp_key] = {'elements': []}
-            
+
             # Convert to element format
             element = {
                 'id': child['component_id'],
@@ -733,14 +913,14 @@ class GeoJsonValidator:
                 'azimuth': child['orientation_deg'],
                 'tilt': child['tilt_deg']
             }
-            
+
             if child.get('u_value'):
                 element['U'] = child['u_value']
             if child.get('surface_reference'):
                 element['surface'] = child['surface_reference']
-            
+
             components[comp_key]['elements'].append(element)
-        
+
         # Set default U-values if not provided per-element
         default_u_values = {
             'Walls': 1.6,
@@ -749,24 +929,24 @@ class GeoJsonValidator:
             'Windows': 2.5,
             'Doors': 3.5
         }
-        
+
         for comp_key, comp_data in components.items():
             elements = comp_data['elements']
             has_element_u = any(elem.get('U') for elem in elements)
-            
+
             if not has_element_u and comp_key in default_u_values:
                 comp_data['U'] = default_u_values[comp_key]
-            
+
             # Add special properties for windows
             if comp_key == 'Windows':
                 comp_data['g_gl'] = 0.5  # Default solar gain
-        
+
         return components
-    
+
     def _process_marshmallow_errors(self, errors: dict | list | str, result: ValidationResult):
         """Process marshmallow validation errors."""
         self._flatten_errors(errors, result, "")
-    
+
     def _flatten_errors(self, errors: dict | list | str, result: ValidationResult, path: str):
         """Recursively flatten nested error messages with actionable suggestions."""
         if isinstance(errors, dict):
@@ -823,14 +1003,14 @@ class GeoJsonValidator:
 def validate_geojson_request(payload: dict[str, Any], strict_mode: bool = False) -> ValidationResult:
     """
     Convenience function to validate GeoJSON request.
-    
+
     Parameters
     ----------
     payload : Dict[str, Any]
         GeoJSON payload to validate.
     strict_mode : bool
         Treat warnings as errors.
-        
+
     Returns
     -------
     ValidationResult
@@ -843,12 +1023,12 @@ def validate_geojson_request(payload: dict[str, Any], strict_mode: bool = False)
 def create_validation_report(result: ValidationResult) -> str:
     """
     Create a detailed validation report.
-    
+
     Parameters
     ----------
     result : ValidationResult
         Validation result to report.
-        
+
     Returns
     -------
     str
@@ -857,7 +1037,7 @@ def create_validation_report(result: ValidationResult) -> str:
     report = ["=== VALIDATION REPORT ==="]
     report.append(f"Status: {result.summary()}")
     report.append("")
-    
+
     if result.get_errors():
         report.append("ERRORS:")
         for issue in result.get_errors():
@@ -865,7 +1045,7 @@ def create_validation_report(result: ValidationResult) -> str:
             if issue.suggestion:
                 report.append(f"     💡 Suggestion: {issue.suggestion}")
         report.append("")
-    
+
     if result.get_warnings():
         report.append("WARNINGS:")
         for issue in result.get_warnings():
@@ -873,12 +1053,12 @@ def create_validation_report(result: ValidationResult) -> str:
             if issue.suggestion:
                 report.append(f"     💡 Suggestion: {issue.suggestion}")
         report.append("")
-    
+
     info_issues = [i for i in result.issues if i.level == ValidationLevel.INFO]
     if info_issues:
         report.append("INFO:")
         for issue in info_issues:
             report.append(f"  ℹ️  {issue.path}: {issue.message}")
         report.append("")
-    
+
     return "\n".join(report)

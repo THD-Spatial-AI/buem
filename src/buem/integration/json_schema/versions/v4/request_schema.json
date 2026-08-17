@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://buem.energy/schemas/v4/request",
-  "title": "BUEM GeoJSON Request Schema v4 (DRAFT)",
-  "description": "DRAFT, not yet agreed with EnerPlanET -- see versions/v4/DRAFT.md. Request schema for the BUEM building energy model. Each feature represents one building. The buem object contains two concerns: building (complete physical description — classification, geometry, and thermal performance) and solver (execution settings). All measurable quantities carry an explicit unit field. SI units are assumed when unit is omitted. Dimensionless ratios use unit: '-'.",
+  "title": "BUEM GeoJSON Request Schema v4",
+  "description": "Live request schema for the BUEM building energy model, promoted from draft 2026-08-14 -- see versions/v4/DRAFT.md for the full proposal/reconciliation/promotion history, and VERSIONING.md's v4.0.0 entry. Not formally reviewed by EnerPlanET line-by-line (see DRAFT.md's promotion note for what that does and doesn't mean). Each feature represents one building. The buem object contains four concerns: building (complete physical description — classification, geometry, and thermal performance), solver (execution settings), inputs (optional user-provided timeseries overrides), and weather (real-world weather-module data source selection). All measurable quantities carry an explicit unit field. SI units are assumed when unit is omitted. Dimensionless ratios use unit: '-'.",
   "type": "object",
   "required": ["type", "features"],
   "properties": {
@@ -66,7 +66,7 @@
     "buem": {
       "type": "object",
       "required": ["building"],
-      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. inputs contains optional user-provided timeseries that override model-generated values. weather selects which real-world weather-module data source feeds the thermal model -- DRAFT v4 addition, not yet in EnerPlanET's own v4 (see DRAFT.md), layered alongside their real inputs/solver.compute_cooling additions reconciled into this draft on 2026-08-06.",
+      "description": "BUEM model input. building contains the complete physical description of the building. solver contains execution settings. inputs contains optional user-provided timeseries that override model-generated values. weather selects which real-world weather-module data source feeds the thermal model -- a buem-side addition not present in EnerPlanET's own v4 as of the last check (2026-08-06), layered alongside their real inputs/solver.compute_cooling additions (see DRAFT.md for the reconciliation history).",
       "properties": {
         "building": { "$ref": "#/$defs/building" },
         "solver":   { "$ref": "#/$defs/solver" },
@@ -101,22 +101,22 @@
         "building_type": {
           "type": "string",
           "enum": ["SFH", "MFH", "TH", "AB", "supermarket", "office", "restaurant", "school", "hotel", "bakery", "warehouse", "clinic"],
-          "description": "DRAFT v4 change: enum added (v3 was a free-text string). Not present in EnerPlanET's real v4 (still free-text there as of 2026-08-06, https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4) -- this stays a buem-side proposal, not yet reconciled/agreed. TABULA residential size class (SFH single-family, MFH multi-family, AB apartment block, TH terraced house) or an occupancy service-building type id (supermarket, office, restaurant, school, hotel, bakery, warehouse, clinic). Determines whether internal-gains/electricity generation uses a household or service-building occupancy model."
+          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14) -- enforced by geojson_validator.py against the union of RESIDENTIAL_BUILDING_TYPES and occupancy.SERVICE_BUILDING_TYPES (read live, not hand-copied). Still not present in EnerPlanET's real v4 as of the last check (2026-08-06, still free-text there, https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4) -- see DRAFT.md's promotion note. TABULA residential size class (SFH single-family, MFH multi-family, AB apartment block, TH terraced house) or an occupancy service-building type id (supermarket, office, restaurant, school, hotel, bakery, warehouse, clinic). Determines whether internal-gains/electricity generation uses a household or service-building occupancy model."
         },
         "capacity": {
           "type": "integer",
           "minimum": 1,
-          "description": "DRAFT v4 addition (new optional field, additive). Not present in EnerPlanET's real v4 as of 2026-08-06 -- buem-side proposal, not yet reconciled/agreed. Service-building capacity (seats/beds/staff) for occupancy generation. Ignored for residential building_type values, where household size applies instead. Omit to use the service type's own default capacity."
+          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14). Not present in EnerPlanET's real v4 as of the last check (2026-08-06). Service-building capacity (seats/beds/staff) for occupancy generation. Ignored for residential building_type values, where household size applies instead. Omit to use the service type's own default capacity."
         },
         "num_persons": {
           "type": "integer",
           "minimum": 1,
-          "description": "DRAFT v4 addition (new optional field, additive, 2026-08-07). Not present in EnerPlanET's real v4 -- buem-side proposal, not yet reconciled/agreed. Household size passed to occupancy.HouseholdProfile. Ignored for service-building building_type values, where capacity applies instead. Omit to use cfg_attribute.DEFAULT_NUM_PERSONS."
+          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14, added 2026-08-07). Not present in EnerPlanET's real v4. Household size passed to occupancy.HouseholdProfile. Ignored for service-building building_type values, where capacity applies instead. Omit to use cfg_attribute.DEFAULT_NUM_PERSONS."
         },
         "archetype": {
           "type": "string",
           "enum": ["generic", "working_couple", "family_with_children", "retired_single", "student_shared"],
-          "description": "DRAFT v4 addition (new optional field, additive, 2026-08-07). Not present in EnerPlanET's real v4 -- buem-side proposal, not yet reconciled/agreed. occupancy household archetype (occupancy.households.archetypes.HOUSEHOLD_ARCHETYPES), selecting the occupancy-probability schedule shape. Residential only -- ignored for service-building building_type values. Omit to use cfg_attribute.DEFAULT_ARCHETYPE_BY_BUILDING_TYPE.get(building_type, 'generic') -- a first-pass heuristic, not a derivation; num_persons remains the dominant signal."
+          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14, added 2026-08-07). Not present in EnerPlanET's real v4. occupancy household archetype (occupancy.households.archetypes.HOUSEHOLD_ARCHETYPES), selecting the occupancy-probability schedule shape. Residential only -- ignored for service-building building_type values. Omit to use cfg_attribute.DEFAULT_ARCHETYPE_BY_BUILDING_TYPE.get(building_type, 'generic') -- a first-pass heuristic, not a derivation; num_persons remains the dominant signal."
         },
         "construction_period": {
           "type": "string",
@@ -141,6 +141,42 @@
           "enum": ["B_Alone", "B_N1", "B_N2"],
           "description": "Attached neighbours: B_Alone detached, B_N1 one shared wall, B_N2 two shared walls"
         },
+        "equipment": {
+          "type": "object",
+          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14; boolean-per-item shape as of the same date, replacing an earlier {mode,items} shape). Not present in EnerPlanET's real v4. Per-item household-equipment inclusion/exclusion: true forces the item to be treated as owned (bypassing occupancy's own ownership-probability draw for it), false forces it excluded entirely, and an omitted id falls back to occupancy's own default behavior for that item (including its normal stochastic ownership draw and any archetype-specific tuning). Keys are validated against the property list below -- additionalProperties: false rejects an unrecognized id at the schema layer, not just at runtime. Residential building_type only -- ignored (with a logged warning) for service-building types, since occupancy.ServiceBuildingProfile has no per-item equipment selection yet (see .claude/occupancy_module_activities.md). The property list is hand-copied from occupancy's households/data/equipment.json -- occupancy has no stable top-level export for this registry yet (same caveat building_type's enum carries for SERVICE_BUILDING_TYPES pre-promotion). Omit entirely to use occupancy's own default equipment set, unchanged.",
+          "properties": {
+            "chest_freezer":       { "type": "boolean" },
+            "fridge_freezer":      { "type": "boolean" },
+            "refrigerator":        { "type": "boolean" },
+            "upright_freezer":     { "type": "boolean" },
+            "answer_machine":      { "type": "boolean" },
+            "cassette_cd_player":  { "type": "boolean" },
+            "clock":               { "type": "boolean" },
+            "cordless_telephone":  { "type": "boolean" },
+            "hi_fi":               { "type": "boolean" },
+            "iron":                { "type": "boolean" },
+            "vacuum":              { "type": "boolean" },
+            "fax":                 { "type": "boolean" },
+            "personal_computer":   { "type": "boolean" },
+            "printer":             { "type": "boolean" },
+            "tv_1":                { "type": "boolean" },
+            "tv_2":                { "type": "boolean" },
+            "tv_3":                { "type": "boolean" },
+            "vcr_dvd":             { "type": "boolean" },
+            "tv_receiver_box":     { "type": "boolean" },
+            "hob":                 { "type": "boolean" },
+            "oven":                { "type": "boolean" },
+            "microwave":           { "type": "boolean" },
+            "kettle":              { "type": "boolean" },
+            "small_cooking_group": { "type": "boolean" },
+            "dish_washer":         { "type": "boolean" },
+            "tumble_dryer":        { "type": "boolean" },
+            "washing_machine":     { "type": "boolean" },
+            "washer_dryer":        { "type": "boolean" },
+            "lighting":            { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
         "envelope": { "$ref": "#/$defs/envelope" },
         "thermal":  { "$ref": "#/$defs/thermal" }
       }
@@ -149,7 +185,7 @@
     "envelope": {
       "type": "object",
       "required": ["elements"],
-      "description": "All building surfaces. Each element carries both its geometry (area, orientation, tilt) and its thermal properties (U-value, solar gain coefficient, etc.) in a single entry. No separate thermal properties list is needed.",
+      "description": "All building surfaces. Each element carries both its geometry (area, orientation, tilt) and its thermal properties (U-value, solar gain coefficient, etc.) in a single entry. No separate thermal properties list is needed. Window/door/ventilation ('LOD3') elements are optional -- EnerPlanET's UI deliberately does not require filling them in. When elements of type window, door, or ventilation are omitted (or elements is supplied with wall/roof/floor only), the model synthesizes them internally from the supplied wall geometry, a matched TABULA archetype (building_type + construction_period + country), or documented safe-default ratios when no archetype matches (buem.buildings.mapping.live_synthesis; see buildings.rst 'LOD2 -> LOD3 in the live request-handling path'). An explicitly-supplied, non-empty set of window/door/ventilation elements is never overridden.",
       "properties": {
         "elements": {
           "type": "array",
@@ -185,18 +221,18 @@
         },
         "azimuth": {
           "allOf": [{ "$ref": "#/$defs/angle_qty" }],
-          "description": "Orientation measured clockwise from North (0=N, 90=E, 180=S, 270=W)"
+          "description": "Orientation measured clockwise from North (0=N, 90=E, 180=S, 270=W). For a window or door with parent_id set, this value is not independently authoritative: the model always forces it to match the referenced parent's own azimuth (a window/door cannot face a different direction than the wall/roof it's embedded in) -- a mismatch is corrected, not rejected. See parent_id."
         },
         "tilt": {
           "allOf": [
             { "$ref": "#/$defs/angle_qty" },
             { "properties": { "value": { "minimum": 0, "maximum": 90 } } }
           ],
-          "description": "Tilt from horizontal (0=horizontal roof, 90=vertical wall)"
+          "description": "Tilt from horizontal (0=horizontal roof, 90=vertical wall). Same parent_id-derived override as azimuth applies to windows/doors -- see parent_id."
         },
         "parent_id": {
           "type": "string",
-          "description": "Id of the envelope element this surface is embedded in. Required for windows and doors. A window is embedded in a wall (or roof for a skylight); a door is embedded in a wall."
+          "description": "Id of the envelope element this surface is embedded in. Required for windows and doors. A window is embedded in a wall (or roof for a skylight); a door is embedded in a wall. When set, the child's own azimuth/tilt are ignored in favor of the referenced parent's azimuth/tilt (buem.buildings.mapping.live_synthesis.normalize_opening_azimuths()) -- this applies whether the child was supplied explicitly or synthesized internally (see the top-level building.envelope description for when synthesis happens). Not applied to ventilation elements, which carry no meaningful azimuth/tilt in this model (see thermal.n_air_use)."
         },
         "U": {
           "allOf": [{ "$ref": "#/$defs/u_value_qty" }],
@@ -317,32 +353,83 @@
 
     "weather_source": {
       "type": "object",
-      "description": "DRAFT v4 addition. Not present in EnerPlanET's real v4 as of 2026-08-06 (https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4) -- their schema resolves weather from geometry.coordinates alone (\"used for weather station lookup\"), with no client-specified provider/year/percentile. This stays a buem-side proposal, not yet reconciled/agreed. Selects the real-world weather-module data source (T/GHI/DHI/DNI) for this building's location -- see UU-BUEM/weather. buem has no bundled/local-file weather fallback; every request is served by a real per-location fetch. year and use_percentile/percentile are alternative ways to pick which year's data is used -- see each field's own description for how they interact.",
+      "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14). Not present in EnerPlanET's real v4 as of the last check (2026-08-06, https://github.com/enerplanet/buem-gateway/tree/main/schemas/v4) -- their schema resolves weather from geometry.coordinates alone (\"used for weather station lookup\"), with no client-specified provider/year/percentile. Selects the real-world weather-module data source (T/GHI/DHI/DNI) for this building's location -- see UU-BUEM/weather. buem has no bundled/local-file weather fallback; every request is served by a real per-location fetch (unless profile is supplied). year and use_percentile/percentile are alternative ways to pick which year's data is used -- see each field's own description for how they interact. use_percentile/percentile remain schema-only -- not yet wired to real behavior, and explicitly rejected (not silently ignored) if sent -- see DRAFT.md's \"Deliberately unwired at promotion\".",
       "properties": {
         "provider": {
           "type": "string",
           "enum": ["era5-land", "cosmo-rea6", "merra-2"],
           "default": "merra-2",
-          "description": "Which processed weather archive to fetch the location's T/GHI/DHI/DNI from."
+          "description": "Which processed weather archive to fetch the location's T/GHI/DHI/DNI from. Each provider's processed archive only covers a specific calendar-year range (tightened 2026-08-14, per consultation -- a data-availability fact about each archive, not a buem design choice): era5-land 1980-2025, cosmo-rea6 1995-2018, merra-2 1950-2025. year (below) is validated against whichever provider applies (explicit or the merra-2 default) -- geojson_validator.py rejects an out-of-range combination at validation time, and the same ranges are expressed declaratively below via allOf/if/then for any other consumer validating directly against this schema file."
         },
         "year": {
           "type": "integer",
-          "minimum": 1940,
-          "maximum": 2100,
-          "description": "Calendar year to fetch weather for. Defaults to the top-level start_time's calendar year when omitted. Ignored if use_percentile is true -- percentile selects the year instead."
+          "minimum": 1950,
+          "maximum": 2025,
+          "description": "Calendar year to fetch weather for. The 1950-2025 bound here is the union across all three providers -- see provider's own description for each provider's real, narrower range, enforced by the allOf/if/then blocks below and by geojson_validator.py. Omit to use AttributeBuilder's own default year (currently 2018) -- does NOT fall back to the top-level start_time's calendar year (that was this field's original documented intent, but confirmed 2026-08-14 to risk silently requesting a year with no local archive; not implemented). Ignored if use_percentile is true -- percentile selects the year instead."
         },
         "use_percentile": {
           "type": "boolean",
           "default": false,
-          "description": "DRAFT v4 addition (2026-08-06). If true, select weather from a percentile climate year (see percentile) computed across the provider's full multi-year archive at this location, instead of the single specific year field. Schema-only so far, same as weather_source itself was initially -- not yet wired through buem's request-handling path; see DRAFT.md."
+          "description": "Buem-side proposal (2026-08-06). If true, select weather from a percentile climate year (see percentile) computed across the provider's full multi-year archive at this location, instead of the single specific year field. Schema-only -- not yet wired through buem's request-handling path, and explicitly rejected (not silently ignored) if sent; see DRAFT.md's \"Deliberately unwired at promotion\"."
         },
         "percentile": {
           "type": "string",
           "enum": ["P10", "P50", "P90"],
           "default": "P50",
-          "description": "DRAFT v4 addition (2026-08-06). Which percentile climate year to use when use_percentile is true, ranked across the provider's available archive years for this location: P10 a cold/harsh-end year, P50 a typical/median year, P90 a mild/warm-end year. Ignored when use_percentile is false or omitted."
+          "description": "Buem-side proposal (2026-08-06). Which percentile climate year to use when use_percentile is true, ranked across the provider's available archive years for this location: P10 a cold/harsh-end year, P50 a typical/median year, P90 a mild/warm-end year. Ignored when use_percentile is false or omitted. Schema-only, same as use_percentile -- see its own description."
+        },
+        "profile": {
+          "type": "object",
+          "required": ["path"],
+          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14). Not present in EnerPlanET's real v4. Caller-supplied hourly T/GHI/DHI/DNI weather timeseries, referenced by file path -- mirrors buem.inputs.electricity_load_profile's pattern. The file must be accessible inside the model container (shared Docker volume, BUEM_DATA_DIR). When provided, used directly instead of fetching from a weather-module archive; provider/year/use_percentile/percentile are ignored.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute path to the profile file inside the container, with T/GHI/DHI/DNI columns (e.g. /data/profiles/5.3453464_52.4353446_weather_2018.json)."
+            },
+            "format": {
+              "type": "string",
+              "enum": ["json", "csv", "parquet"],
+              "default": "json",
+              "description": "File format of the profile at path. json is EnerPlanET's actual format (confirmed 2026-08-14) and the default here accordingly -- a JSON array of hourly records, each {time, T, GHI, DHI, DNI} (time an ISO-8601 timestamp). csv/parquet remain supported for other/internal callers: first column the timestamp index, remaining columns T/GHI/DHI/DNI."
+            }
+          }
         }
-      }
+      },
+      "allOf": [
+        {
+          "description": "cosmo-rea6's processed archive only covers 1995-2018.",
+          "if": {
+            "properties": { "provider": { "const": "cosmo-rea6" } },
+            "required": ["provider"]
+          },
+          "then": {
+            "properties": { "year": { "minimum": 1995, "maximum": 2018 } }
+          }
+        },
+        {
+          "description": "era5-land's processed archive only covers 1980-2025.",
+          "if": {
+            "properties": { "provider": { "const": "era5-land" } },
+            "required": ["provider"]
+          },
+          "then": {
+            "properties": { "year": { "minimum": 1980, "maximum": 2025 } }
+          }
+        },
+        {
+          "description": "merra-2's processed archive covers 1950-2025 -- also the default provider, so this applies when provider is omitted too.",
+          "if": {
+            "anyOf": [
+              { "properties": { "provider": { "const": "merra-2" } }, "required": ["provider"] },
+              { "not": { "required": ["provider"] } }
+            ]
+          },
+          "then": {
+            "properties": { "year": { "minimum": 1950, "maximum": 2025 } }
+          }
+        }
+      ]
     },
 
     "solver": {
@@ -379,7 +466,7 @@
         "electricity_load_profile": {
           "type": "object",
           "required": ["path"],
-          "description": "Hourly electricity consumption profile for the building, referenced by file path. The file must be accessible inside the model container -- use the shared Docker volume (BUEM_DATA_DIR) to make client files available. When provided, the profile is used directly as the internal heat gain input instead of the model-generated occupancy-based profile. Electricity consumption heats the building interior and therefore affects heating and cooling demand. Supported formats: CSV (single column of values), JSON array, or gzipped JSON (.gz).",
+          "description": "Hourly electricity consumption profile for the building, referenced by file path. The file must be accessible inside the model container -- use the shared Docker volume (BUEM_DATA_DIR) to make client files available. When provided, the profile is used directly as elecLoad (via occupancy.to_buem_profiles(elec_load=...), 2026-08-14) instead of the model-generated one -- Q_ig/occ_nothome/occ_sleeping still come from a real occupancy generation, only elecLoad itself is overridden. Electricity consumption heats the building interior and therefore affects heating and cooling demand. Supported formats: CSV (single column of values), JSON array, or gzipped JSON (.gz).",
           "properties": {
             "path": {
               "type": "string",

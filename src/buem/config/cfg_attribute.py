@@ -5,10 +5,53 @@ from typing import Any
 import pandas as pd
 
 from buem.buildings.mapping.live_synthesis import synthesize_missing_openings
+
+# Pure constants, side-effect-free -- re-exported here unchanged so existing
+# importers of cfg_attribute.py see no change. Split out 2026-08-14 (v3->v4
+# promotion) specifically so geojson_validator.py can import
+# RESIDENTIAL_BUILDING_TYPES etc. for request-structure validation without
+# pulling in this module's own eager weather fetch below as a side effect
+# -- see building_registry.py's own docstring for the full rationale.
+# Guarded by __all__ below (2026-08-18, after a real regression: ruff's F401
+# "unused import" check is per-file and can't see attribute_builder.py/tests
+# importing these *from here*, so an unguarded `ruff --fix` silently deleted
+# the ones this file doesn't also use internally) -- __all__ tells ruff these
+# are intentional re-exports, not dead code.
+from buem.config.building_registry import (
+    DEFAULT_ARCHETYPE_BY_BUILDING_TYPE,
+    DEFAULT_BUILDING_TYPE,
+    DEFAULT_LATITUDE,
+    DEFAULT_LONGITUDE,
+    DEFAULT_NUM_PERSONS,
+    DEFAULT_SEED,
+    DEFAULT_WEATHER_PROVIDER,
+    DEFAULT_YEAR,
+    HOUSEHOLD_EQUIPMENT_TYPES,
+    RESIDENTIAL_BUILDING_TYPES,
+)
 from buem.config.weather_cache import get_or_fetch_weather
 from buem.env import load_env
 
 from .attribute_types import AttributeCategory, AttributeSpec, AttrType
+
+# Explicit public surface -- includes the building_registry.py re-exports
+# above (see that import block's own comment for why this exists: without
+# it, a per-file "unused import" lint check can't see that other modules
+# import a name *from here*, and can silently delete it).
+__all__ = [
+    "ATTRIBUTE_SPECS",
+    "DEFAULT_ARCHETYPE_BY_BUILDING_TYPE",
+    "DEFAULT_BUILDING_TYPE",
+    "DEFAULT_LATITUDE",
+    "DEFAULT_LONGITUDE",
+    "DEFAULT_NUM_PERSONS",
+    "DEFAULT_SEED",
+    "DEFAULT_WEATHER_PROVIDER",
+    "DEFAULT_YEAR",
+    "HOUSEHOLD_EQUIPMENT_TYPES",
+    "RESIDENTIAL_BUILDING_TYPES",
+    "cfg",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -20,57 +63,6 @@ load_env()  # ensure BUEM_WEATHER_DATA_DIR/WEATHER_DATA_DIR are set before the f
 # its real HouseholdProfile/ServiceBuildingProfile generation, so it's
 # imported unconditionally like pandas/pvlib.
 from occupancy import ElectricityConsumptionProfile, HouseholdProfile, to_buem_profiles  # type: ignore[import]
-
-# Defaults for the built-in household electricity/internal-gains profile below;
-# also used as the "num_persons"/"year"/"seed" AttributeSpec defaults further down.
-DEFAULT_NUM_PERSONS = 4
-DEFAULT_YEAR = 2018
-DEFAULT_SEED = 42
-
-# Default location/provider for the module-level weather default below and the
-# "latitude"/"longitude"/"weather_provider" AttributeSpec defaults further down
-# -- a single source of truth so the two can't drift apart.
-DEFAULT_LATITUDE = 52.0
-DEFAULT_LONGITUDE = 5.0
-# era5-land was the original default; switched to merra-2 (2026-08-04) since
-# era5-land currently fails at this cell/year -- see CLAUDE.md "Weather is
-# compulsory" for the data-quality findings behind this choice.
-DEFAULT_WEATHER_PROVIDER = "merra-2"
-
-# TABULA residential building-size classes (see BuildingIdentity.building_type,
-# src/buem/buildings/building.py). Anything outside this set is routed to
-# occupancy's ServiceBuildingProfile instead of HouseholdProfile -- see
-# AttributeBuilder.generate_electricity_profile(). occupancy's own 8 service
-# types (supermarket/office/restaurant/school/hotel/bakery/warehouse/clinic)
-# are deliberately not hand-copied here at runtime; occupancy.
-# SERVICE_BUILDING_TYPES (top-level export since 2026-08-07, closing
-# occupancy_gains_handoff.md's Gap 3) is the single source of truth for
-# that side, kept up to date independently in the occupancy repo.
-# tests/test_building_types.py::test_v4_building_type_enum_matches_occupancy
-# is a drift guard: it fails CI if versions/v4/'s static schema enum (which,
-# unlike this runtime set, genuinely is a hand-copied snapshot) falls out of
-# sync with occupancy's actual registry.
-RESIDENTIAL_BUILDING_TYPES = frozenset({"SFH", "MFH", "TH", "AB"})
-DEFAULT_BUILDING_TYPE = "MFH"
-
-# building_type -> occupancy household archetype, used by
-# AttributeBuilder.generate_electricity_profile() as a fallback only when
-# the caller doesn't supply an explicit "archetype" attribute (2026-08-07,
-# closes the gap noted in .claude/residential/resolved.md). This is a
-# first-pass heuristic, not a derivation: TABULA's SFH/MFH/TH/AB describe
-# building *form* (attachment/size class), while occupancy's archetypes
-# (occupancy.households.archetypes.HOUSEHOLD_ARCHETYPES) describe household
-# *composition* -- there is no reliable 1:1 mapping between the two. The
-# caller-supplied num_persons remains the dominant, more reliable signal;
-# this table only picks a plausible default occupancy *schedule shape* when
-# nothing more specific is known. Revisit with real occupancy-survey data
-# if/when available rather than treating these as settled.
-DEFAULT_ARCHETYPE_BY_BUILDING_TYPE: dict[str, str] = {
-    "SFH": "family_with_children",  # detached houses skew toward families in TABULA's own survey basis
-    "TH": "working_couple",  # terraced houses skew toward smaller working households
-    "MFH": "generic",  # multi-family buildings house a wide mix of composition -- no single default fits
-    "AB": "generic",  # apartment blocks: same reasoning as MFH
-}
 
 # Real weather-module fetch for the module-level default location above (used
 # by ATTRIBUTE_SPECS["weather"].default below, and by anything that imports
@@ -323,6 +315,27 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
             "DEFAULT_ARCHETYPE_BY_BUILDING_TYPE.get(building_type, 'generic')."
         ),
     ),
+    "equipment": AttributeSpec(
+        "equipment",
+        AttributeCategory.OTHER,
+        AttrType.OBJECT,
+        None,
+        doc=(
+            "Optional per-item household-equipment inclusion/exclusion map: "
+            "{equipment_id: bool, ...}, where each equipment_id is one of "
+            "HOUSEHOLD_EQUIPMENT_TYPES (occupancy's 29 registered "
+            "appliances). true guarantees the item is treated as owned "
+            "(overrides its normal ownership-probability draw); false "
+            "guarantees it's excluded entirely; an omitted id uses "
+            "occupancy's own archetype-adjusted default for that item. "
+            "Residential building_type only -- ignored (with a logged "
+            "warning) for service-building types, since "
+            "occupancy.ServiceBuildingProfile has no per-item equipment "
+            "selection yet (see .claude/occupancy_module_activities.md). "
+            "None (default) uses occupancy's own default equipment set, "
+            "unchanged from prior behavior."
+        ),
+    ),
     "year": AttributeSpec("year", AttributeCategory.FIXED, AttrType.INT, DEFAULT_YEAR, doc="Default year for profile generation"),
     "seed": AttributeSpec(
         "seed",
@@ -339,7 +352,21 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
             "seed-ownership note for why this stays buem-internal."
         ),
     ),
-    "use_provided_elecLoad": AttributeSpec("use_provided_elecLoad", AttributeCategory.BOOLEAN, AttrType.BOOL, False, doc="If true, keep provided elecLoad even when force=True"),
+    "use_provided_elecLoad": AttributeSpec(
+        "use_provided_elecLoad",
+        AttributeCategory.BOOLEAN,
+        AttrType.BOOL,
+        False,
+        doc=(
+            "If true, substitute the provided elecLoad series for the "
+            "occupancy-generated one via occupancy.to_buem_profiles(elec_load=...) "
+            "-- Q_ig/occ_nothome/occ_sleeping still come from a real "
+            "HouseholdProfile/ServiceBuildingProfile generation, only "
+            "elecLoad itself is overridden. Does not skip the occupancy "
+            "call entirely (that was the pre-2026-08-14 behavior, which "
+            "also lost Q_ig/occ_nothome/occ_sleeping)."
+        ),
+    ),
     "weather_provider": AttributeSpec(
         "weather_provider", AttributeCategory.FIXED, AttrType.STR, DEFAULT_WEATHER_PROVIDER,
         doc="Weather source for the per-location fetch: 'merra-2' (default), 'era5-land', or 'cosmo-rea6'."

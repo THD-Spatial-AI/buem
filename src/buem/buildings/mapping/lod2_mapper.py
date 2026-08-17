@@ -53,12 +53,13 @@ ventilation detail; see :mod:`buem.buildings.mapping.live_synthesis`.
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import Any, Protocol
 
 import pandas as pd
 
 from buem.buildings.building import Building, BuildingIdentity, ThermalProperties
 from buem.buildings.components.base import EnvelopeElement
+from buem.buildings.mapping import geometry_utils
 from buem.buildings.mapping.element_factory import (
     WallInfo,
     identify_front_back,
@@ -104,14 +105,36 @@ class LOD2Mapper:
     ----------
     source : BuildingSource
         Any object implementing the ``BuildingSource`` protocol
-        (``ExcelBuildingSource`` or ``PostgresBuildingSource``).
+        (``ExcelBuildingSource``, ``PostgresBuildingSource``, or
+        ``CsvBuildingSource``).
     country : str
         ISO country code for all buildings (default ``"DE"``).
+    u_value_overrides : pd.DataFrame or None
+        Optional editable U-value table (2026-08-17, e.g.
+        ``src/buem/data/buildings/netherlands/u_value_reference.csv`` --
+        see that file and ``nl_archetype_mapper``'s module docstring for
+        why this exists: TABULA's own per-row U-values are trustworthy,
+        but the user asked for "a clean table... providing U values that
+        users can easily change if needed" -- a plain, small,
+        human-editable CSV rather than a 200-column TABULA row). Must
+        have columns ``construction_year_class``, ``building_type``,
+        ``U_Wall``, ``U_Roof``, ``U_Floor``, ``U_Window``, ``U_Door``.
+        When a building's resolved TABULA row's own
+        ``Code_ConstructionYearClass``/``Code_BuildingSizeClass`` matches
+        a row here, these values are used *instead of* that TABULA row's
+        own ``U_Wall_1``/etc. (transmission factors and every other
+        thermal parameter still come from the real TABULA row
+        unchanged). ``None`` (default) preserves the original behavior
+        exactly -- no effect on the German path.
     """
 
-    def __init__(self, source: BuildingSource, country: str = "DE"):
+    def __init__(
+        self, source: BuildingSource, country: str = "DE",
+        u_value_overrides: pd.DataFrame | None = None,
+    ):
         self.source = source
         self.country = country
+        self.u_value_overrides = u_value_overrides
         # Pre-compute shared wall set once across the full surface table
         self._shared_detector = SharedWallDetector(source.surfaces)
 
@@ -164,6 +187,18 @@ class LOD2Mapper:
         window_U = safe_series_float(tabula_row, "U_Window_1", 2.8)
         window_g_gl = safe_series_float(tabula_row, "g_gl_n_Window_1", 0.5)
         door_U = safe_series_float(tabula_row, "U_Door_1", 3.0)
+
+        # 5b. Apply the editable U-value override table, if one was given
+        # and this building's resolved archetype has a matching row --
+        # b_transmission and every other TABULA parameter are untouched.
+        if self.u_value_overrides is not None:
+            override_row = self._lookup_u_value_override(tabula_row)
+            if override_row is not None:
+                wall_U = float(override_row["U_Wall"])
+                roof_U = float(override_row["U_Roof"])
+                floor_U = float(override_row["U_Floor"])
+                window_U = float(override_row["U_Window"])
+                door_U = float(override_row["U_Door"])
 
         # 6. Classify walls into shared (party) vs exposed
         wall_infos = self._classify_walls(walls_df)
@@ -231,11 +266,21 @@ class LOD2Mapper:
         # --- roofs ---
         for roof_counter, (_, row) in enumerate(roofs_df.iterrows(), start=1):
             tilt = self._convert_roof_tilt(row["tilt"])
+            # Real azimuth, not a placeholder (fixed 2026-08-18): model_buem
+            # ._calcRadiation() passes every element's own tilt AND azimuth
+            # through pvlib.irradiance.get_total_irradiance() -- roof solar
+            # gain is NOT azimuth-independent in the actual model, so a
+            # hardcoded 0.0 here silently modeled every non-flat German
+            # roof as due-north-facing. The source DB has real azimuth for
+            # 10,732/16,558 (64.8%) of German roof surfaces (checked
+            # directly, not assumed) -- the same negative/NaN "unknown"
+            # sentinel walls already handle is normalised here too.
+            roof_azimuth = self._normalise_azimuth(row["azimuth"])
             elements.append(EnvelopeElement(
                 id=f"roof_{roof_counter}",
                 element_type="roof",
                 area=float(row["surface_area"]),
-                azimuth=0.0,  # placeholder — no role in solar calcs for roofs
+                azimuth=roof_azimuth,
                 tilt=tilt,
                 U=roof_U,
                 b_transmission=roof_b,
@@ -262,15 +307,29 @@ class LOD2Mapper:
         neighbour_status = str(tabula_row.get("Code_AttachedNeighbours", "B_Alone"))
         n_storeys = int(bldg_row.get("number_of_storeys", 1) or 1)
 
-        identity = BuildingIdentity(
-            building_feature_id=str(building_feature_id),
-            country=self.country,
-            building_type=building_type,
-            construction_period=construction_period,
-            tabula_variant_code=str(bldg_row.get("tabula_variant_code", "")),
-            n_storeys=n_storeys,
-            neighbour_status=neighbour_status,
-        )
+        identity_kwargs: dict[str, Any] = {
+            "building_feature_id": str(building_feature_id),
+            "country": self.country,
+            "building_type": building_type,
+            "construction_period": construction_period,
+            "tabula_variant_code": str(bldg_row.get("tabula_variant_code", "")),
+            "n_storeys": n_storeys,
+            "neighbour_status": neighbour_status,
+        }
+        # Real (latitude, longitude) from the source row's own geometry,
+        # when available -- previously never wired in here (see
+        # .claude/residential/open.md, found 2026-08-16 via a building
+        # that got weather fetched at the wrong country entirely because
+        # of this exact gap), so every LOD2Mapper-mapped building silently
+        # kept BuildingIdentity's class default (52.0, 5.0) regardless of
+        # its real location. Harmless while it was combined with "no NL
+        # building could be mapped at all" (no TABULA match); closing it
+        # now that TABULA matching makes that combination possible.
+        latlon = geometry_utils.building_lat_lon(bldg_row)
+        if latlon is not None:
+            identity_kwargs["latitude"], identity_kwargs["longitude"] = latlon
+
+        identity = BuildingIdentity(**identity_kwargs)
 
         # 11. Build thermal properties
         thermal = ThermalProperties(
@@ -286,6 +345,18 @@ class LOD2Mapper:
             q_w_nd=safe_series_float(tabula_row, "q_w_nd", None),
             design_T_min=safe_series_float(tabula_row, "Theta_e", -12.0),
             F_red_htr=safe_series_float(tabula_row, "F_red_htr1", 1.0),
+            # theta_i: TABULA's own assumed indoor heating setpoint for this
+            # archetype (e.g. 20.0 degC) -- previously never read anywhere in
+            # buem, so every LOD2-mapped building silently got the generic
+            # ThermalProperties default (21.0) regardless of what its matched
+            # archetype actually specifies, a continuous +1 degC bias with no
+            # TABULA-equivalent night/weekend setback either. comfortT_ub has
+            # no TABULA row equivalent (TABULA's reference calculation for
+            # residential archetypes is heating-only) and keeps its own
+            # default. Falls back to the same 21.0 default when theta_i is
+            # absent from the matched row, so behavior is unchanged for any
+            # building without a real archetype match.
+            comfortT_lb=safe_series_float(tabula_row, "theta_i", 21.0),
         )
 
         # 12. Compute reference floor area from LOD2 floor areas
@@ -354,9 +425,15 @@ class LOD2Mapper:
             raw_az = row["azimuth"]
             azimuth = self._normalise_azimuth(raw_az)
             is_shared = self._shared_detector.is_shared(sfid)
+            azimuth_unknown = pd.notna(raw_az) and float(raw_az) < 0
 
-            # Log negative azimuth conversion for traceability
-            if pd.notna(raw_az) and float(raw_az) < 0:
+            # Log negative azimuth conversion for traceability. The
+            # fallback value itself (0°/north) is no longer trusted for
+            # window/door placement on an exposed wall -- see WallInfo
+            # .azimuth_known and synthesize_openings() -- this wall still
+            # counts fully toward opaque envelope area/conductance either
+            # way, just not toward where openings go.
+            if azimuth_unknown:
                 if is_shared:
                     logger.debug(
                         "wall_%d (sfid=%d): shared wall azimuth %.1f → 0°",
@@ -364,8 +441,9 @@ class LOD2Mapper:
                     )
                 else:
                     logger.warning(
-                        "wall_%d (sfid=%d): EXPOSED wall azimuth %.1f → 0° "
-                        "(unknown orientation — window/door placement may be inaccurate)",
+                        "wall_%d (sfid=%d): EXPOSED wall azimuth %.1f unknown "
+                        "-- excluded from window/door placement (still counted "
+                        "as opaque envelope area).",
                         idx, sfid, float(raw_az),
                     )
 
@@ -375,8 +453,33 @@ class LOD2Mapper:
                 area=float(row["surface_area"]),
                 azimuth=azimuth,
                 is_shared=is_shared,
+                # Shared walls never reach window/door placement anyway
+                # (filtered to exposed-only before synthesize_openings()
+                # runs), so this only matters for exposed walls -- kept
+                # unconditional rather than re-deriving that filter here.
+                azimuth_known=not azimuth_unknown,
             ))
         return result
+
+    def _lookup_u_value_override(self, tabula_row: pd.Series) -> pd.Series | None:
+        """Find this building's row in ``self.u_value_overrides``, matched
+        on the resolved TABULA row's own ``Code_ConstructionYearClass``/
+        ``Code_BuildingSizeClass`` -- or ``None`` if no override table was
+        given, or none of its rows match. See ``__init__``'s
+        ``u_value_overrides`` docstring.
+        """
+        assert self.u_value_overrides is not None  # only called when set
+        year_class = tabula_row.get("Code_ConstructionYearClass")
+        building_type = tabula_row.get("Code_BuildingSizeClass")
+        if pd.isna(year_class) or pd.isna(building_type):
+            return None
+        matches = self.u_value_overrides[
+            (self.u_value_overrides["construction_year_class"] == year_class)
+            & (self.u_value_overrides["building_type"] == building_type)
+        ]
+        if matches.empty:
+            return None
+        return matches.iloc[0]
 
     # ── generic helpers ──────────────────────────────────────────────────────
 
