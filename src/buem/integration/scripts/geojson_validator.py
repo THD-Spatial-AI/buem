@@ -14,6 +14,10 @@ from typing import Any
 import pandas as pd
 from marshmallow import Schema, ValidationError, fields, post_load, validate, validates, validates_schema
 
+# occupancy (https://github.com/UU-BUEM/occupancy) is compulsory -- same
+# treatment as elsewhere in buem, imported unconditionally like pandas.
+from occupancy import SERVICE_BUILDING_TYPES  # type: ignore[import]
+
 # Side-effect-free constants only -- see building_registry.py's own
 # docstring for why this doesn't import from cfg_attribute.py directly
 # (that module does a real, eager weather fetch at import time; request
@@ -28,9 +32,6 @@ from buem.integration.scripts.profile_file_loader import (
     load_electricity_load_values,
     load_weather_profile,
 )
-# occupancy (https://github.com/UU-BUEM/occupancy) is compulsory -- same
-# treatment as elsewhere in buem, imported unconditionally like pandas.
-from occupancy import SERVICE_BUILDING_TYPES  # type: ignore[import]
 
 # Canonical + alias provider strings accepted by weather.point_query.get_point_weather.
 WEATHER_PROVIDERS = ("era5-land", "era5", "cosmo-rea6", "cosmo", "merra-2", "merra2")
@@ -532,7 +533,24 @@ class GeoJsonValidator:
             # deep in weather.get_point_weather() during AttributeBuilder.
             if isinstance(weather_block, dict) and weather_block.get('year') is not None:
                 year = weather_block['year']
-                provider_raw = weather_block.get('provider', DEFAULT_WEATHER_PROVIDER)
+                # Explicit `str` annotation, not just a plain assignment:
+                # weather_block is loosely-typed (Any) at this point, and
+                # mypy's dict.get() overload resolution gets ambiguous when
+                # an Any-typed default is passed -- it was inferring
+                # provider_raw/provider as "str | None" further down even
+                # though this value can never actually be None once the
+                # explicit-null case below is handled, blocking the
+                # _WEATHER_PROVIDER_CANONICAL/WEATHER_PROVIDER_YEAR_RANGES
+                # lookups. Pinning the type here (an implicit narrowing
+                # cast, not a runtime check) resolves the ambiguity.
+                provider_raw: str = weather_block.get('provider', DEFAULT_WEATHER_PROVIDER)
+                if provider_raw is None:
+                    # dict.get()'s default only applies when the key is
+                    # absent, not when it's explicitly null -- an explicit
+                    # `"provider": null` must fall back the same way an
+                    # omitted key does, not silently skip the year-range
+                    # check below.
+                    provider_raw = DEFAULT_WEATHER_PROVIDER
                 provider = _WEATHER_PROVIDER_CANONICAL.get(provider_raw, provider_raw)
                 year_range = WEATHER_PROVIDER_YEAR_RANGES.get(provider)
                 if year_range is not None and not (year_range[0] <= year <= year_range[1]):
