@@ -270,6 +270,61 @@ had an energy label registered (close to the ~30% national average).
 This is why the label is used as an *override* where present, not the
 sole archetype-matching signal (see Stage 4).
 
+Dwelling counts, and repairing the ones that cannot be right
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``aant_verblijfsobj`` (residential-unit count) is used twice, in opposite
+directions: it scales one household's occupancy-generated internal gains
+up to a whole block *before* the solve, and divides the whole-building
+result back down for comparison against per-dwelling statistics *after*
+it. A wrong count therefore corrupts both.
+
+A single BAG *Pand* can legitimately be an entire terrace or apartment
+block housing many households — normal Dutch building stock, and what
+TABULA's own AB/MFH archetypes model (their ``n_Apartment`` runs 15–56).
+But RIVM sometimes registers only part of a Pand's sub-units, leaving
+buildings that imply impossible dwelling sizes: **169 of 3,105 Loenen
+buildings (5.4%)** implied more than 500 m² per dwelling, the worst at
+42,204 m², including one 19,241 m² block recorded as holding two.
+
+``nl_archetype_mapper.repair_dwelling_counts()`` derives a count from
+floor area where the registered one cannot be right, via
+``scripts/repair_nl_dwelling_counts.py``. Three columns are written so a
+derived value can never be mistaken for registered data:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - Column
+     - Meaning
+
+   * - ``residential_units_recorded``
+     - Exactly what RIVM registered, preserved
+
+   * - ``residential_units_source``
+     - ``rivm`` or ``floor_area_estimate``
+
+   * - ``residential_units``
+     - The value everything downstream uses
+
+The estimate divides real floor area (``area_total_floor`` × storeys) by
+a typical dwelling size for the building type — 150 m² SFH, 120 TH, 90
+MFH, 75 AB. Two guards keep it conservative: it **never reduces** a
+registered count (the sub-units RIVM does list genuinely exist), and it
+does not act at all where the implied dwelling size is already plausible.
+Re-running is a no-op.
+
+Result for Loenen: 169 repaired, 0 implausible remaining — 152 SFH, 10
+TH, 4 MFH, 1 AB and 2 non-residential.
+
+**Known limitation**: for the 152 SFH cases the repair assumes the floor
+area really is dwellings. Some are more likely large agricultural
+buildings, where neither one dwelling of 2,000 m² nor thirteen of 150 m²
+is right. The estimate at least yields a plausible per-dwelling
+intensity; distinguishing barns from housing needs a use-class signal the
+pipeline does not currently carry.
+
 
 Stage 3 — Building-type classification
 ------------------------------------------
@@ -361,6 +416,71 @@ service-building modeling rather than being force-fit into either.
 Heeten reproduces the same shape (4 flagged: 3 large enough for
 ``"warehouse"``, 1 too small).
 
+Simulating a service building
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Carrying a ``service_building_type`` was originally only half the link.
+``AttributeBuilder`` already routed non-residential buildings to
+occupancy's ``ServiceBuildingProfile``, but they never got that far:
+``LOD2Mapper`` resolves a building's thermal description from its matched
+TABULA row, TABULA is a *residential* typology, and so every service
+building returned ``None`` and was skipped.
+
+Closed by giving the mapper a second archetype source. Both paths now
+produce a
+:class:`~buem.buildings.mapping.archetype_spec.ArchetypeSpec`, so the
+geometry, opening-synthesis and element-assembly steps are identical
+regardless of where the thermal description came from:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 35 40
+
+   * - Building
+     - Archetype source
+     - Internal gains
+
+   * - Residential
+     - Matched TABULA variant row
+     - ``occupancy.HouseholdProfile``
+
+   * - Service
+     - ``service_building_reference.csv``
+     - ``occupancy.ServiceBuildingProfile``
+
+``src/buem/data/buildings/netherlands/service_building_reference.csv``
+carries one row per (``service_building_type``,
+``construction_year_class``) — all 8 of occupancy's registered types,
+across the same 6 Dutch construction eras. Provenance differs by column,
+and is worth being explicit about:
+
+- **Envelope U-values** follow the same Bouwbesluit construction-year
+  series already cross-checked for the residential path (see "The
+  editable U-value table" below). Bouwbesluit's thermal requirements are
+  not residential-specific, so the same series applies.
+- **Use parameters** — room height, ventilation rate, infiltration,
+  thermal mass, heating-reduction factor — differ by building category
+  and are **first-pass engineering values**, not a published table. A
+  warehouse gets 6 m rooms, low ventilation and intermittent heating
+  (``F_red_htr`` 0.8); a school gets high ventilation for its occupancy
+  density; a restaurant higher still. Same framing as
+  ``MFH_MAX_UNITS``: revisit with real data if it becomes available.
+
+Two deliberate choices in the fallback: a service building is always
+``B_Alone`` (no party-wall typology applies, so its full envelope is
+exposed), and ``phi_int`` is left unset, because internal gains come from
+occupancy's own per-category model rather than a static archetype figure
+— setting both would double-count.
+
+A building with no ``construction_year_class`` falls back to the oldest
+era for its type: an unknown-age commercial structure is far more likely
+old than new, and modelling it as new would understate its demand.
+
+Real result for Loenen: both ``warehouse`` buildings now simulate
+(2,125 m² and 1,718 m², ≈273 kWh/m² — comparable to the residential
+NL.01 mean of 266). The two sub-threshold glass-roof structures stay
+skipped, which is correct: they carry no ``service_building_type`` at all.
+
 CBS microdata access
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -447,6 +567,42 @@ is in effect:
    * - ``0`` / absent
      - No measure (all as-built variant rows)
      - unchanged
+
+Correcting a measure whose published performance has aged
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+TABULA states each measure's performance as it stood when the typology
+was compiled, which can lag the market. NL's standard window measure
+``NL.Window.Ins.01`` assumes R = 0.556, i.e. **U = 1.80** — plain HR
+glazing — while Dutch housing refurbished to that same energy-label tier
+today typically has **HR++ at 1.1–1.2**. Checked against a real label-B
+1965–74 MFH, the opaque components landed sensibly (wall 0.254 against a
+0.35–0.40 label-B typical, roof and floor in range) and the window was
+the sole outlier, ~55% worse than reality.
+
+``refurbishment_measure_reference.csv`` corrects the measure itself
+rather than patching each affected archetype, so the correction applies
+everywhere that measure is used:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 12 12 51
+
+   * - ``measure_code``
+     - ``R_value``
+     - implied U
+     - Rationale
+
+   * - ``NL.Window.Ins.01``
+     - 0.870
+     - 1.15
+     - HR++ double glazing, low-e coated and argon filled — what a
+       building refurbished to this tier actually has installed today
+
+This matters more since glazing was raised to 50% of wall area: excess
+window conductance scales with both the U-value error and the glazed
+area, so the two compound. Absent, the file is simply not applied and
+TABULA's published value stands.
 
 Real result for Loenen: **3,101/3,101 residential buildings (100%)
 matched** — 742 via a real label, 2,359 via construction year.

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Service (non-residential) buildings can be simulated** (#7). They were
+  classified and routed to `occupancy.ServiceBuildingProfile` correctly,
+  but never reached it: `LOD2Mapper` resolves a building's thermal
+  description from its matched TABULA row, TABULA is a *residential*
+  typology, and so every service building returned `None` and was
+  skipped. Both paths now produce a
+  `buem.buildings.mapping.archetype_spec.ArchetypeSpec`, so geometry,
+  opening synthesis and element assembly are identical regardless of
+  where the description came from. Non-residential buildings resolve
+  through the new `service_building_reference.csv` — one row per
+  (service type, construction era), covering all 8 of occupancy's
+  registered types. Envelope U-values follow the same Bouwbesluit
+  year-class series already cross-checked for the residential path
+  (its thermal requirements are not residential-specific); the use
+  parameters (room height, ventilation, infiltration, heating-reduction)
+  differ by category and are first-pass engineering values, flagged as
+  such. Loenen's two warehouses now simulate at ~273 kWh/m², comparable
+  to the residential NL.01 mean of 266.
+- **Refurbishment measures whose published performance has aged can be
+  corrected** (#5). TABULA states each measure as it stood when the
+  typology was compiled: NL's standard window measure
+  `NL.Window.Ins.01` assumes R = 0.556 (U = 1.80, plain HR glazing),
+  while Dutch stock refurbished to that same label tier today typically
+  has HR++ at 1.1–1.2. `refurbishment_measure_reference.csv` corrects
+  the measure itself rather than patching each affected archetype, so it
+  applies everywhere that measure is used. Verified on a real variant-2
+  building: `U_window` 1.800 → 1.149, with wall, roof and door
+  untouched. This compounds with the 50%-of-wall-area glazing, since
+  excess window conductance scales with both the U-value error and the
+  glazed area.
+- **Dwelling counts that cannot be right are repaired from floor area**
+  (#6). `nl_archetype_mapper.repair_dwelling_counts()`, applied via
+  `scripts/repair_nl_dwelling_counts.py`. A single BAG *Pand* can
+  legitimately be a whole terrace or block housing many households, but
+  RIVM sometimes registers only part of its sub-units — 169 of 3,105
+  Loenen buildings (5.4%) implied over 500 m² per dwelling, the worst at
+  42,204 m². Three columns are written so a derived value can never be
+  mistaken for registered data: `residential_units_recorded` (preserved),
+  `residential_units_source` (`rivm` / `floor_area_estimate`), and the
+  repaired `residential_units`. Two guards keep it conservative: it never
+  reduces a registered count, does not act where the implied dwelling
+  size is already plausible, and skips non-residential buildings entirely
+  — a warehouse has no dwellings, and giving it a derived count scales
+  occupancy's service-building profile by a household multiplier that
+  does not exist (caught this way: a 2,125 m² warehouse's electricity
+  went up 18×). Re-running recomputes from the registered value rather
+  than compounding an earlier repair. Result: 167 repaired, 0 implausible
+  remaining.
+
 ## [4.0.0] - 2026-08-19
 
 Major bump: the flat `building_attributes` request format is no longer

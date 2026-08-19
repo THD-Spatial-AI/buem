@@ -157,6 +157,123 @@ def label_to_refurbishment_variant(
     return 1
 
 
+# Typical dwelling floor area [m2] by TABULA building type, used only to
+# estimate a dwelling count when the registered one is missing or
+# implausible. Detached and terraced homes are larger than the ~120 m2
+# national average; apartments are smaller.
+TYPICAL_DWELLING_AREA_M2: dict[str, float] = {
+    "SFH": 150.0,
+    "TH": 120.0,
+    "MFH": 90.0,
+    "AB": 75.0,
+}
+
+# Above this floor area per dwelling, the registered count is more likely
+# wrong than the building genuinely that large per household. Roughly four
+# times the national average dwelling, so it flags missing data rather
+# than merely spacious housing.
+IMPLAUSIBLE_M2_PER_DWELLING = 500.0
+
+
+def estimate_dwelling_units(
+    floor_area_m2: float, building_type: str | None, recorded_units: float,
+) -> float:
+    """Estimate how many dwellings a building holds, from its floor area.
+
+    A single BAG *Pand* can legitimately be an entire terrace or apartment
+    block housing many households, and the registered
+    ``aant_verblijfsobj`` is sometimes absent or counts only part of them.
+    Where the registered count implies an impossible dwelling size, this
+    derives one from floor area instead.
+
+    The result is never lower than *recorded_units*: a registered count is
+    treated as a floor, since the sub-units it does list genuinely exist.
+    Buildings whose implied dwelling size is already plausible are
+    returned unchanged, so this only ever acts where the data is
+    self-evidently wrong.
+    """
+    if recorded_units <= 0:
+        recorded_units = 1.0
+    if floor_area_m2 <= 0:
+        return recorded_units
+    if floor_area_m2 / recorded_units <= IMPLAUSIBLE_M2_PER_DWELLING:
+        return recorded_units
+    typical = TYPICAL_DWELLING_AREA_M2.get(str(building_type), 120.0)
+    return max(recorded_units, float(round(floor_area_m2 / typical)))
+
+
+def repair_dwelling_counts(buildings_df: pd.DataFrame) -> pd.DataFrame:
+    """Add floor-area-derived dwelling counts where the registered ones
+    cannot be right.
+
+    Only residential buildings are considered: a warehouse has no
+    dwellings, and giving it a derived count would scale occupancy's
+    service-building profile by a household multiplier that does not
+    exist.
+
+    Returns a copy carrying three columns, so a repaired value can never
+    be mistaken for registered data:
+
+    - ``residential_units_recorded`` -- exactly what RIVM registered.
+    - ``residential_units_source`` -- ``"rivm"`` or ``"floor_area_estimate"``.
+    - ``residential_units`` -- the value everything downstream should use.
+
+    This matters twice over, in opposite directions: the count scales one
+    household's occupancy-generated internal gains up to a whole block
+    *before* the solve, and divides the whole-building result back down
+    for comparison against per-dwelling statistics *after* it.
+    """
+    result = buildings_df.copy()
+    # Start from the registered value, not a previously repaired one, so
+    # re-running corrects an earlier repair rather than compounding it.
+    if "residential_units_recorded" in result.columns:
+        recorded = result["residential_units_recorded"].fillna(1.0)
+    elif "residential_units" in result.columns:
+        recorded = result["residential_units"].fillna(1.0)
+    else:
+        recorded = pd.Series(1.0, index=result.index)
+    storeys = (
+        result["number_of_storeys"].fillna(1.0).clip(lower=1.0)
+        if "number_of_storeys" in result.columns
+        else pd.Series(1.0, index=result.index)
+    )
+    floor_area = result.get("area_total_floor", pd.Series(0.0, index=result.index)).fillna(0.0) * storeys
+
+    # Non-residential buildings have no dwellings to count. Estimating one
+    # for a warehouse would scale occupancy's ServiceBuildingProfile output
+    # by a fictitious household multiplier -- inflating its electricity and
+    # internal gains by whatever the floor area happened to divide into.
+    is_residential = (
+        result["is_residential"].fillna(False).astype(bool)
+        if "is_residential" in result.columns
+        else pd.Series(True, index=result.index)
+    )
+
+    estimated = [
+        estimate_dwelling_units(float(a), t, float(u)) if res else float(u)
+        for a, t, u, res in zip(
+            floor_area,
+            result.get("building_type", pd.Series(None, index=result.index)),
+            recorded, is_residential, strict=True,
+        )
+    ]
+    result["residential_units_recorded"] = recorded.astype(float)
+    result["residential_units"] = [float(e) for e in estimated]
+    result["residential_units_source"] = [
+        "floor_area_estimate" if e != r else "rivm"
+        for e, r in zip(estimated, recorded, strict=True)
+    ]
+
+    n_repaired = int((result["residential_units_source"] == "floor_area_estimate").sum())
+    if n_repaired:
+        logger.info(
+            "Estimated dwelling counts from floor area for %d of %d building(s) whose "
+            "registered count implied more than %.0f m2 per dwelling.",
+            n_repaired, len(result), IMPLAUSIBLE_M2_PER_DWELLING,
+        )
+    return result
+
+
 def map_buildings(
     buildings_df: pd.DataFrame,
     nl_tabula_df: pd.DataFrame,
@@ -281,8 +398,12 @@ def map_buildings(
 
 
 __all__ = [
+    "IMPLAUSIBLE_M2_PER_DWELLING",
     "LABEL_TO_YEAR_CLASS",
+    "TYPICAL_DWELLING_AREA_M2",
+    "estimate_dwelling_units",
     "label_to_construction_class",
     "map_buildings",
+    "repair_dwelling_counts",
     "year_to_construction_class",
 ]

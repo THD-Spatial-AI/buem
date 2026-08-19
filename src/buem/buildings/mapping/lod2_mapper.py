@@ -7,9 +7,18 @@ produces a list of canonical ``Building`` objects ready for v3 JSON generation.
 This module orchestrates the mapping pipeline.  Domain-specific logic is
 delegated to focused helper modules:
 
+- **archetype_spec** — the per-archetype thermal description, resolved from
+  either a TABULA row (residential) or the service-building reference
+  table (non-residential)
 - **element_factory** — window, door, ventilation element creation
 - **tabula_helpers** — TABULA variant selection, window ratios, safe numerics
 - **wall_classifier** — shared (party) wall detection
+
+Both archetype sources produce the same ``ArchetypeSpec``, so everything
+downstream of resolution — geometry, opening synthesis, element assembly —
+is identical regardless of which one described the building. TABULA is a
+residential typology, so without the second source every non-residential
+building was skipped outright.
 
 Table linkages
 --------------
@@ -60,16 +69,16 @@ import pandas as pd
 from buem.buildings.building import Building, BuildingIdentity, ThermalProperties
 from buem.buildings.components.base import EnvelopeElement
 from buem.buildings.mapping import geometry_utils
+from buem.buildings.mapping.archetype_spec import (
+    ArchetypeSpec,
+    spec_from_service_reference,
+    spec_from_tabula,
+)
 from buem.buildings.mapping.element_factory import (
     WallInfo,
     identify_front_back,
     synthesize_openings,
     uniform_window_ratios,
-)
-from buem.buildings.mapping.tabula_helpers import (
-    apply_refurbishment_measures,
-    safe_series_float,
-    select_primary_variant,
 )
 from buem.buildings.mapping.wall_classifier import SharedWallDetector
 
@@ -132,10 +141,14 @@ class LOD2Mapper:
     def __init__(
         self, source: BuildingSource, country: str = "DE",
         u_value_overrides: pd.DataFrame | None = None,
+        service_building_reference: pd.DataFrame | None = None,
+        refurbishment_measure_overrides: pd.DataFrame | None = None,
     ):
         self.source = source
         self.country = country
         self.u_value_overrides = u_value_overrides
+        self.service_building_reference = service_building_reference
+        self.refurbishment_measure_overrides = refurbishment_measure_overrides
         # Pre-compute shared wall set once across the full surface table
         self._shared_detector = SharedWallDetector(source.surfaces)
 
@@ -158,14 +171,13 @@ class LOD2Mapper:
             return None
         bldg_row = bldg_rows.iloc[0]
 
-        # 2. Look up TABULA row
-        tabula_id = bldg_row.get("tabula_variant_code_id")
-        tabula_row = self.source.get_tabula_row(tabula_id)
-        if tabula_row is None:
-            logger.warning(
-                "Building %d: no TABULA match for tabula_variant_code_id=%s",
-                building_feature_id, tabula_id,
-            )
+        # 2. Resolve the archetype description. Residential buildings use
+        #    their matched TABULA row; non-residential ones have no TABULA
+        #    archetype (it is a residential typology) and fall back to the
+        #    service-building reference table, so they can be simulated
+        #    rather than skipped.
+        spec = self._resolve_archetype(bldg_row, building_feature_id)
+        if spec is None:
             return None
 
         # 3. Get child surfaces
@@ -181,36 +193,14 @@ class LOD2Mapper:
         roofs_df = valid[valid["objectclass_id"] == OBJECTCLASS_ROOF]
         floors_df = valid[valid["objectclass_id"] == OBJECTCLASS_GROUND]
 
-        # 5. Select primary TABULA variants for each component type
-        wall_U, wall_b = select_primary_variant(tabula_row, "Wall", n_variants=3)
-        roof_U, roof_b = select_primary_variant(tabula_row, "Roof", n_variants=2)
-        floor_U, floor_b = select_primary_variant(tabula_row, "Floor", n_variants=2)
-        window_U = safe_series_float(tabula_row, "U_Window_1", 2.8)
-        window_g_gl = safe_series_float(tabula_row, "g_gl_n_Window_1", 0.5)
-        door_U = safe_series_float(tabula_row, "U_Door_1", 3.0)
-
-        # 5b. Apply the editable U-value override table, if one was given
-        # and this building's resolved archetype has a matching row --
-        # b_transmission and every other TABULA parameter are untouched.
-        if self.u_value_overrides is not None:
-            override_row = self._lookup_u_value_override(tabula_row)
-            if override_row is not None:
-                wall_U = float(override_row["U_Wall"])
-                roof_U = float(override_row["U_Roof"])
-                floor_U = float(override_row["U_Floor"])
-                window_U = float(override_row["U_Window"])
-                door_U = float(override_row["U_Door"])
-
-        # 5c. Apply the matched variant row's own refurbishment measures
-        # (a no-op for as-built variant rows, whose measure columns are
-        # all zero). Applied after the override table so added insulation
-        # compounds with whichever base U-value is in effect.
-        adjusted = apply_refurbishment_measures(tabula_row, {
-            "Wall": wall_U, "Roof": roof_U, "Floor": floor_U,
-            "Window": window_U, "Door": door_U,
-        })
-        wall_U, roof_U, floor_U = adjusted["Wall"], adjusted["Roof"], adjusted["Floor"]
-        window_U, door_U = adjusted["Window"], adjusted["Door"]
+        # 5. Component U-values and transmission factors come from the
+        #    resolved archetype (see archetype_spec), which has already
+        #    applied the editable override table and any refurbishment
+        #    measures.
+        wall_U, wall_b = spec.wall_U, spec.wall_b
+        roof_U, roof_b = spec.roof_U, spec.roof_b
+        floor_U, floor_b = spec.floor_U, spec.floor_b
+        window_U, window_g_gl, door_U = spec.window_U, spec.window_g_gl, spec.door_U
 
         # 6. Classify walls into shared (party) vs exposed
         wall_infos = self._classify_walls(walls_df)
@@ -228,19 +218,15 @@ class LOD2Mapper:
         # 8. Compute proportional window/door ratios from TABULA, then
         #    synthesize window/door/ventilation elements (shared with the
         #    live request-handling path — see element_factory.synthesize_openings).
-        a_wall_1 = safe_series_float(tabula_row, "A_Wall_1", 0.0)
         # Windows are sized from each wall's own area, not from TABULA's
         # per-direction window columns -- see
-        # element_factory.uniform_window_ratios(). Doors still use
-        # TABULA's own door-to-wall ratio, which carries no orientation
+        # element_factory.uniform_window_ratios(). Doors still use the
+        # archetype's own door-to-wall ratio, which carries no orientation
         # assumption.
         win_ratios = uniform_window_ratios()
-        door_ratio = (
-            safe_series_float(tabula_row, "A_Door_1", 0.0) / a_wall_1
-            if a_wall_1 > 0 else 0.0
-        )
-        horizontal = safe_series_float(tabula_row, "A_Window_Horizontal", 0.0)
-        n_air_use = safe_series_float(tabula_row, "n_air_use", 0.5)
+        door_ratio = spec.door_ratio
+        horizontal = spec.horizontal_window_area
+        n_air_use = spec.n_air_use
 
         opening_elements = synthesize_openings(
             exposed_walls, front_wall, back_wall,
@@ -319,9 +305,9 @@ class LOD2Mapper:
         elements.extend(opening_elements)
 
         # 10. Build identity
-        building_type = self._extract_building_type(tabula_row)
-        construction_period = self._extract_construction_period(tabula_row)
-        neighbour_status = str(tabula_row.get("Code_AttachedNeighbours", "B_Alone"))
+        building_type = spec.building_type
+        construction_period = spec.construction_period
+        neighbour_status = spec.neighbour_status
         n_storeys = int(bldg_row.get("number_of_storeys", 1) or 1)
 
         identity_kwargs: dict[str, Any] = {
@@ -350,18 +336,18 @@ class LOD2Mapper:
 
         # 11. Build thermal properties
         thermal = ThermalProperties(
-            n_air_infiltration=safe_series_float(tabula_row, "n_air_infiltration", 0.5),
+            n_air_infiltration=spec.n_air_infiltration,
             n_air_use=n_air_use,
-            c_m=safe_series_float(tabula_row, "c_m", 165.0),
-            h_room=safe_series_float(tabula_row, "h_room", 2.5),
-            F_sh_hor=safe_series_float(tabula_row, "F_sh_hor", 0.8),
-            F_sh_vert=safe_series_float(tabula_row, "F_sh_vert", 0.75),
-            F_f=safe_series_float(tabula_row, "F_f", 0.2),
-            F_w=safe_series_float(tabula_row, "F_w", 1.0),
-            phi_int=safe_series_float(tabula_row, "phi_int", None),
-            q_w_nd=safe_series_float(tabula_row, "q_w_nd", None),
-            design_T_min=safe_series_float(tabula_row, "Theta_e", -12.0),
-            F_red_htr=safe_series_float(tabula_row, "F_red_htr1", 1.0),
+            c_m=spec.c_m,
+            h_room=spec.h_room,
+            F_sh_hor=spec.F_sh_hor,
+            F_sh_vert=spec.F_sh_vert,
+            F_f=spec.F_f,
+            F_w=spec.F_w,
+            phi_int=spec.phi_int,
+            q_w_nd=spec.q_w_nd,
+            design_T_min=spec.design_T_min,
+            F_red_htr=spec.F_red_htr,
             # Comfort setpoints are deliberately left at buem's own
             # defaults rather than taken from the matched archetype's
             # `theta_i`. TABULA's theta_i is the setpoint its *reference
@@ -382,6 +368,86 @@ class LOD2Mapper:
             thermal=thermal,
             A_ref=a_ref * max(n_storeys, 1),
         )
+
+    # ── archetype resolution ─────────────────────────────────────────────────
+
+    def _resolve_archetype(
+        self, bldg_row: pd.Series, building_feature_id: int,
+    ) -> ArchetypeSpec | None:
+        """Describe this building's archetype, or ``None`` if nothing can.
+
+        A residential building resolves through its matched TABULA row. A
+        non-residential one has no TABULA archetype -- TABULA is a
+        residential typology -- so it resolves through the
+        service-building reference table instead, keyed on the
+        ``service_building_type`` Stage 3 assigned and its construction
+        year class. Without that table, or for a flagged building too
+        small to have been given a service type at all, the building is
+        still skipped.
+        """
+        tabula_id = bldg_row.get("tabula_variant_code_id")
+        tabula_row = self.source.get_tabula_row(tabula_id)
+        if tabula_row is not None:
+            override_row = (
+                self._lookup_u_value_override(tabula_row)
+                if self.u_value_overrides is not None else None
+            )
+            return spec_from_tabula(
+                tabula_row,
+                u_value_overrides=override_row,
+                measure_overrides=self.refurbishment_measure_overrides,
+            )
+
+        service_type = bldg_row.get("service_building_type")
+        if service_type is None or pd.isna(service_type):
+            logger.warning(
+                "Building %d: no TABULA match for tabula_variant_code_id=%s "
+                "and no service_building_type to fall back on",
+                building_feature_id, tabula_id,
+            )
+            return None
+
+        reference_row = self._lookup_service_reference(bldg_row, str(service_type))
+        if reference_row is None:
+            logger.warning(
+                "Building %d: service_building_type=%r has no row in the "
+                "service-building reference table (construction_year_class=%r)",
+                building_feature_id, service_type,
+                bldg_row.get("construction_year_class"),
+            )
+            return None
+
+        logger.debug(
+            "Building %d: mapped as service building %r (%s)",
+            building_feature_id, service_type,
+            reference_row.get("construction_year_class"),
+        )
+        return spec_from_service_reference(reference_row)
+
+    def _lookup_service_reference(
+        self, bldg_row: pd.Series, service_type: str,
+    ) -> pd.Series | None:
+        """Find this service building's row, matched on type and era.
+
+        Falls back to the oldest era present for the type when the
+        building's own ``construction_year_class`` is missing -- an
+        unknown-age non-residential building is far more likely to be an
+        old one than a new one, and modelling it as new would understate
+        its demand.
+        """
+        if self.service_building_reference is None:
+            return None
+        table = self.service_building_reference
+        by_type = table[table["service_building_type"] == service_type]
+        if by_type.empty:
+            return None
+
+        year_class = bldg_row.get("construction_year_class")
+        if year_class is not None and not pd.isna(year_class):
+            exact = by_type[by_type["construction_year_class"] == str(year_class)]
+            if not exact.empty:
+                return exact.iloc[0]
+        return by_type.sort_values("construction_year_class").iloc[0]
 
     def map_all(
         self,

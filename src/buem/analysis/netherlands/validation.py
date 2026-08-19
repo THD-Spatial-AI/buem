@@ -409,7 +409,20 @@ def run_validation(
     if u_value_overrides is None:
         logger.warning("No u_value_reference.csv found at %s -- LOD2Mapper will use raw TABULA U-values.", overrides_path)
 
-    mapper = LOD2Mapper(source, country="NL", u_value_overrides=u_value_overrides)
+    # Optional per-region tables, loaded on the same "absent is normal"
+    # basis batch.py uses -- so a validation run and a batch run of the
+    # same region model identical buildings rather than diverging on
+    # whichever reference data each happened to pick up.
+    def _optional_table(filename: str) -> pd.DataFrame | None:
+        path = Path(data_dir) / filename
+        return pd.read_csv(path) if path.exists() else None
+
+    mapper = LOD2Mapper(
+        source, country="NL",
+        u_value_overrides=u_value_overrides,
+        service_building_reference=_optional_table("service_building_reference.csv"),
+        refurbishment_measure_overrides=_optional_table("refurbishment_measure_reference.csv"),
+    )
 
     lat, lon = _region_center(source)
     logger.info("Region center for shared weather fetch: (%.4f, %.4f)", lat, lon)

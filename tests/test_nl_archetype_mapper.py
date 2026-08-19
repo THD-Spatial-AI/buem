@@ -198,3 +198,127 @@ def test_map_buildings_excludes_non_residential():
     # path -- classify_all()'s own service_building_type column survives
     # map_buildings() unchanged (see nl_building_classifier)
     assert row_c["service_building_type"] == "warehouse"
+
+
+# ── dwelling-count repair (issue #6) ────────────────────────────────────
+
+
+def test_estimate_dwelling_units_leaves_plausible_counts_alone():
+    """The repair must only act where the data is self-evidently wrong,
+    not second-guess merely spacious housing."""
+    from buem.buildings.datasources.nl_archetype_mapper import estimate_dwelling_units
+
+    assert estimate_dwelling_units(120.0, "SFH", 1.0) == 1.0
+    assert estimate_dwelling_units(2000.0, "AB", 20.0) == 20.0  # 100 m2/dwelling
+
+
+def test_estimate_dwelling_units_derives_count_for_whole_blocks():
+    """A single BAG Pand can be an entire block; 19,241 m2 recorded as two
+    dwellings is a missing count, not a 9,600 m2 apartment."""
+    from buem.buildings.datasources.nl_archetype_mapper import estimate_dwelling_units
+
+    assert estimate_dwelling_units(19240.0, "MFH", 2.0) == 214.0  # 90 m2 typical
+    assert estimate_dwelling_units(1500.0, "SFH", 1.0) == 10.0    # 150 m2 typical
+
+
+def test_estimate_dwelling_units_never_reduces_a_registered_count():
+    """Registered sub-units genuinely exist, so the count is a floor."""
+    from buem.buildings.datasources.nl_archetype_mapper import estimate_dwelling_units
+
+    assert estimate_dwelling_units(600.0, "AB", 1.0) >= 1.0
+    assert estimate_dwelling_units(100000.0, "AB", 2000.0) == 2000.0
+
+
+def test_estimate_dwelling_units_handles_missing_area_and_zero_counts():
+    from buem.buildings.datasources.nl_archetype_mapper import estimate_dwelling_units
+
+    assert estimate_dwelling_units(0.0, "SFH", 3.0) == 3.0
+    assert estimate_dwelling_units(0.0, "SFH", 0.0) == 1.0
+    assert estimate_dwelling_units(1000.0, None, 1.0) > 1.0  # unknown type -> 120 m2 default
+
+
+def test_repair_dwelling_counts_preserves_the_registered_value():
+    """A derived count must never be mistaken for registered data."""
+    import pandas as pd
+
+    from buem.buildings.datasources.nl_archetype_mapper import repair_dwelling_counts
+
+    df = pd.DataFrame({
+        "building_feature_id": [1, 2],
+        "building_type": ["MFH", "SFH"],
+        "area_total_floor": [6413.5, 120.0],
+        "number_of_storeys": [3, 1],
+        "residential_units": [2.0, 1.0],
+    })
+    out = repair_dwelling_counts(df)
+
+    assert list(out["residential_units_recorded"]) == [2.0, 1.0]
+    assert list(out["residential_units_source"]) == ["floor_area_estimate", "rivm"]
+    assert out.loc[0, "residential_units"] == 214.0
+    assert out.loc[1, "residential_units"] == 1.0
+
+
+def test_repair_dwelling_counts_is_idempotent():
+    import pandas as pd
+
+    from buem.buildings.datasources.nl_archetype_mapper import repair_dwelling_counts
+
+    df = pd.DataFrame({
+        "building_feature_id": [1],
+        "building_type": ["MFH"],
+        "area_total_floor": [6413.5],
+        "number_of_storeys": [3],
+        "residential_units": [2.0],
+    })
+    once = repair_dwelling_counts(df)
+    twice = repair_dwelling_counts(once)
+
+    # Stable value, and the provenance keeps saying "derived" -- the count
+    # is still an estimate on the second pass, not something RIVM supplied.
+    assert once["residential_units"].tolist() == twice["residential_units"].tolist()
+    assert (twice["residential_units_source"] == "floor_area_estimate").all()
+    assert twice["residential_units_recorded"].tolist() == [2.0]
+
+
+def test_repair_dwelling_counts_skips_non_residential():
+    """A warehouse has no dwellings. Giving it a derived count would scale
+    occupancy's service-building profile by a household multiplier that
+    does not exist -- inflating its electricity by whatever the floor area
+    divided into (caught this way: a 2,125 m2 warehouse's elec went 18x)."""
+    import pandas as pd
+
+    from buem.buildings.datasources.nl_archetype_mapper import repair_dwelling_counts
+
+    df = pd.DataFrame({
+        "building_feature_id": [1, 2],
+        "building_type": [None, "MFH"],
+        "is_residential": [False, True],
+        "area_total_floor": [2125.0, 6413.5],
+        "number_of_storeys": [1, 3],
+        "residential_units": [1.0, 2.0],
+    })
+    out = repair_dwelling_counts(df)
+
+    assert out.loc[0, "residential_units"] == 1.0
+    assert out.loc[0, "residential_units_source"] == "rivm"
+    assert out.loc[1, "residential_units"] == 214.0
+
+
+def test_repair_dwelling_counts_recomputes_from_the_registered_value():
+    """Re-running must correct an earlier repair rather than compound it,
+    so it always starts from residential_units_recorded when present."""
+    import pandas as pd
+
+    from buem.buildings.datasources.nl_archetype_mapper import repair_dwelling_counts
+
+    already_repaired = pd.DataFrame({
+        "building_feature_id": [1],
+        "building_type": ["MFH"],
+        "is_residential": [True],
+        "area_total_floor": [6413.5],
+        "number_of_storeys": [3],
+        "residential_units": [999.0],          # a wrong earlier repair
+        "residential_units_recorded": [2.0],   # what RIVM actually said
+    })
+    out = repair_dwelling_counts(already_repaired)
+    assert out.loc[0, "residential_units"] == 214.0

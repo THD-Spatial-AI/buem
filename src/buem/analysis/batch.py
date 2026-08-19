@@ -98,6 +98,7 @@ _RESULT_COLUMNS = [
     "matched_via_label",
     "refurbishment_variant",
     "residential_units",
+    "residential_units_source",
     "error",
 ]
 
@@ -109,6 +110,11 @@ _PASSTHROUGH_COLUMNS = (
     "construction_year_class",
     "matched_via_label",
     "refurbishment_variant",
+    # Whether this building's dwelling count is registered or derived
+    # (see nl_archetype_mapper.repair_dwelling_counts) -- carried so an
+    # analysis can separate the two rather than treating a repaired
+    # count as though RIVM had supplied it.
+    "residential_units_source",
 )
 
 # Module-level, set once per worker process by _worker_init -- avoids both
@@ -146,6 +152,8 @@ def _worker_init(
     country: str,
     weather_df: pd.DataFrame,
     u_value_overrides: pd.DataFrame | None,
+    service_reference: pd.DataFrame | None,
+    measure_overrides: pd.DataFrame | None,
 ) -> None:
     """Runs once per spawned worker process (see module docstring)."""
     global _WORKER_MAPPER, _WORKER_WEATHER
@@ -157,7 +165,12 @@ def _worker_init(
     from buem.buildings.mapping.lod2_mapper import LOD2Mapper
 
     source = build_source(source_kind, source_path)
-    _WORKER_MAPPER = LOD2Mapper(source, country=country, u_value_overrides=u_value_overrides)
+    _WORKER_MAPPER = LOD2Mapper(
+        source, country=country,
+        u_value_overrides=u_value_overrides,
+        service_building_reference=service_reference,
+        refurbishment_measure_overrides=measure_overrides,
+    )
     _WORKER_WEATHER = weather_df
 
 
@@ -286,6 +299,23 @@ class BatchConfig:
         return self.workbook_path
 
 
+def _load_region_table(config: BatchConfig, filename: str, purpose: str) -> pd.DataFrame | None:
+    """Load an optional per-region reference table from the source directory.
+
+    Absent is normal, not an error: a region without the table simply
+    keeps whatever behaviour applies when it is missing (unmodelled
+    service buildings, uncorrected refurbishment measures).
+    """
+    if config.source_kind != "csv":
+        return None
+    path = Path(config.source_path) / filename
+    if not path.exists():
+        logger.info("No %s at %s -- %s.", filename, path, purpose)
+        return None
+    logger.info("Loaded %s from %s", filename, path)
+    return pd.read_csv(path)
+
+
 def _load_u_value_overrides(config: BatchConfig) -> pd.DataFrame | None:
     """Load the human-editable U-value override table, if there is one.
 
@@ -411,6 +441,14 @@ def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
 
     source = build_source(config.source_kind, config.source_path)
     u_value_overrides = _load_u_value_overrides(config)
+    service_reference = _load_region_table(
+        config, "service_building_reference.csv",
+        "non-residential buildings will be skipped",
+    )
+    measure_overrides = _load_region_table(
+        config, "refurbishment_measure_reference.csv",
+        "TABULA's own published measure performance will be used unchanged",
+    )
     weather_df = _batch_weather(source, config)
     building_ids = _select_building_ids(source, config)
 
@@ -445,6 +483,7 @@ def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
         ("matched_via_label", pa.string()),
         ("refurbishment_variant", pa.string()),
         ("residential_units", pa.float64()),
+        ("residential_units_source", pa.string()),
         ("error", pa.string()),
     ])
 
@@ -465,7 +504,7 @@ def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
         initializer=_worker_init,
         initargs=(
             config.source_kind, str(config.source_path), config.country,
-            weather_df, u_value_overrides,
+            weather_df, u_value_overrides, service_reference, measure_overrides,
         ),
     ) as executor:
         # The writer truncates whatever it opened, so the rows carried over

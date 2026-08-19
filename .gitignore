@@ -18,7 +18,12 @@ dist/
 .coverage
 coverage.xml
 *.csv
+# Small, human-editable reference tables -- the *inputs* that change what
+# buem simulates, as opposed to the multi-MB extracted building tables the
+# blanket *.csv rule above is aimed at. These must ship.
 !src/buem/data/buildings/netherlands/u_value_reference.csv
+!src/buem/data/buildings/netherlands/service_building_reference.csv
+!src/buem/data/buildings/netherlands/refurbishment_measure_reference.csv
 !src/buem/data/reference/dhw_cooking_constants.csv
 *.xlsx
 !src/buem/data/default_2016.xlsx

@@ -186,6 +186,8 @@ def _tabula_reference_sheet() -> pd.DataFrame:
 def apply_refurbishment_measures(
     tabula_row: pd.Series,
     u_values: dict[str, float],
+    *,
+    measure_overrides: pd.DataFrame | None = None,
 ) -> dict[str, float]:
     """Apply a TABULA refurbishment variant's predefined measures to a set
     of component U-values.
@@ -214,15 +216,38 @@ def apply_refurbishment_measures(
     u_values : dict
         Base U-values keyed by component name (``"Wall"``, ``"Roof"``,
         ``"Floor"``, ``"Window"``, ``"Door"``), W/(m²K).
+    measure_overrides : pd.DataFrame, optional
+        Editable table replacing individual measures' published
+        resistance, keyed by ``measure_code`` (the value of
+        ``Code_Measure_<Component>_1``) with an ``R_value`` column.
+
+        TABULA states each measure's performance as it stood when the
+        typology was published, which can lag the market: NL's standard
+        window measure ``NL.Window.Ins.01`` assumes R = 0.556, i.e.
+        U = 1.8 (HR glazing), while current Dutch stock refurbished to
+        the same energy-label tier typically has HR++ at 1.1-1.2. This
+        corrects the measure itself rather than patching each affected
+        archetype, so it applies wherever that measure is used.
 
     Returns
     -------
     dict
         Same keys, refurbishment-adjusted U-values.
     """
+    overrides_by_code: dict[str, float] = {}
+    if measure_overrides is not None and not measure_overrides.empty:
+        overrides_by_code = {
+            str(row["measure_code"]).strip(): float(row["R_value"])
+            for _, row in measure_overrides.iterrows()
+            if pd.notna(row.get("measure_code")) and pd.notna(row.get("R_value"))
+        }
+
     adjusted: dict[str, float] = {}
     for component, u_old in u_values.items():
         r_measure = safe_series_float(tabula_row, f"R_PredefinedMeasure_{component}_1", 0.0)
+        measure_code = str(tabula_row.get(f"Code_Measure_{component}_1", "") or "").strip()
+        if measure_code in overrides_by_code:
+            r_measure = overrides_by_code[measure_code]
         measure_type = str(tabula_row.get(f"Code_MeasureType_{component}_1", "0") or "0").strip()
         if r_measure is None or r_measure <= 0 or measure_type in ("0", "nan", ""):
             adjusted[component] = u_old
