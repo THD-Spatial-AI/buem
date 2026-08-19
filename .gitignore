@@ -19,8 +19,16 @@ dist/
 coverage.xml
 *.csv
 !src/buem/data/buildings/netherlands/u_value_reference.csv
+!src/buem/data/reference/dhw_cooking_constants.csv
 *.xlsx
 !src/buem/data/default_2016.xlsx
+# Demo_EN_12831-3_DHW_needs_2021-09-02.xlsx (src/buem/data/reference/) is
+# deliberately NOT allowlisted here -- its EPB Center redistribution
+# license hasn't been verified, same posture this repo already takes with
+# occupancy's CREST workbooks (CC BY-NC-ND, also not redistributed). Kept
+# locally for scripts/extract_dhw_reference_values.py to read from on a
+# machine that has it; the small, clearly-attributed CSV it produces
+# (allowlisted above) is what's actually committed.
 *.h5
 *.nc
 *.parquet
@@ -62,3 +70,8 @@ docs/source/_autosummary/
 # stops future changes from being committed, it doesn't rewrite history.
 CLAUDE.md
 .claude/
+
+# LibreOffice/OpenOffice lock files -- created while a bundled CSV (e.g. the
+# editable u_value_reference.csv) is open in a spreadsheet, and left behind
+# on a crash. Never part of the dataset.
+.~lock.*#

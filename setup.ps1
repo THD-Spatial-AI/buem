@@ -1,9 +1,9 @@
 # BUEM PowerShell Management Script
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Usage:  .\setup.ps1 <command> [options]
 #
 # This script requires NO hardcoded paths.  It uses:
-#   - $PSScriptRoot  – the directory containing this file (project root)
+#   - $PSScriptRoot  - the directory containing this file (project root)
 #   - The 'buem' console-script installed by:  conda develop src
 #   - conda run -n <env>  as a fallback when 'buem' is not yet on PATH
 #   - docker compose  for container-based workflows
@@ -11,7 +11,7 @@
 # To make 'buem' available directly, activate the conda environment first:
 #   conda activate buem_env
 #   conda develop src
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 param(
     [Parameter(Position = 0)]
@@ -23,11 +23,11 @@ param(
 
 Set-Location $PSScriptRoot
 
-# ── Conda environment name ────────────────────────────────────────────────────
+# -- Conda environment name ----------------------------------------------------
 # Override via: $env:BUEM_CONDA_ENV = "my_env"  or  set it in .env
 $CondaEnv = if ($env:BUEM_CONDA_ENV) { $env:BUEM_CONDA_ENV } else { "buem_env" }
 
-# ── Helper: run a 'buem' subcommand ──────────────────────────────────────────
+# -- Helper: run a 'buem' subcommand ------------------------------------------
 # If 'buem' is on PATH (conda env active + conda develop src done), use it.
 # Otherwise fall back to 'conda run -n <env> buem'.
 function Invoke-Buem {
@@ -37,13 +37,13 @@ function Invoke-Buem {
         buem @BuemArgs
     }
     else {
-        Write-Host "  'buem' not found on PATH – falling back to: conda run -n $CondaEnv" `
+        Write-Host "  'buem' not found on PATH - falling back to: conda run -n $CondaEnv" `
             -ForegroundColor DarkYellow
         conda run -n $CondaEnv --no-capture-output buem @BuemArgs
     }
 }
 
-# ── Commands ──────────────────────────────────────────────────────────────────
+# -- Commands ------------------------------------------------------------------
 
 function Show-Help {
     Write-Host "BUEM PowerShell Commands" -ForegroundColor Cyan
@@ -232,7 +232,7 @@ function Invoke-CleanAll {
     Invoke-Clean
 }
 
-# ── Dispatch ──────────────────────────────────────────────────────────────────
+# -- Dispatch ------------------------------------------------------------------
 switch ($Command.ToLower()) {
     "help"          { Show-Help }
     "env-update"    { Invoke-EnvUpdate }

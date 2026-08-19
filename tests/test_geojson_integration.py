@@ -60,7 +60,7 @@ class GeoJsonTestSuite:
         }
 
         # Test valid sample
-        valid_file = self.test_dir / "sample_request_v2.geojson"
+        valid_file = self.test_dir / "sample_request.geojson"
         if valid_file.exists():
             test_result = self._test_single_validation(valid_file, should_pass=True)
             results['tests'].append(test_result)
@@ -70,7 +70,7 @@ class GeoJsonTestSuite:
                 results['failed'] += 1
 
         # Test existing samples
-        for sample_file in ["sample_request_template_format.geojson", "sample_request_template.geojson"]:
+        for sample_file in ["sample_request.geojson"]:
             file_path = self.test_dir / sample_file
             if file_path.exists():
                 test_result = self._test_single_validation(file_path, should_pass=True)
@@ -94,8 +94,13 @@ class GeoJsonTestSuite:
         return results
 
     def test_format_conversion(self) -> dict[str, Any]:
-        """Test hybrid format conversion (child_components to nested components)."""
-        self.log("Testing format conversion...")
+        """Superseded request formats must be rejected, not converted.
+
+        The flat ``building_attributes`` shape -- alone or alongside
+        ``child_components`` -- predates the current ``building``/
+        ``envelope`` structure and is no longer accepted as input.
+        """
+        self.log("Testing rejection of superseded request formats...")
 
         results = {
             'passed': 0,
@@ -103,23 +108,16 @@ class GeoJsonTestSuite:
             'tests': []
         }
 
-        # Test child_components conversion
-        child_format_payload = self._create_child_components_sample()
-        test_result = self._test_format_conversion(child_format_payload, "child_components_format")
-        results['tests'].append(test_result)
-        if test_result['passed']:
-            results['passed'] += 1
-        else:
-            results['failed'] += 1
-
-        # Test hybrid format (both present)
-        hybrid_payload = self._create_hybrid_format_sample()
-        test_result = self._test_format_conversion(hybrid_payload, "hybrid_format")
-        results['tests'].append(test_result)
-        if test_result['passed']:
-            results['passed'] += 1
-        else:
-            results['failed'] += 1
+        for payload, name in (
+            (self._create_child_components_sample(), "child_components_format"),
+            (self._create_hybrid_format_sample(), "hybrid_format"),
+        ):
+            test_result = self._test_validation_payload(payload, name, should_pass=False)
+            results['tests'].append(test_result)
+            if test_result['passed']:
+                results['passed'] += 1
+            else:
+                results['failed'] += 1
 
         self.results['format_conversion_tests'] = results
         return results
@@ -135,7 +133,7 @@ class GeoJsonTestSuite:
         }
 
         # Test with valid v2 sample
-        valid_file = self.test_dir / "sample_request_v2.geojson"
+        valid_file = self.test_dir / "sample_request.geojson"
         if valid_file.exists():
             test_result = self._test_processing_pipeline(valid_file)
             results['tests'].append(test_result)
@@ -145,7 +143,7 @@ class GeoJsonTestSuite:
                 results['failed'] += 1
 
         # Test with existing samples (if they validate)
-        for sample_file in ["sample_request_template_format.geojson"]:
+        for sample_file in []:
             file_path = self.test_dir / sample_file
             if file_path.exists():
                 test_result = self._test_processing_pipeline(file_path)
@@ -170,7 +168,7 @@ class GeoJsonTestSuite:
 
         # This would require processing and checking response format
         # For now, we'll test the structure of responses from processing pipeline
-        valid_file = self.test_dir / "sample_request_v2.geojson"
+        valid_file = self.test_dir / "sample_request.geojson"
         if valid_file.exists():
             test_result = self._test_response_compliance(valid_file)
             results['tests'].append(test_result)
@@ -293,7 +291,7 @@ class GeoJsonTestSuite:
     def _test_processing_pipeline(self, file_path: Path) -> dict[str, Any]:
         """Test complete processing pipeline (validation + a real model run).
 
-        Runs the actual weather -> occupancy -> ModelBUEM pipeline (sample_request_v2.geojson
+        Runs the actual weather -> occupancy -> ModelBUEM pipeline (sample_request.geojson
         targets 2018, matching the local weather archive) instead of only checking that
         GeoJsonProcessor.__init__ succeeds -- the old mock-only version couldn't have caught
         a broken pipeline (see CLAUDE.md 2026-08-12 "response shape mismatch" fix).
@@ -593,8 +591,8 @@ class GeoJsonTestSuite:
         print(f"Test run: {summary['start_time']}")
         print(f"Duration: {summary['elapsed_seconds']:.2f} seconds")
         print(f"Total tests: {summary['total_tests']}")
-        print(f"Passed: {summary['total_passed']} ✅")
-        print(f"Failed: {summary['total_failed']} ❌")
+        print(f"Passed: {summary['total_passed']} âœ…")
+        print(f"Failed: {summary['total_failed']} âŒ")
         print(f"Success rate: {summary['success_rate']:.1f}%")
 
         print("\nTest Suite Breakdown:")
@@ -604,7 +602,7 @@ class GeoJsonTestSuite:
             total = passed + failed
             if total > 0:
                 rate = passed / total * 100
-                status = "✅" if failed == 0 else "⚠️" if passed > failed else "❌"
+                status = "âœ…" if failed == 0 else "âš ï¸" if passed > failed else "âŒ"
                 print(f"  {suite_name.title():15} {passed:2d}/{total:2d} ({rate:5.1f}%) {status}")
 
         # Show failed tests if any
@@ -617,14 +615,14 @@ class GeoJsonTestSuite:
         if failed_tests:
             print(f"\nFailed Tests ({len(failed_tests)}):")
             for test in failed_tests:
-                print(f"  ❌ {test['test_name']}: {test['message']}")
+                print(f"  âŒ {test['test_name']}: {test['message']}")
                 if 'error' in test:
                     print(f"     Error: {test['error']}")
 
         print("\n" + "="*60)
 
         overall_success = summary['total_failed'] == 0
-        print(f"Overall Result: {'PASS ✅' if overall_success else 'FAIL ❌'}")
+        print(f"Overall Result: {'PASS âœ…' if overall_success else 'FAIL âŒ'}")
         print("="*60)
 
 
@@ -665,7 +663,7 @@ if __name__ == "__main__":
     main()
 
 
-# ── pytest-compatible wrappers ───────────────────────────────────────────────
+# â”€â”€ pytest-compatible wrappers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_schema_validation():
     """pytest: schema validation suite."""
@@ -693,3 +691,5 @@ def test_response_schema_compliance():
     suite = GeoJsonTestSuite()
     results = suite.test_response_schema_compliance()
     assert results["failed"] == 0, f"{results['failed']} compliance tests failed"
+
+

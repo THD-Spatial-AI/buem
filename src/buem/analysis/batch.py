@@ -1,7 +1,17 @@
 """
 Many-building batch runner: single-provider heating/cooling/electricity
-demand for every (or a filtered subset of) building in the bundled Excel
-source, written incrementally to a single Parquet file.
+demand for every (or a filtered subset of) building in a building source,
+written incrementally to a single Parquet file.
+
+Two sources are supported, selected by ``--source``. ``excel`` reads the
+bundled TABULA/city2tabula workbook (the German path). ``csv`` reads a
+``CsvBuildingSource`` region directory such as
+``src/buem/data/buildings/netherlands``, which is what makes a
+whole-community run possible: simulating every building once and writing
+the per-building results means downstream analysis
+(``buem.analysis.netherlands.validation --from-parquet``) aggregates the
+true population rather than a sample, so no sampling bias exists to
+correct for.
 
 Deliberately single-provider (unlike ``provider_comparison.py``, which
 runs one building through all providers) -- per the user's own
@@ -28,6 +38,10 @@ step, not something this module does.
 CLI
 ---
     python -m buem.analysis.batch --limit 20 --provider merra-2 --output results.parquet
+
+    python -m buem.analysis.batch --source csv \\
+        --data-dir src/buem/data/buildings/netherlands \\
+        --country NL --residential-only --resume --output loenen.parquet
 
 See ``tests/test_analysis.py`` for a small (2-3 building) smoke test of
 this same path.
@@ -73,8 +87,29 @@ _RESULT_COLUMNS = [
     "heating_kWh",
     "cooling_kWh",
     "elec_kWh",
+    "dhw_kWh",
+    "cooking_gas_kWh",
+    # Carried straight through from the source table rather than recomputed,
+    # so a downstream aggregation can group and filter (by housing type for
+    # the CBS comparison, by era or label for a stratified view) without
+    # re-opening the building source.
+    "neighbour_status",
+    "construction_year_class",
+    "matched_via_label",
+    "refurbishment_variant",
+    "residential_units",
     "error",
 ]
+
+# Source-table columns copied verbatim onto each result row. Absent columns
+# (the German Excel source has none of these) are left null rather than
+# treated as an error.
+_PASSTHROUGH_COLUMNS = (
+    "neighbour_status",
+    "construction_year_class",
+    "matched_via_label",
+    "refurbishment_variant",
+)
 
 # Module-level, set once per worker process by _worker_init -- avoids both
 # re-opening the (multi-MB) Excel workbook / re-instantiating LOD2Mapper
@@ -87,7 +122,31 @@ _WORKER_MAPPER = None
 _WORKER_WEATHER: pd.DataFrame | None = None
 
 
-def _worker_init(workbook_path: str, country: str, weather_df: pd.DataFrame) -> None:
+def build_source(source_kind: str, source_path: str | Path):
+    """Construct the building source named by *source_kind*.
+
+    ``"excel"`` is the bundled TABULA/city2tabula workbook; ``"csv"`` is a
+    ``CsvBuildingSource`` region directory. Both expose the same accessor
+    interface, so everything downstream of this call is identical.
+    """
+    if source_kind == "excel":
+        from buem.buildings.datasources.excel_source import ExcelBuildingSource
+
+        return ExcelBuildingSource(source_path)
+    if source_kind == "csv":
+        from buem.buildings.datasources.csv_source import CsvBuildingSource
+
+        return CsvBuildingSource(source_path)
+    raise ValueError(f"Unknown source kind {source_kind!r} -- expected 'excel' or 'csv'.")
+
+
+def _worker_init(
+    source_kind: str,
+    source_path: str,
+    country: str,
+    weather_df: pd.DataFrame,
+    u_value_overrides: pd.DataFrame | None,
+) -> None:
     """Runs once per spawned worker process (see module docstring)."""
     global _WORKER_MAPPER, _WORKER_WEATHER
 
@@ -95,12 +154,35 @@ def _worker_init(workbook_path: str, country: str, weather_df: pd.DataFrame) -> 
     import numpy  # noqa: F401
     import pandas  # noqa: F401
 
-    from buem.buildings.datasources.excel_source import ExcelBuildingSource
     from buem.buildings.mapping.lod2_mapper import LOD2Mapper
 
-    source = ExcelBuildingSource(workbook_path)
-    _WORKER_MAPPER = LOD2Mapper(source, country=country)
+    source = build_source(source_kind, source_path)
+    _WORKER_MAPPER = LOD2Mapper(source, country=country, u_value_overrides=u_value_overrides)
     _WORKER_WEATHER = weather_df
+
+
+def _source_row(building_feature_id: int) -> pd.Series | None:
+    """This building's own row in the worker's building table, or ``None``
+    if it isn't there (no source carries every id in every table)."""
+    assert _WORKER_MAPPER is not None
+    bdf = _WORKER_MAPPER.source.buildings
+    matches = bdf[bdf["building_feature_id"] == building_feature_id]
+    return matches.iloc[0] if len(matches) else None
+
+
+def _residential_units(source_row: pd.Series | None) -> float:
+    """Real dwelling count for a building, defaulting to 1.0.
+
+    1.0 makes the gain scaling a no-op for SFH/TH (already one dwelling
+    per building) and for any source without the column at all, so the
+    German Excel path is unaffected.
+    """
+    if source_row is None or "residential_units" not in source_row:
+        return 1.0
+    value = source_row["residential_units"]
+    if pd.isna(value) or float(value) <= 0:
+        return 1.0
+    return float(value)
 
 
 def _process_one_building(building_feature_id: int, use_milp: bool) -> dict[str, Any]:
@@ -130,9 +212,24 @@ def _process_one_building(building_feature_id: int, use_milp: bool) -> dict[str,
         row["n_walls"] = exposure.n_walls
         row["n_exposed"] = exposure.n_exposed
 
+        source_row = _source_row(building_feature_id)
+        units = _residential_units(source_row)
+        row["residential_units"] = units
+        for col in _PASSTHROUGH_COLUMNS:
+            if source_row is not None and col in source_row:
+                value = source_row[col]
+                row[col] = None if pd.isna(value) else str(value)
+
         attrs = dict(building_attrs_from(building))
         attrs["weather"] = _WORKER_WEATHER
         attrs["use_provided_weather"] = True
+        # An MFH/AB building_feature_id is a whole multi-unit block, matching
+        # TABULA's own AB/MFH archetypes. Occupancy generates one dwelling's
+        # gains, so they must be scaled to the block before the solve or a
+        # 28-dwelling building receives roughly 1/28th of its real internal
+        # gains. Results stay whole-building; the per-dwelling division for a
+        # per-dwelling reference belongs to the aggregation step.
+        attrs["residential_units"] = units
 
         merged = AttributeBuilder(payload_attrs=attrs).build()
         cfg = CfgBuilding(merged).to_cfg_dict()
@@ -142,6 +239,10 @@ def _process_one_building(building_feature_id: int, use_milp: bool) -> dict[str,
         row["heating_kWh"] = round(float(pd.Series(model.heating_load).sum()), 2)
         row["cooling_kWh"] = round(float(pd.Series(model.cooling_load).abs().sum()), 2)
         row["elec_kWh"] = round(float(merged["elecLoad"].sum()), 2)
+        row["dhw_kWh"] = round(float(model.dhw_kWh.sum()), 2) if model.dhw_kWh is not None else 0.0
+        row["cooking_gas_kWh"] = (
+            round(float(model.cooking_gas_kWh.sum()), 2) if model.cooking_gas_kWh is not None else 0.0
+        )
         row["status"] = "ok"
 
     except _PER_BUILDING_ERRORS as exc:
@@ -155,8 +256,13 @@ def _process_one_building(building_feature_id: int, use_milp: bool) -> dict[str,
 class BatchConfig:
     """Configuration for one ``run_batch()`` call."""
 
+    source_kind: str = "excel"
     workbook_path: str | Path = DEFAULT_WORKBOOK
+    data_dir: str | Path | None = None
+    u_value_overrides_path: str | Path | None = None
     country: str = "DE"
+    # Ignored when the source carries real geometry: a CSV region derives
+    # its own centre so a Netherlands run doesn't fetch German weather.
     latitude: float = DEFAULT_LATITUDE
     longitude: float = DEFAULT_LONGITUDE
     year: int = DEFAULT_YEAR
@@ -166,20 +272,131 @@ class BatchConfig:
     use_milp: bool = False
     flush_every: int = 200
     building_ids: list[int] | None = None
+    residential_only: bool = False
+    labeled_only: bool = False
+    resume: bool = False
+
+    @property
+    def source_path(self) -> str | Path:
+        """Whichever of ``data_dir``/``workbook_path`` this source uses."""
+        if self.source_kind == "csv":
+            if self.data_dir is None:
+                raise ValueError("source_kind='csv' requires data_dir.")
+            return self.data_dir
+        return self.workbook_path
+
+
+def _load_u_value_overrides(config: BatchConfig) -> pd.DataFrame | None:
+    """Load the human-editable U-value override table, if there is one.
+
+    Defaults to ``u_value_reference.csv`` inside a CSV source's own
+    directory -- the same convention the Netherlands validation runner
+    uses, so a batch run and a validation run of the same region apply
+    identical U-values rather than silently diverging.
+    """
+    if config.u_value_overrides_path is not None:
+        return pd.read_csv(config.u_value_overrides_path)
+    if config.source_kind != "csv":
+        return None
+    default_path = Path(config.source_path) / "u_value_reference.csv"
+    if default_path.exists():
+        logger.info("Applying U-value overrides from %s", default_path)
+        return pd.read_csv(default_path)
+    logger.warning("No u_value_reference.csv at %s -- using raw TABULA U-values.", default_path)
+    return None
+
+
+def _read_completed_rows(output_path: Path) -> list[dict[str, Any]]:
+    """Rows already present in an existing output file, for a resumed run.
+
+    ``ParquetWriter`` truncates whatever it opens, so resuming means
+    reading the finished rows back and re-emitting them ahead of the new
+    ones rather than appending in place. At whole-community scale this is
+    a few thousand small rows -- negligible next to one building's solve.
+    An unreadable or absent file simply means nothing has been done yet.
+    """
+    if not output_path.exists():
+        return []
+    try:
+        done = pd.read_parquet(output_path)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read %s for resume (%s) -- starting from scratch.", output_path, exc)
+        return []
+    # Re-shape onto the current column set: an older file may predate a
+    # column, and a stale extra column must not reach the writer's schema.
+    rows: list[dict[str, Any]] = []
+    for record in done.to_dict(orient="records"):
+        row: dict[str, Any] = {col: None for col in _RESULT_COLUMNS}
+        for col in _RESULT_COLUMNS:
+            value = record.get(col)
+            if value is not None and not (isinstance(value, float) and pd.isna(value)):
+                row[col] = value
+        rows.append(row)
+    return rows
+
+
+def _select_building_ids(source, config: BatchConfig) -> list[int]:
+    """Resolve the id list for one run.
+
+    ``config.building_ids`` wins outright (a caller-filtered subset, or a
+    resume list with completed ids already removed). Otherwise the source's
+    own ids are taken, narrowed by ``residential_only``/``labeled_only``
+    where those columns exist -- both are Netherlands-pipeline columns, so
+    requesting a filter a source cannot honour raises rather than silently
+    running the unfiltered population.
+    """
+    if config.building_ids is not None:
+        logger.info("Batch: %d caller-supplied building id(s)", len(config.building_ids))
+        return list(config.building_ids)
+
+    bdf = source.buildings
+    for flag, column in (("residential_only", "is_residential"), ("labeled_only", "matched_via_label")):
+        if not getattr(config, flag):
+            continue
+        if column not in bdf.columns:
+            raise ValueError(
+                f"--{flag.replace('_', '-')} needs a {column!r} column, which this source has not got. "
+                "Run nl_archetype_mapper.map_buildings() on this data_dir first."
+            )
+        bdf = bdf[bdf[column] == True]  # noqa: E712 -- pandas mask, not an identity test
+
+    building_ids = bdf["building_feature_id"].tolist()
+    if config.limit is not None:
+        building_ids = building_ids[: config.limit]
+    logger.info("Batch: %d building id(s) from %s", len(building_ids), config.source_path)
+    return [int(bid) for bid in building_ids]
+
+
+def _batch_weather(source, config: BatchConfig) -> pd.DataFrame:
+    """Fetch the one weather series the whole batch shares.
+
+    Placed at the region's own mean centroid when the source carries real
+    geometry, falling back to the configured latitude/longitude otherwise
+    (the German Excel source has no centroid for most rows).
+    """
+    from buem.analysis.weather_providers import extract_provider_weather
+    from buem.buildings.mapping.geometry_utils import region_center_lat_lon
+
+    lat, lon = config.latitude, config.longitude
+    try:
+        lat, lon = region_center_lat_lon(source.buildings)
+        logger.info("Region center derived from real geometry: (%.4f, %.4f)", lat, lon)
+    except ValueError:
+        logger.info("No real geometry in this source -- using configured (%.4f, %.4f).", lat, lon)
+
+    logger.info(
+        "Fetching %s weather for (%.4f, %.4f), %d -- shared across the whole batch.",
+        config.provider, lat, lon, config.year,
+    )
+    return extract_provider_weather(lat, lon, config.year, providers=(config.provider,))[config.provider]
 
 
 def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
-    """Run every (or the first ``config.limit``) building id in
-    ``config.workbook_path`` through a single-provider simulation,
-    writing one row per building to *output_path* (Parquet) incrementally
-    as results complete -- so a long run's progress survives even if it's
-    interrupted partway through.
-
-    If ``config.building_ids`` is set, those ids are used verbatim instead
-    of ``source.get_building_ids(limit=...)`` -- e.g. a caller-filtered
-    subset from ``building_selection.select_household_buildings()``, or a
-    resume list with already-processed ids excluded. ``config.limit`` is
-    ignored when ``building_ids`` is set.
+    """Run every (or the first ``config.limit``) building id in the
+    configured source through a single-provider simulation, writing one row
+    per building to *output_path* (Parquet) incrementally as results
+    complete -- so a long run's progress survives even if it's interrupted
+    partway through.
 
     Returns
     -------
@@ -189,30 +406,24 @@ def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from buem.analysis.weather_providers import extract_provider_weather
-    from buem.buildings.datasources.excel_source import ExcelBuildingSource
-
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # One weather fetch, shared read-only across every building/worker --
-    # see module docstring for why this is single-location/single-provider
-    # rather than resolved per building.
-    logger.info(
-        "Fetching %s weather for (%.4f, %.4f), %d -- shared across the whole batch.",
-        config.provider, config.latitude, config.longitude, config.year,
-    )
-    weather_df = extract_provider_weather(
-        config.latitude, config.longitude, config.year, providers=(config.provider,)
-    )[config.provider]
+    source = build_source(config.source_kind, config.source_path)
+    u_value_overrides = _load_u_value_overrides(config)
+    weather_df = _batch_weather(source, config)
+    building_ids = _select_building_ids(source, config)
 
-    source = ExcelBuildingSource(config.workbook_path)
-    if config.building_ids is not None:
-        building_ids = list(config.building_ids)
-        logger.info("Batch: %d caller-supplied building id(s)", len(building_ids))
-    else:
-        building_ids = source.get_building_ids(limit=config.limit)
-        logger.info("Batch: %d building id(s) from %s", len(building_ids), config.workbook_path)
+    carried_rows: list[dict[str, Any]] = []
+    if config.resume:
+        carried_rows = _read_completed_rows(output_path)
+        already_done = {int(r["building_feature_id"]) for r in carried_rows if r["building_feature_id"] is not None}
+        if already_done:
+            building_ids = [bid for bid in building_ids if bid not in already_done]
+            logger.info(
+                "Resuming: %d building(s) already in %s, %d left to run.",
+                len(already_done), output_path, len(building_ids),
+            )
     total = len(building_ids)
 
     workers = config.workers
@@ -227,12 +438,19 @@ def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
         ("heating_kWh", pa.float64()),
         ("cooling_kWh", pa.float64()),
         ("elec_kWh", pa.float64()),
+        ("dhw_kWh", pa.float64()),
+        ("cooking_gas_kWh", pa.float64()),
+        ("neighbour_status", pa.string()),
+        ("construction_year_class", pa.string()),
+        ("matched_via_label", pa.string()),
+        ("refurbishment_variant", pa.string()),
+        ("residential_units", pa.float64()),
         ("error", pa.string()),
     ])
 
     start = time.time()
     n_ok = n_skipped = n_error = 0
-    pending_rows: list[dict[str, Any]] = []
+    pending_rows: list[dict[str, Any]] = list(carried_rows)
 
     def _flush(writer: pq.ParquetWriter) -> None:
         nonlocal pending_rows
@@ -245,8 +463,15 @@ def run_batch(config: BatchConfig, output_path: str | Path) -> Path:
     with pq.ParquetWriter(str(output_path), schema) as writer, ProcessPoolExecutor(
         max_workers=workers,
         initializer=_worker_init,
-        initargs=(str(config.workbook_path), config.country, weather_df),
+        initargs=(
+            config.source_kind, str(config.source_path), config.country,
+            weather_df, u_value_overrides,
+        ),
     ) as executor:
+        # The writer truncates whatever it opened, so the rows carried over
+        # from a previous run must land before anything else -- including
+        # when nothing is left to run and the loop below never executes.
+        _flush(writer)
         future_to_id = {
             executor.submit(_process_one_building, bid, config.use_milp): bid
             for bid in building_ids
@@ -289,7 +514,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run buem's thermal model across many buildings for one weather provider."
     )
-    parser.add_argument("--workbook", type=str, default=str(DEFAULT_WORKBOOK), help="TABULA/city2tabula workbook path.")
+    parser.add_argument("--source", type=str, default="excel", choices=["excel", "csv"], help="Building source: the bundled TABULA workbook, or a CsvBuildingSource region directory.")
+    parser.add_argument("--workbook", type=str, default=str(DEFAULT_WORKBOOK), help="TABULA/city2tabula workbook path (--source excel).")
+    parser.add_argument("--data-dir", type=str, default=None, help="CsvBuildingSource directory, e.g. src/buem/data/buildings/netherlands (--source csv).")
+    parser.add_argument("--u-value-overrides", type=str, default=None, help="U-value override table (default: u_value_reference.csv inside --data-dir).")
+    parser.add_argument("--residential-only", action="store_true", help="Only buildings flagged is_residential.")
+    parser.add_argument("--labeled-only", action="store_true", help="Only buildings with a real energy label (matched_via_label).")
+    parser.add_argument("--resume", action="store_true", help="Skip building ids already present in --output and keep their rows.")
     parser.add_argument("--country", type=str, default="DE", help="TABULA country code for archetype matching.")
     parser.add_argument("--latitude", type=float, default=DEFAULT_LATITUDE)
     parser.add_argument("--longitude", type=float, default=DEFAULT_LONGITUDE)
@@ -308,7 +539,10 @@ def main(argv: list[str] | None = None) -> Path:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     args = _build_arg_parser().parse_args(argv)
     config = BatchConfig(
+        source_kind=args.source,
         workbook_path=args.workbook,
+        data_dir=args.data_dir,
+        u_value_overrides_path=args.u_value_overrides,
         country=args.country,
         latitude=args.latitude,
         longitude=args.longitude,
@@ -319,6 +553,9 @@ def main(argv: list[str] | None = None) -> Path:
         workers=args.workers,
         use_milp=args.use_milp,
         flush_every=args.flush_every,
+        residential_only=args.residential_only,
+        labeled_only=args.labeled_only,
+        resume=args.resume,
     )
     return run_batch(config, args.output)
 
@@ -327,4 +564,4 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["BatchConfig", "main", "run_batch"]
+__all__ = ["BatchConfig", "build_source", "main", "run_batch"]

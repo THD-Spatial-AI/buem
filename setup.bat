@@ -2,18 +2,18 @@
 setlocal EnableDelayedExpansion
 
 :: BUEM Windows CMD Management Script
-:: ─────────────────────────────────────────────────────────────────────────────
+:: -----------------------------------------------------------------------------
 :: Usage:  setup.bat <command> [options]
 ::
 :: Requires NO hardcoded paths. Uses:
-::   %~dp0         – the directory of this .bat file (project root)
-::   buem          – console-script installed by conda develop src
-::   conda run     – fallback when buem is not yet on PATH
-::   docker compose – for container workflows
+::   %~dp0         - the directory of this .bat file (project root)
+::   buem          - console-script installed by conda develop src
+::   conda run     - fallback when buem is not yet on PATH
+::   docker compose - for container workflows
 ::
 :: Tip: activate your conda environment first for the best experience:
 ::   conda activate buem_env
-:: ─────────────────────────────────────────────────────────────────────────────
+:: -----------------------------------------------------------------------------
 
 :: Change to the project root (same directory as this script)
 cd /d "%~dp0"
@@ -49,7 +49,7 @@ echo Unknown command: %COMMAND%
 echo.
 goto :cmd_help
 
-:: ── help ─────────────────────────────────────────────────────────────────────
+:: -- help ---------------------------------------------------------------------
 :cmd_help
 echo BUEM Windows CMD Commands
 echo =========================
@@ -114,19 +114,19 @@ echo.
 echo Conda environment: %BUEM_CONDA_ENV%  (override: set BUEM_CONDA_ENV=my_env)
 goto :end
 
-:: ── Helper: run a buem subcommand ─────────────────────────────────────────────
+:: -- Helper: run a buem subcommand ---------------------------------------------
 :run_buem_cmd
 :: %* passes remaining args after the command token
 where buem >nul 2>&1
 if %errorlevel%==0 (
     buem %BUEM_SUBCMD% %BUEM_EXTRA_ARGS%
 ) else (
-    echo   'buem' not found on PATH – falling back to: conda run -n %BUEM_CONDA_ENV%
+    echo   'buem' not found on PATH - falling back to: conda run -n %BUEM_CONDA_ENV%
     conda run -n %BUEM_CONDA_ENV% --no-capture-output buem %BUEM_SUBCMD% %BUEM_EXTRA_ARGS%
 )
 goto :end
 
-:: ── Commands ──────────────────────────────────────────────────────────────────
+:: -- Commands ------------------------------------------------------------------
 :cmd_env_update
 call :do_env_update
 goto :end

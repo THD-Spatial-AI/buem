@@ -116,15 +116,75 @@ def test_map_buildings_residential_units_carries_real_rivm_count():
 
 
 @requires_nl_tabula
-def test_map_buildings_label_overrides_year():
-    # building B: real construction_year says 1980 (NL.03), but a real
-    # label "A+++" says NL.06 -- the label should win.
+def test_map_buildings_label_selects_refurbishment_variant():
+    """A label far better than the era's typical performance keeps the
+    real construction era but selects the nZEB refurbishment variant:
+    a renovated 1980 building is still structurally a 1980 building."""
+    # Building B: construction_year 1980 (era NL.03), label "A+++"
+    # (implied tier NL.06) -- a 3-tier gap selects variant 3.
     rivm = pd.DataFrame([{"bag_pand_id": "B", "aant_verblijfsobj": 1.0, "dominant_label": "A+++"}])
     result = map_buildings(_synthetic_buildings(), _nl_tabula, rivm)
     row_b = result.set_index("bag_pand_id").loc["B"]
-    assert row_b["construction_year_class"] == "NL.06"
+    assert row_b["construction_year_class"] == "NL.03"
     assert row_b["matched_via_label"]
-    assert row_b["tabula_variant_code"].startswith("NL.N.SFH.06.")
+    assert row_b["refurbishment_variant"] == 3
+    assert row_b["tabula_variant_code"] == "NL.N.SFH.03.Gen.ReEx.001.003"
+
+
+def test_apply_refurbishment_measures_add_and_replace():
+    """``Add`` measures compound resistances in series; ``Replace``-type
+    measures treat the measure's R as the new construction's total R;
+    zero/absent measures leave U unchanged."""
+    from buem.buildings.mapping.tabula_helpers import apply_refurbishment_measures
+
+    row = pd.Series({
+        "Code_MeasureType_Wall_1": "Add", "R_PredefinedMeasure_Wall_1": 3.5,
+        "Code_MeasureType_Window_1": "Replace", "R_PredefinedMeasure_Window_1": 0.5556,
+        "Code_MeasureType_Roof_1": "ReplaceInsulation", "R_PredefinedMeasure_Roof_1": 3.5,
+        "Code_MeasureType_Floor_1": "0", "R_PredefinedMeasure_Floor_1": 0.0,
+    })
+    adjusted = apply_refurbishment_measures(row, {
+        "Wall": 2.0, "Window": 5.2, "Roof": 2.56, "Floor": 2.9,
+    })
+    assert adjusted["Wall"] == pytest.approx(1.0 / (1.0 / 2.0 + 3.5))   # 0.25
+    assert adjusted["Window"] == pytest.approx(1.0 / 0.5556)            # ~1.8
+    assert adjusted["Roof"] == pytest.approx(1.0 / 3.5)                 # ~0.29
+    assert adjusted["Floor"] == pytest.approx(2.9)                      # untouched
+
+
+@requires_nl_tabula
+def test_apply_refurbishment_measures_noop_for_as_built_variant():
+    from buem.buildings.mapping.tabula_helpers import (
+        apply_refurbishment_measures,
+        lookup_tabula_archetype,
+    )
+
+    row = lookup_tabula_archetype("SFH", "01", "NL", sheet=_nl_tabula, variant_number=1)
+    assert row is not None
+    base = {"Wall": 2.78, "Roof": 2.56, "Floor": 2.9, "Window": 5.2, "Door": 3.0}
+    assert apply_refurbishment_measures(row, base) == base
+
+
+@requires_nl_tabula
+def test_lookup_tabula_archetype_variant_number():
+    from buem.buildings.mapping.tabula_helpers import lookup_tabula_archetype
+
+    for variant in (1, 2, 3):
+        row = lookup_tabula_archetype("SFH", "01", "NL", sheet=_nl_tabula, variant_number=variant)
+        assert row is not None
+        assert row["Code_BuildingVariant"] == f"NL.N.SFH.01.Gen.ReEx.001.00{variant}"
+
+
+def test_label_to_refurbishment_variant_gaps():
+    from buem.buildings.datasources.nl_archetype_mapper import label_to_refurbishment_variant
+
+    assert label_to_refurbishment_variant("NL.03", None) == 1        # no label
+    assert label_to_refurbishment_variant("NL.03", "NL.03") == 1     # at era level
+    assert label_to_refurbishment_variant("NL.03", "NL.01") == 1     # below era level
+    assert label_to_refurbishment_variant("NL.03", "NL.04") == 2     # 1 tier better
+    assert label_to_refurbishment_variant("NL.03", "NL.05") == 2     # 2 tiers better
+    assert label_to_refurbishment_variant("NL.03", "NL.06") == 3     # 3 tiers better
+    assert label_to_refurbishment_variant("NL.01", "NL.06") == 3     # 5 tiers better
 
 
 @requires_nl_tabula

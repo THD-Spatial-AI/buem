@@ -1,361 +1,142 @@
-# BUEM Multi-Building Processing System
+# Multi-building processing
 
-This module provides comprehensive parallel and sequential processing capabilities for multiple building energy models using the BUEM (Building Energy Model) system.
+Two separate parallel paths exist, and they consume different inputs.
+Pick by what you have.
 
-## 🎯 Overview
+| You have | Use | Entry point |
+|---|---|---|
+| A **building-source directory** (CityJSON-derived CSVs, or the TABULA workbook) | `buem.analysis.batch` | `python -m buem.analysis.batch` |
+| **One v4 GeoJSON request file per building** | `ParallelBuildingProcessor` (this package) | `buem multibuilding` |
 
-The multi-building processing system enables efficient analysis of large building datasets with support for:
+For a whole community — every building of a region, straight from the
+data the Netherlands pipeline produces — **use `buem.analysis.batch`**.
+This package cannot read a building source; it only takes pre-written
+request files, and its `buem multibuilding` CLI is wired to a fixed set of
+15 demo JSONs under `src/buem/data/buildings/dummy/`.
 
-- **Parallel Processing**: Utilize multiple CPU cores for faster processing
-- **Sequential Processing**: Traditional single-threaded processing for debugging and comparison
-- **Performance Comparison**: Automated benchmarking between processing methods
-- **Scalability Analysis**: Test performance across different dataset sizes
-- **Comprehensive Reporting**: Detailed metrics, visualizations, and recommendations
+---
 
-## 📁 Module Structure
-
-```
-src/buem/parallelization/
-├── parallel_run.py              # Parallel processing implementation
-├── sequence_run.py              # Sequential processing implementation 
-├── performance_comparison.py    # Performance analysis and comparison
-├── run_multibuilding_demo.py    # Master demonstration script
-└── README.md                    # This documentation
-```
-
-## 🏢 Demo Building Configurations
-
-Five diverse building configurations are provided for testing:
-
-```
-src/buem/data/buildings/dummy/
-├── building_01_small_residential.json    # 80 m² residential building
-├── building_02_medium_office.json        # 250 m² office building
-├── building_03_large_commercial.json     # 500 m² commercial building
-├── building_04_industrial.json           # 800 m² industrial building
-└── building_05_mixed_use.json           # 350 m² mixed-use building
-```
-
-## 🚀 Quick Start
-
-### 1. Install Dependencies
-
-The required packages are already included in the BUEM environment:
+## Whole-region runs — `buem.analysis.batch`
 
 ```bash
-conda activate buem_env
-# Dependencies (psutil, joblib) are automatically installed
+python -m buem.analysis.batch --source csv \
+    --data-dir src/buem/data/buildings/netherlands \
+    --country NL --residential-only \
+    --workers 16 --resume \
+    --output results/loenen.parquet
 ```
 
-### 2. Run Complete Demonstration
+Aggregate the result against CBS without re-simulating:
 
 ```bash
-cd src/buem/parallelization
-python run_multibuilding_demo.py
+python -m buem.analysis.netherlands.validation \
+    --from-parquet results/loenen.parquet --region-code GM0200
 ```
 
-### 3. Run Specific Tests
+On Linux, `scripts/run_region_batch.sh` wraps the same command: it checks
+`WEATHER_DATA_DIR`, pins BLAS to one thread per worker, sizes `--workers`
+to the host, and detaches under `nohup`.
 
-```bash
-# Parallel processing only
-python run_multibuilding_demo.py --test parallel
+### Design
 
-# Sequential processing only  
-python run_multibuilding_demo.py --test sequential
+- **`ProcessPoolExecutor`**, one building per task. The work is
+  CPU-bound and independent per building, so processes (not threads)
+  are what buy anything — the GIL would serialise a thread pool.
+- **Heavy setup once per worker, not once per task.** `_worker_init`
+  builds the `LOD2Mapper` (which opens a multi-MB source) a single time
+  per process and receives the shared weather DataFrame through the pool
+  initializer. Passing weather per task instead would re-pickle it
+  thousands of times across a full region.
+- **One weather fetch for the whole run**, placed at the region's own
+  mean centroid. A village spans a few kilometres, comfortably inside one
+  reanalysis grid cell, so per-building fetches would return the same
+  series at far greater cost.
+- **Incremental Parquet writes** every `--flush-every` buildings, so an
+  interrupted run keeps its progress.
+- **`--resume`** skips ids already in the output and carries their rows
+  forward. Safe to pass always.
+- **Per-building error isolation.** A building that fails is recorded as
+  an `error` row with its exception; it never aborts the run.
 
-# Performance comparison
-python run_multibuilding_demo.py --test comparison
+### Measured performance
 
-# Comprehensive benchmark
-python run_multibuilding_demo.py --test benchmark
-```
+Real Loenen run, all 3,101 residential buildings, 16 workers on a
+22-logical-core machine (Intel Ultra 7 165H):
 
-## 📊 Usage Examples
+| Metric | Value |
+|---|---|
+| Throughput | **2.03 buildings/s** |
+| Wall time | **25.5 min** |
+| Outcome | 3,101 ok, 0 skipped, 0 errors |
+| Memory | ~300 MB per worker (~5 GB total) |
 
-### Basic Parallel Processing
+Per-building cost is dominated by the LP solve — 4 × 8760 = 35,040
+variables, CLARABEL with an OSQP fallback — and varies little between
+buildings, so **throughput scales with worker count** and a whole
+community is a laptop-scale job. Scaling measured on the same box:
+
+| Workers | Throughput |
+|---|---|
+| 8 | ~1.1 buildings/s |
+| 16 | ~2.0 buildings/s |
+
+Two knobs matter on a bigger host:
+
+- **Leave a core or two free.** The parent process collects results and
+  writes Parquet; starving it slows everything.
+- **Pin BLAS to one thread per worker**
+  (`OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `MKL_NUM_THREADS=1`).
+  The per-building linear algebra is small, and letting each worker spawn
+  its own thread pool oversubscribes the cores.
+
+---
+
+## Request-file runs — `ParallelBuildingProcessor`
+
+For a list of already-written v4 GeoJSON request files (the shape the
+REST API accepts), rather than a building source.
 
 ```python
 from buem.parallelization.parallel_run import ParallelBuildingProcessor
 
-# Initialize processor
-processor = ParallelBuildingProcessor(
-    workers=4,           # Number of worker processes
-    chunk_size=5,        # Buildings per chunk
-    timeout=300          # Timeout per building (seconds)
-)
-
-# Process buildings
-results = processor.process_buildings(
-    building_files=["building1.json", "building2.json", ...],
-    save_results=True
-)
-
-print(f"Processed {results['summary']['total_buildings']} buildings")
-print(f"Success rate: {results['summary']['success_rate_percent']:.1f}%")
-print(f"Total time: {results['summary']['total_processing_time']:.2f}s")
+processor = ParallelBuildingProcessor(workers=4, timeout=300)
+results = processor.process_buildings(building_files=[...], save_results=True)
+print(results["summary"]["success_rate_percent"])
 ```
 
-### Performance Comparison
+Defaults to `min(16, max(2, cpu_count() * 0.6))` workers. Like
+`batch.py` it pre-imports the heavy modules per worker and pre-warms the
+weather cache for every distinct `(lat, lon, year, provider)` in the
+batch before forking.
 
-```python
-from buem.parallelization.performance_comparison import PerformanceComparator
+Sibling modules: `sequence_run.py` (serial, for debugging a single
+problematic building with full logging), `performance_comparison.py`
+(parallel-vs-serial benchmarking), `analyze_multibuilding.py`,
+`production_optimize.py`.
 
-# Initialize comparator
-comparator = PerformanceComparator(
-    visualize_results=True,
-    save_detailed_report=True
-)
+### CLI
 
-# Compare processing methods
-comparison = comparator.compare_processing_methods(
-    building_files=building_list,
-    worker_counts=[1, 2, 4, 8]
-)
-
-# Get recommendations
-recommendations = comparison['recommendations']
-print(f"Best configuration: {recommendations['best_configuration']}")
-print(f"Speedup: {recommendations['best_speedup']:.2f}x")
-print(f"Recommended approach: {recommendations['recommended_approach']}")
+```bash
+buem multibuilding --validate-system          # print cores/RAM and a suggested --workers
+buem multibuilding --test parallel --workers 10
+buem multibuilding --test comparison          # parallel vs sequential
+buem multibuilding --test optimize            # sweep worker counts
 ```
 
-### Sequential Processing
+These run the 15 bundled demo buildings only — there is no `--input-dir`.
+They are a benchmark harness, not a way to process your own data.
 
-```python
-from buem.parallelization.sequence_run import SequentialBuildingProcessor
+---
 
-# Initialize sequential processor
-processor = SequentialBuildingProcessor(
-    timeout=300,
-    detailed_logging=True,
-    memory_monitoring=True
-)
+## Troubleshooting
 
-# Process buildings sequentially
-results = processor.process_buildings(building_files)
+**Out of memory** — reduce `--workers`; budget ~300–500 MB each.
 
-print(f"Average time per building: {results['performance']['average_time_per_building']:.2f}s")
-print(f"Peak memory usage: {results['performance']['peak_memory_mb']:.1f} MB")
-```
+**A few buildings error** — read the `error` column of the output
+Parquet; each row carries its own exception. Re-run just those with
+`--building-ids`.
 
-## ⚡ Performance Characteristics
+**Run died partway** — re-run the identical command with `--resume`.
 
-### Expected Performance
-
-| Dataset Size | Parallel (4 cores) | Sequential | Expected Speedup |
-|-------------|-------------------|------------|------------------|
-| 5 buildings | ~15-30 seconds    | ~30-60 seconds | 1.5-2.0x |
-| 50 buildings | ~2-5 minutes     | ~8-15 minutes  | 2.5-4.0x |
-| 500 buildings | ~20-50 minutes   | ~2-4 hours     | 3.0-6.0x |
-
-### Optimization Guidelines
-
-- **Worker Count**: Start with `CPU cores - 1`, max tested up to 16 workers
-- **Memory**: ~100-500 MB per worker process
-- **I/O Considerations**: SSD recommended for large datasets
-- **Network**: Local processing recommended; network latency affects performance
-
-## 📈 Output and Reporting
-
-### Performance Reports
-
-All processing results include:
-
-```json
-{
-  "summary": {
-    "total_buildings": 5,
-    "successful": 5,
-    "failed": 0,
-    "success_rate_percent": 100.0,
-    "total_processing_time": 25.67
-  },
-  "performance": {
-    "workers": 4,
-    "buildings_per_second": 0.19,
-    "average_time_per_building": 5.13,
-    "memory_usage_mb": 245.3
-  },
-  "buildings": {
-    "successful": [...],  // Individual building results
-    "failed": [...]       // Error details for failed buildings
-  }
-}
-```
-
-### Visualization
-
-Performance comparison generates charts showing:
-
-- Processing time by configuration
-- Speedup vs worker count  
-- Parallel efficiency analysis
-- Processing rate comparison
-
-Charts are saved as high-resolution PNG files in `performance_reports/`.
-
-### Building Results
-
-Each processed building returns:
-
-```json
-{
-  "building_id": "building_001_small_residential",
-  "success": true,
-  "processing_time": 4.23,
-  "summary_stats": {
-    "heating": {
-      "total_kwh": 1245.6,
-      "max_kw": 8.4,
-      "mean_kw": 2.1
-    },
-    "cooling": {
-      "total_kwh": 856.3,
-      "max_kw": 5.2,
-      "mean_kw": 1.4
-    },
-    "total_energy_demand_kwh": 2101.9
-  }
-}
-```
-
-## 🔧 Advanced Configuration
-
-### Custom Processing Pipeline
-
-```python
-# Custom progress tracking
-def progress_handler(completed: int, total: int):
-    print(f"Progress: {completed}/{total} ({completed/total*100:.1f}%)")
-
-# Advanced parallel configuration
-processor = ParallelBuildingProcessor(
-    workers=8,
-    chunk_size=10,
-    timeout=600,  # 10 minutes per building
-    progress_callback=progress_handler
-)
-
-# Process with custom settings
-results = processor.process_buildings(
-    building_files=large_dataset,
-    save_results=True,
-    results_file="custom_results.json"
-)
-```
-
-### Benchmarking Different Scenarios
-
-```python
-# Test multiple scenarios
-comparator = PerformanceComparator(
-    test_scenarios=['small', 'medium', 'large'],
-    max_workers=16,
-    visualize_results=True
-)
-
-benchmark_results = comparator.run_comprehensive_benchmark(
-    building_files=building_dataset,
-    scaling_test=True
-)
-
-# Analyze scaling characteristics
-for scenario, results in benchmark_results['scenario_results'].items():
-    scaling = benchmark_results['overall_analysis']['scaling_characteristics'][scenario]
-    print(f"{scenario}: {scaling['building_count']} buildings, "
-          f"{scaling['best_speedup']:.2f}x speedup")
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **Out of Memory Errors**
-   ```python
-   # Solution: Reduce worker count or chunk size
-   processor = ParallelBuildingProcessor(workers=2, chunk_size=3)
-   ```
-
-2. **Processing Timeouts**
-   ```python
-   # Solution: Increase timeout for complex buildings
-   processor = ParallelBuildingProcessor(timeout=600)  # 10 minutes
-   ```
-
-3. **Import Errors**
-   ```bash
-   # Ensure BUEM is properly installed and paths are correct
-   cd src/buem
-   python -c "import buem; print('BUEM available')"
-   ```
-
-### Debugging Individual Buildings
-
-```python
-# Use sequential processing for detailed debugging
-processor = SequentialBuildingProcessor(
-    detailed_logging=True,
-    memory_monitoring=True
-)
-
-# Process single building for debugging
-results = processor.process_buildings([problematic_building])
-```
-
-## 🎯 Use Cases
-
-### Research Applications
-- **Building Stock Analysis**: Process 1000s of buildings for urban energy analysis
-- **Parameter Studies**: Test different building configurations efficiently  
-- **Climate Analysis**: Process buildings across different weather conditions
-- **Policy Impact Assessment**: Analyze building performance under different scenarios
-
-### Production Deployment
-- **REST API Backend**: Process building requests in parallel
-- **Batch Processing**: Scheduled processing of building datasets
-- **Real-time Analysis**: Quick processing for interactive applications
-- **Cloud Deployment**: Scalable processing in cloud environments
-
-## 📝 Dependencies
-
-### Required Dependencies
-- `numpy` - Numerical computations
-- `pandas` - Data manipulation
-- `psutil` - System monitoring
-- `joblib` - Parallel processing utilities
-- `buem` - Core building energy modeling
-
-### Optional Dependencies
-- `matplotlib` - Performance visualization
-- `flask` - Web API integration
-
-## 🔮 Future Enhancements
-
-Planned improvements include:
-
-1. **Distributed Processing**: Cluster computing with Ray/Dask
-2. **Cloud Integration**: AWS/Azure parallel processing
-3. **Real-time Monitoring**: Live processing dashboards
-4. **Advanced Caching**: Intelligent result caching
-5. **ML Integration**: Performance prediction and optimization
-
-## 📚 Additional Resources
-
-- [BUEM Core Documentation](../../README.md)
-- [Building Configuration Schema](../integration/json_schema/versions/v2/)
-- [Performance Optimization Guide](./docs/optimization.md) *(coming soon)*
-- [Production Deployment Guide](./docs/deployment.md) *(coming soon)*
-
-## 🤝 Contributing
-
-When contributing to the multi-building processing system:
-
-1. **Test with Multiple Scenarios**: Verify changes work across different building types
-2. **Performance Testing**: Benchmark any changes that affect processing speed
-3. **Memory Profiling**: Monitor memory usage for large datasets
-4. **Documentation**: Update this README for any API changes
-5. **Error Handling**: Ensure robust error handling for production use
-
-## 📄 License
-
-This module is part of the BUEM project and follows the same MIT license terms.
+**Slower than expected on a many-core host** — check the BLAS thread
+variables above; unpinned, they are the usual cause.

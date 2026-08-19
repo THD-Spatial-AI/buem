@@ -7,23 +7,22 @@ import pandas as pd
 from buem.buildings.mapping.live_synthesis import synthesize_missing_openings
 
 # Pure constants, side-effect-free -- re-exported here unchanged so existing
-# importers of cfg_attribute.py see no change. Split out 2026-08-14 (v3->v4
-# promotion) specifically so geojson_validator.py can import
-# RESIDENTIAL_BUILDING_TYPES etc. for request-structure validation without
-# pulling in this module's own eager weather fetch below as a side effect
-# -- see building_registry.py's own docstring for the full rationale.
-# Guarded by __all__ below (2026-08-18, after a real regression: ruff's F401
-# "unused import" check is per-file and can't see attribute_builder.py/tests
-# importing these *from here*, so an unguarded `ruff --fix` silently deleted
-# the ones this file doesn't also use internally) -- __all__ tells ruff these
-# are intentional re-exports, not dead code.
+# importers of cfg_attribute.py see no change. Split out specifically so
+# geojson_validator.py can import RESIDENTIAL_BUILDING_TYPES etc. for
+# request-structure validation without pulling in this module's own eager
+# weather fetch below as a side effect -- see building_registry.py's own
+# docstring for the full rationale. Guarded by __all__ below: ruff's F401
+# "unused import" check is per-file and cannot see other modules importing
+# these names *from here*, so without __all__ an automated lint fix would
+# delete the re-exports this file does not also use internally.
 from buem.config.building_registry import (
     DEFAULT_ARCHETYPE_BY_BUILDING_TYPE,
     DEFAULT_BUILDING_TYPE,
+    DEFAULT_COMFORT_T_LB,
+    DEFAULT_COMFORT_T_UB,
     DEFAULT_LATITUDE,
     DEFAULT_LONGITUDE,
     DEFAULT_NUM_PERSONS,
-    DEFAULT_SEED,
     DEFAULT_WEATHER_PROVIDER,
     DEFAULT_YEAR,
     HOUSEHOLD_EQUIPMENT_TYPES,
@@ -42,10 +41,11 @@ __all__ = [
     "ATTRIBUTE_SPECS",
     "DEFAULT_ARCHETYPE_BY_BUILDING_TYPE",
     "DEFAULT_BUILDING_TYPE",
+    "DEFAULT_COMFORT_T_LB",
+    "DEFAULT_COMFORT_T_UB",
     "DEFAULT_LATITUDE",
     "DEFAULT_LONGITUDE",
     "DEFAULT_NUM_PERSONS",
-    "DEFAULT_SEED",
     "DEFAULT_WEATHER_PROVIDER",
     "DEFAULT_YEAR",
     "HOUSEHOLD_EQUIPMENT_TYPES",
@@ -57,11 +57,11 @@ logger = logging.getLogger(__name__)
 
 load_env()  # ensure BUEM_WEATHER_DATA_DIR/WEATHER_DATA_DIR are set before the fetch below
 
-# occupancy (https://github.com/UU-BUEM/occupancy) is compulsory (2026-08-07),
-# same treatment as weather (https://github.com/UU-BUEM/weather, compulsory
-# 2026-08-03) -- every Q_ig/elecLoad/occ_nothome/occ_sleeping value comes from
-# its real HouseholdProfile/ServiceBuildingProfile generation, so it's
-# imported unconditionally like pandas/pvlib.
+# occupancy (https://github.com/UU-BUEM/occupancy) is a compulsory
+# dependency, same treatment as weather (https://github.com/UU-BUEM/weather)
+# -- every Q_ig/elecLoad/occ_nothome/occ_sleeping value comes from its real
+# HouseholdProfile/ServiceBuildingProfile generation, so it's imported
+# unconditionally like pandas/pvlib.
 from occupancy import ElectricityConsumptionProfile, HouseholdProfile, to_buem_profiles  # type: ignore[import]
 
 # Real weather-module fetch for the module-level default location above (used
@@ -87,8 +87,13 @@ dhi_profile = df_weather["DHI"]
 # Generate Q_ig/elecLoad/occ_nothome/occ_sleeping via occupancy's real
 # HouseholdProfile + ElectricityConsumptionProfile + to_buem_profiles()
 # pipeline -- no fallback (occupancy is compulsory, see module-top import).
-_household = HouseholdProfile(num_persons=DEFAULT_NUM_PERSONS, year=DEFAULT_YEAR, seed=DEFAULT_SEED)
-_elec = ElectricityConsumptionProfile(occupancy_profile=_household, seed=DEFAULT_SEED)
+# seed left at its dataclass default (None), not a buem-owned constant --
+# occupancy v5.0.0's derive_default_seed() makes None itself deterministic
+# (same num_persons/year/archetype/region -> same seed every time), so buem
+# no longer needs to manufacture and pass its own seed value at all (see
+# building_registry.py's comment for the full reasoning).
+_household = HouseholdProfile(num_persons=DEFAULT_NUM_PERSONS, year=DEFAULT_YEAR)
+_elec = ElectricityConsumptionProfile(occupancy_profile=_household)
 _buem_inputs = to_buem_profiles(_elec.to_result())
 realistic_elec_load = _buem_inputs["elecLoad"].reindex(main_index, method="nearest", fill_value=0.0)
 realistic_elec_load.name = "elecLoad"
@@ -156,6 +161,31 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
     "occ_sleeping": AttributeSpec("occ_sleeping", AttributeCategory.FIXED, AttrType.SERIES,
                                   default=occ_sleeping_profile,
                                   doc="Sleeping occupancy profile (fraction asleep). From occupancy.to_buem_profiles()."),
+    "dhw_liters": AttributeSpec(
+        "dhw_liters", AttributeCategory.FIXED, AttrType.SERIES,
+        default=None,
+        doc="Hourly domestic-hot-water draw volume (liters, pd.Series). "
+            "From occupancy.generate_dhw_draws()['dhw_liters_total'] -- "
+            "residential only (occupancy's DHW model isn't wired to service "
+            "buildings yet). Optional: None means ModelBUEM._addDhwCooking() "
+            "won't compute dhw_kWh, not an error -- unlike elecLoad/Q_ig/"
+            "occ_nothome/occ_sleeping above, this is not a required key. "
+            "default=None (not an eagerly-generated series like the four "
+            "above) so the module-level demo cfg isn't forced to pay DHW "
+            "generation's cost/randomness at import time; a real request "
+            "via AttributeBuilder always supplies a real one. See "
+            "buem.thermal.dhw_cooking.",
+    ),
+    "cooking_active": AttributeSpec(
+        "cooking_active", AttributeCategory.FIXED, AttrType.SERIES,
+        default=None,
+        doc="Hourly boolean/0-1 series (pd.Series) flagging when a "
+            "household's electric-kitchen equipment was active. From "
+            "occupancy.to_buem_profiles()'s optional 5th key. Optional, "
+            "same None-means-not-computed convention as dhw_liters above -- "
+            "drives ModelBUEM._addDhwCooking()'s gas-cooking-energy timing "
+            "when present.",
+    ),
     "latitude": AttributeSpec("latitude", AttributeCategory.FIXED, AttrType.FLOAT, DEFAULT_LATITUDE),
     "longitude": AttributeSpec("longitude", AttributeCategory.FIXED, AttrType.FLOAT, DEFAULT_LONGITUDE),
     # New structured component tree: component-level U (same for all elements) + element list
@@ -226,8 +256,22 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
         175.0,
         doc="Specific thermal capacity of building mass [kJ/m²K]. ISO 13790 medium class midpoint: (137.5+212.5)/2=175.",
     ),
-    "comfortT_lb": AttributeSpec("comfortT_lb", AttributeCategory.FIXED, AttrType.FLOAT, 21.0),
-    "comfortT_ub": AttributeSpec("comfortT_ub", AttributeCategory.FIXED, AttrType.FLOAT, 24.0),
+    "comfortT_lb": AttributeSpec(
+        "comfortT_lb", AttributeCategory.FIXED, AttrType.FLOAT, DEFAULT_COMFORT_T_LB,
+        doc=(
+            "Heating setpoint / lower comfort bound [degC]. Scalar, or a "
+            "pd.Series aligned to the weather index for a real setback "
+            "schedule. See building_registry.DEFAULT_COMFORT_T_LB."
+        ),
+    ),
+    "comfortT_ub": AttributeSpec(
+        "comfortT_ub", AttributeCategory.FIXED, AttrType.FLOAT, DEFAULT_COMFORT_T_UB,
+        doc=(
+            "Cooling setpoint / upper comfort bound [degC]. Scalar, or a "
+            "pd.Series aligned to the weather index. See "
+            "building_registry.DEFAULT_COMFORT_T_UB."
+        ),
+    ),
     "F_sh_vert": AttributeSpec("F_sh_vert", AttributeCategory.FIXED, AttrType.FLOAT, 0.75),  # Realistic shading for Netherlands
     "F_sh_hor": AttributeSpec("F_sh_hor", AttributeCategory.FIXED, AttrType.FLOAT, 0.80),  # Realistic shading for Netherlands
     "F_f": AttributeSpec("F_f", AttributeCategory.FIXED, AttrType.FLOAT, 0.2),
@@ -301,7 +345,39 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
             "None uses the service type's own capacity_default."
         ),
     ),
-    "num_persons": AttributeSpec("num_persons", AttributeCategory.FIXED, AttrType.INT, DEFAULT_NUM_PERSONS, doc="Default persons for electricity profile generation"),
+    "num_persons": AttributeSpec(
+        "num_persons", AttributeCategory.FIXED, AttrType.INT, DEFAULT_NUM_PERSONS,
+        doc=(
+            "Occupants per dwelling, for occupancy profile generation. "
+            "For a multi-dwelling building (see residential_units) this is "
+            "the size of one household, not the building's total occupancy."
+        ),
+    ),
+    "window_to_wall_ratio": AttributeSpec(
+        "window_to_wall_ratio", AttributeCategory.FIXED, AttrType.FLOAT, None,
+        doc=(
+            "Fraction of each exposed wall's area that is glazed, in "
+            "[0, 1). Applied uniformly to every wall; each synthesized "
+            "window inherits its host wall's own azimuth and tilt, so "
+            "orientation follows the real geometry. Used only when the "
+            "request supplies no explicit Windows component. None "
+            "(default) uses building_registry.DEFAULT_WINDOW_TO_WALL_RATIO. "
+            "An out-of-range value raises rather than silently reverting "
+            "to the default."
+        ),
+    ),
+    "residential_units": AttributeSpec(
+        "residential_units", AttributeCategory.FIXED, AttrType.FLOAT, 1.0,
+        doc=(
+            "Number of dwellings in this building. 1.0 for single-dwelling "
+            "houses (SFH/TH); the real dwelling count for apartment blocks "
+            "and multi-family buildings (AB/MFH), where one building_id "
+            "represents the whole block. Scales the occupancy-generated "
+            "Q_ig/elecLoad from one dwelling up to the whole building, "
+            "matching the whole-block envelope the 5R1C solve uses. See "
+            "AttributeBuilder.generate_electricity_profile()."
+        ),
+    ),
     "archetype": AttributeSpec(
         "archetype",
         AttributeCategory.FIXED,
@@ -331,9 +407,8 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
             "Residential building_type only -- ignored (with a logged "
             "warning) for service-building types, since "
             "occupancy.ServiceBuildingProfile has no per-item equipment "
-            "selection yet (see .claude/occupancy_module_activities.md). "
-            "None (default) uses occupancy's own default equipment set, "
-            "unchanged from prior behavior."
+            "selection. None (default) uses occupancy's own default "
+            "equipment set."
         ),
     ),
     "year": AttributeSpec("year", AttributeCategory.FIXED, AttrType.INT, DEFAULT_YEAR, doc="Default year for profile generation"),
@@ -341,15 +416,23 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
         "seed",
         AttributeCategory.FIXED,
         AttrType.INT,
-        DEFAULT_SEED,
+        None,
         doc=(
-            "RNG seed for reproducible occupancy profile generation "
-            "(default: 42). Internal-only -- not part of the EnerPlanET "
-            "request contract (deliberately absent from the v3/v4 request "
-            "schemas and not forwarded by _convert_v3_to_v2()); overridable "
-            "for direct AttributeBuilder calls/tests, e.g. to vary the "
-            "profile deliberately. See .claude/occupancy_gains_handoff.md's "
-            "seed-ownership note for why this stays buem-internal."
+            "RNG seed for occupancy profile generation. Internal-only -- "
+            "not part of the EnerPlanET request contract (deliberately "
+            "absent from the v3/v4 request schemas and not forwarded by "
+            "_convert_v3_to_v2()). Default is None: buem does not "
+            "manufacture or own a default seed value. None flows straight "
+            "through to occupancy's HouseholdProfile/"
+            "ElectricityConsumptionProfile/ServiceBuildingProfile/"
+            "generate_dhw_draws(), each of which derives its own "
+            "deterministic seed from the profile's own construction "
+            "inputs (occupancy.core.seed.derive_default_seed) when "
+            "seed=None -- the same building always resolves to the same "
+            "seed and therefore the same profile, with no buem-side "
+            "bookkeeping required. Still overridable for direct "
+            "AttributeBuilder calls or tests wanting one specific, "
+            "caller-chosen value."
         ),
     ),
     "use_provided_elecLoad": AttributeSpec(
@@ -363,8 +446,8 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
             "-- Q_ig/occ_nothome/occ_sleeping still come from a real "
             "HouseholdProfile/ServiceBuildingProfile generation, only "
             "elecLoad itself is overridden. Does not skip the occupancy "
-            "call entirely (that was the pre-2026-08-14 behavior, which "
-            "also lost Q_ig/occ_nothome/occ_sleeping)."
+            "call entirely -- that would also lose "
+            "Q_ig/occ_nothome/occ_sleeping."
         ),
     ),
     "weather_provider": AttributeSpec(

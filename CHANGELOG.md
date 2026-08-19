@@ -7,6 +7,325 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-19
+
+Major bump: the flat `building_attributes` request format is no longer
+accepted (v4-only), and the comfort-band default change moves every
+simulated result by roughly 17–18%. Both are breaking for existing
+clients and for anything comparing against previous output.
+
+### Fixed
+
+- **`setup.ps1` could not run at all on Windows PowerShell 5.1** — every
+  command failed with a cascade of parse errors. The file was UTF-8
+  without a BOM and contained 388 box-drawing characters; PowerShell 5.1
+  reads a `.ps1` as cp1252 unless it carries a BOM, and `U+2500`'s
+  encoding contains byte `0x94`, which cp1252 maps to a closing quotation
+  mark — terminating a string early and breaking the parse. Both
+  `setup.ps1` and `setup.bat` are now pure ASCII, which fixes them under
+  any codepage rather than only the ones that happen to agree. Verified:
+  `help`, `version` and `validate` all work through both scripts.
+- **ReadTheDocs builds.** `.readthedocs.yaml` installed the package
+  (`pip install .[docs]`), which fails twice over: pip refuses on the
+  configured Python 3.13 against `requires-python = ">=3.14"`, and even
+  past that, importing `buem` triggers `weather`'s real archive fetch,
+  which no docs builder has. The documentation is hand-written prose with
+  **zero** autodoc directives, so the package was never needed; RTD now
+  installs `docs/requirements.txt` only, and `conf.py` resolves the
+  version from git tags via setuptools-scm when `buem` is absent. This
+  was a configuration problem, not a Sphinx one — MkDocs would have hit
+  the identical wall.
+- **`readme.md` told users `weather` and `occupancy` were optional
+  extras** (`pip install buem[occupancy,weather]`). Both have been
+  compulsory entries in the main `dependencies` list since 2026-08-03 and
+  2026-08-07; there are no such extras to install. Also added the
+  `WEATHER_DATA_DIR` step that Quick Start omitted — without it `buem`
+  cannot import at all.
+
+### Added
+
+- **Whole-region batch runs.** `buem.analysis.batch` gained a pluggable
+  building source: `--source csv --data-dir <region>` runs a
+  `CsvBuildingSource` region (e.g. the 3,101 residential Loenen
+  buildings) through the existing `ProcessPoolExecutor` pipeline, where
+  it previously only read the German TABULA workbook. The German path is
+  unchanged and remains the default. Also new on that runner:
+  `--residential-only`/`--labeled-only` (filtering on the columns the
+  Netherlands pipeline produces, raising rather than silently running the
+  unfiltered population when a source cannot honour the filter),
+  `--u-value-overrides` (defaulting to `u_value_reference.csv` inside
+  `--data-dir`, so a batch run and a validation run of the same region
+  apply identical U-values), and `--resume`, which skips building ids
+  already present in the output and carries their rows forward.
+  Per-building rows now also carry `dhw_kWh`, `cooking_gas_kWh`,
+  `residential_units`, and the `neighbour_status`/`construction_year_class`/
+  `matched_via_label`/`refurbishment_variant` grouping columns.
+  Measured throughput: ~1.8 buildings/s on 16 workers, about half an hour
+  for all of Loenen.
+- **`validation --from-parquet`** aggregates a completed batch run against
+  CBS without simulating anything
+  (`buem.analysis.netherlands.validation.aggregate_parquet`). This is the
+  population-complete counterpart to the existing sampled path, which
+  takes the first N buildings in file order — an order that is not random
+  with respect to construction era, skewing terraced houses' sample to
+  80% oldest-class against 21% of the real population and inflating their
+  reported intensity by roughly 1.9x. Aggregating a run that covered every
+  building removes that bias by construction, on every dimension at once,
+  and makes `--labeled-only` a slice of the same simulation rather than a
+  separate one. Both paths share the CBS lookup, conversion and reporting
+  code.
+- **`geometry_utils.region_center_lat_lon()`** — the mean real centroid of
+  a set of building rows, used to place a region's one shared weather
+  fetch. Extracted from `validation.py`, which now calls it, so the batch
+  runner cannot fetch a different location than the validator for the same
+  region. Raises when no row carries geometry rather than falling back to
+  a module default, which would simulate a region against another
+  country's climate.
+- **First population-complete buem-vs-CBS comparison for Loenen.** All
+  3,101 residential buildings simulated in one pass (0 skipped, 0 errors,
+  ~25 min), against a previously-recorded 2.92 from a 3–5-building-per-
+  group sample. Excluding 167 buildings whose recorded dwelling count is
+  demonstrably wrong, the building-count-weighted ratio is **1.81** and
+  the **median building sits at 1.03** — half of Loenen is within a few
+  percent of its CBS category, and the residual is a right tail rather
+  than a uniform offset. 99 % of the stock (2,341 SFH and 558 TH) falls
+  between 1.51× and 2.50×.
+  Two things the sampled runs could not show: those 167 buildings (5.4 %,
+  worst at 42,204 m² per dwelling, mean ratio 24.0) are a **data**
+  problem rather than a modelling one, inflating the all-population
+  figure from 1.81 to 3.01; and, once they are removed, **label coverage
+  is not a leading explanation** — unlabelled buildings agree slightly
+  *better* than labelled ones (1.74 vs. 2.03), reversing the raw-figure
+  impression. Full tables and configuration in
+  `docs/source/validation/loenen_cbs.rst`.
+- **`scripts/run_region_batch.sh`** — Linux wrapper for a whole-region run:
+  checks `WEATHER_DATA_DIR`, pins BLAS to one thread per worker (nested
+  thread pools oversubscribe the cores), sizes `--workers` to the host,
+  and detaches under `nohup` so an SSH session can drop mid-run.
+- **`building.window_to_wall_ratio`** (v4 schema, forwarded by the
+  validator, exposed as an `AttributeSpec` and threaded through
+  `CfgBuilding`): a single caller-supplied number in `[0, 1)` applied
+  uniformly to every exposed wall when a request supplies no explicit
+  window geometry. An out-of-range value raises rather than falling back
+  to the default — silently substituting a different ratio would model a
+  building the caller did not describe. `None` resolves to
+  `DEFAULT_WINDOW_TO_WALL_RATIO` in exactly one place
+  (`uniform_window_ratios()`), so a supplied value and the default cannot
+  diverge.
+- **`building.residential_units` added to the v4 request schema** (with
+  sign-off) and forwarded by `geojson_validator.py`, so a request can
+  express how many dwellings a feature represents. `building.num_persons`'
+  description clarified in the same edit: it is occupants *per dwelling*,
+  not the building's total occupancy.
+- **`buem validate` now checks that weather data is actually reachable.**
+  It previously verified `BUEM_WEATHER_DIR`/`BUEM_RESULTS_DIR`/
+  `BUEM_LOG_DIR` only, so it could report PASS in an environment where
+  `buem` cannot import a single building. It now confirms either
+  `WEATHER_API_URL` or a `WEATHER_DATA_DIR`/`BUEM_WEATHER_DATA_DIR` that
+  exists, and reports which. An unrecognised on-disk archive layout is a
+  `[WARN]`, not a failure — layouts vary between providers and `weather`
+  versions, so it is a hint rather than proof of breakage.
+- **Dwelling-count plausibility reporting** in
+  `validation.aggregate_parquet`. CBS publishes consumption *per
+  dwelling*, so every comparison divides by `residential_units`; where
+  that count is missing or wrong the quotient cannot match any CBS
+  category however good the model is. Buildings implying more than
+  `IMPLAUSIBLE_M2_PER_DWELLING` (500 m²) per dwelling are now always
+  logged, and `--max-m2-per-dwelling` excludes them. Exclusion is
+  deliberately not the default, since it changes the headline number, and
+  nothing overwrites the recorded count — inventing a plausible one would
+  replace a visibly missing value with an invisible guess.
+- **A dated validation-results section in the documentation**
+  (`docs/source/validation/`), so each run is recorded with the
+  configuration that produced it and can be compared against a later
+  re-run like for like. `docs/source/modules/netherlands.rst` now points
+  there instead of carrying the numbers itself.
+
+### Changed
+
+- **The thermal model no longer prints.** `ModelBUEM`'s per-building
+  diagnostics — component configuration, POA irradiance, solar gains, LP
+  size, solver and status — went to stdout unconditionally, which at
+  whole-community scale is thousands of interleaved lines from concurrent
+  workers. All now go to the module logger at DEBUG (the air-change-rate
+  and dotenv warnings at WARNING), so a caller decides whether to see
+  them.
+- **A numpy `RuntimeWarning` now fails the test suite**
+  (`filterwarnings = ["error::RuntimeWarning"]`). Such a warning inside a
+  solve means a NaN or ±inf reached an aggregation — physically
+  meaningless output that still produces a number, so it must fail loudly
+  rather than scroll past in the warnings summary. The suite is clean
+  under this rule.
+- The `slow` pytest marker is registered in `pyproject.toml`, removing the
+  `PytestUnknownMarkWarning` it raised on every run.
+
+- **Weather is no longer range-checked inside the thermal model.**
+  `ModelBUEM._calcRadiation()` carried two `print()`-based warnings on
+  GHI/temperature ranges; these are removed. The model consumes weather
+  exactly as supplied and never masks, clips or adjusts it. The
+  equivalent check moved to the request boundary as
+  `GeoJsonValidator._check_weather_profile_ranges()`, applied to
+  caller-supplied `buem.weather.profile` payloads where a client can act
+  on the feedback. Reported as warnings (never errors), with wide
+  bounds (`WEATHER_PROFILE_PLAUSIBLE_RANGES`) aimed at unit mix-ups and
+  corrupt data rather than merely unusual values.
+
+- **Only the current (v4) request format is accepted.** The superseded
+  flat `building_attributes` shape — alone, or combined with
+  `child_components` — is now rejected at validation with a message
+  naming the field to migrate to, instead of being silently converted.
+  `BuemSchema.require_v2_or_v3` becomes `require_building_envelope`.
+  `building_attributes` remains buem's *internal* representation
+  downstream (`_convert_v3_to_v2()` still produces it); only its use as
+  an *input* is withdrawn. The two bundled examples were rewritten into
+  v4 and consolidated as `src/buem/integration/sample_request.geojson`
+  (migration: `scripts/migrate_sample_requests_to_v4.py`) — a
+  version-suffixed filename no longer conveys anything now that one
+  format is supported. `json_schema/versions/v1,v2,v3/` are retained
+  on disk as reference; nothing loads them.
+- **Window geometry no longer depends on TABULA's per-direction window
+  columns.** Windows are sized as a fraction of each exposed wall's own
+  area (`building_registry.DEFAULT_WINDOW_TO_WALL_RATIO`, applied via
+  the new `element_factory.uniform_window_ratios()`), inheriting that
+  wall's real azimuth and tilt. TABULA's Dutch typology places its
+  entire reference window area on East/West with North and South at
+  exactly zero — an abstract front/back-facade convention, not a claim
+  about orientation — so reading it by real compass direction gave
+  genuinely south-facing walls no glazing at all and collapsed
+  whole-building window-to-wall ratio to a few percent against a ~49%
+  intent. Sizing from wall area removes that mismatch, needs no
+  assumption about how a reference building was oriented, and unifies
+  the archetype-matched and fallback paths, which previously used
+  different rules (`FALLBACK_WINDOW_RATIO_PER_DIRECTION` is retired).
+  Doors still use TABULA's door-to-wall ratio, which carries no
+  orientation assumption.
+
+- **Default indoor comfort dead-band is now 18–21 °C** (was 21–24 °C).
+  New `building_registry.DEFAULT_COMFORT_T_LB`/`DEFAULT_COMFORT_T_UB` are
+  the single source of truth, consumed by `ThermalProperties`' dataclass
+  defaults and the matching `AttributeSpec`s. These represent *observed
+  occupant behavior* rather than a standardized calculation setpoint:
+  real households heat to a lower average indoor temperature than
+  reference calculations assume, a well-documented cause of calculated
+  demand exceeding metered consumption. `LOD2Mapper` accordingly no
+  longer overrides `comfortT_lb` from the matched TABULA archetype's
+  `theta_i` — that value is TABULA's own reference-calculation setpoint
+  and is a constant 20 °C across every Dutch archetype, carrying no
+  per-building information. Pass explicit `comfortT_lb`/`comfortT_ub`
+  (scalars or per-timestep Series) to model a specific building's
+  setpoints or a real setback schedule. **This lowers simulated heating
+  demand by roughly 17–18%** (the standing regression building goes from
+  49,467.8 to 40,614.6 kWh).
+
+- **TABULA refurbishment variants are now modeled.** Each TABULA
+  archetype carries three variant rows (`Number_BuildingVariant` 1/2/3:
+  as-built, standard refurbishment, nZEB refurbishment); previously only
+  the as-built variant was ever selected, so a renovated building was
+  modeled with its original construction-era envelope. New
+  `tabula_helpers.apply_refurbishment_measures()` converts a variant's
+  own predefined-measure columns (`Code_MeasureType_<Component>_1`,
+  `R_PredefinedMeasure_<Component>_1`) into adjusted U-values —
+  `Add` measures compound resistances in series
+  (`U_new = 1/(1/U_old + R)`), `Replace`/`ReplaceInsulation` measures
+  treat the measure's R as the new total (`U_new = 1/R`) — applied in
+  `LOD2Mapper.map_building()` after the editable override table.
+  `lookup_tabula_archetype()` gained a `variant_number` parameter.
+  For the Netherlands, `nl_archetype_mapper` now uses the real RIVM
+  energy label to select the *variant* rather than to reassign the
+  construction-year class: the construction year always determines the
+  era (a renovated 1980 building is still structurally a 1980 building),
+  and the gap between the label-implied performance tier and the
+  era-typical tier selects variant 2 (1–2 tiers better) or 3 (3+ tiers)
+  via the new `label_to_refurbishment_variant()`. New
+  `refurbishment_variant` output column. Migration of the bundled Loenen
+  dataset via new `scripts/refresh_nl_archetype_variants.py`: of 742
+  label-matched buildings, 322 now use the standard-refurbishment variant
+  and 86 the nZEB variant.
+- **Multi-dwelling internal gains are now scaled to the whole building.**
+  New `residential_units` `AttributeSpec`: for AB/MFH buildings, where
+  one building id represents a whole apartment block (matching TABULA's
+  own AB/MFH archetypes, which carry `n_Apartment` counts of 15–56),
+  `AttributeBuilder.generate_electricity_profile()` previously generated
+  internal gains for a *single household* and applied them to the
+  whole-block envelope. `Q_ig`/`elecLoad`/`dhw_liters` are now scaled by
+  the dwelling count (the dimensionless `occ_nothome`/`occ_sleeping`
+  fractions and any caller-supplied `elecLoad` are deliberately not).
+  Currently reachable through the analysis path (`validation.py`) only:
+  the v3 request schema has no dwelling-count field, so the live API
+  path is unchanged pending a contract decision.
+- **`validation.py --labeled-only`**: restricts the buem-vs-CBS
+  comparison to buildings with a real RIVM energy label — the subset
+  whose current envelope performance (including refurbishment) is known
+  rather than inferred from construction year alone, and therefore the
+  fairest subset to validate against measured consumption statistics.
+  Combined effect of the two changes above on the buem-vs-CBS
+  overestimate for Apeldoorn/2018: mean ratio 4.96 → 4.02 on an
+  identical sample, 3.13 with `--labeled-only`.
+- **Domestic hot water / gas-cooking energy, wired end-to-end for
+  residential buildings**: `buem.thermal.dhw_cooking` — `dhw_energy_kwh()`
+  (V·ρ·c·ΔT, liters → kWh, `DHW_DELTA_T_K = 30.8` K — real EN 12831-3
+  operating-condition temperatures, 42 °C delivery / 11.2 °C cold mains),
+  `dhw_energy_kwh_annual_fallback()` (default now EN 12831-3 Annex Table
+  B.5's self-consistent 55 L/person/day figure, ~1085 kWh/person/yr — the
+  previous NTA 8800 545 kWh/person/yr default is still available
+  explicitly, but was found to fail its own internal-consistency check),
+  `cooking_gas_energy_kwh()`/`cooking_annual_kwh_from_heating()`
+  (distributes a CBS-ratio-derived annual total across `cooking_active`
+  -flagged hours). Deliberately **not** part of `ModelBUEM`'s 5R1C solve —
+  additive post-processing only. `AttributeBuilder` now calls
+  `occupancy.generate_dhw_draws()` (v5.0.0) for every residential building
+  (not service buildings — no DHW model there yet); `ModelBUEM
+  ._addDhwCooking()` (new, called from `_readResults()` after the LP
+  solve) converts the resulting liters/cooking-activity series into new
+  `self.dhw_kWh`/`self.cooking_gas_kWh` and `"DHW Load"`/`"Cooking Gas
+  Load"` `detailedResults` columns — `None`/absent with zero behavior
+  change for any cfg that doesn't carry the two new optional
+  `dhw_liters`/`cooking_active` keys (new `AttributeSpec` entries,
+  `cfg_attribute.py`). `buem.analysis.netherlands.validation` now reports
+  a second comparison alongside the original — buem's own `heating_kWh +
+  dhw_kWh + cooking_gas_kWh` vs. CBS's real unstripped gas total — run for
+  real against Apeldoorn (GM0200): DHW/cooking modeling modestly improves
+  most groups' ratios but does not close issue #3's 2-7x gap, confirming
+  the gap's dominant cause lies elsewhere. Fully tested
+  (`tests/test_dhw_cooking.py`, `tests/test_nl_validation.py`, real
+  end-to-end in `test_building_types.py`). See
+  `.claude/dhw_cooking_heat_handoff.md`. `gas_conversion.py` gained two new real constants,
+  `DHW_SHARE_OF_GAS`/`COOKING_SHARE_OF_GAS` (0.20/0.02 — previously
+  docstring-only), so a per-building cooking-energy total can be derived
+  from the CBS ratio instead of a new invented constant.
+- **`buem.config.reference_values`**: a CSV-backed loader
+  (`load_dhw_cooking_constants()`) for `src/buem/data/reference/
+  dhw_cooking_constants.csv` — the single, user-editable point of
+  configuration for `dhw_cooking.py`/`gas_conversion.py`'s deterministic
+  constants (water properties, both DHW ΔT figures, the EN 12831-3 and
+  legacy NTA 8800 annual-fallback figures, the three CBS gas shares, gas
+  calorific value, boiler efficiency), mirroring `occupancy`'s own
+  `dhw_tapping_categories.csv` pattern. New `scripts/
+  extract_dhw_reference_values.py` regenerates the EN-12831-3-sourced
+  rows from the source workbook (present locally at `src/buem/data/
+  reference/`, deliberately not committed — unverified redistribution
+  license). Same public constant names/imports as before; only where the
+  values come from changed. Tested: `tests/test_reference_values.py`.
+- **`DEFAULT_SEED` removed entirely**: per explicit user direction ("we
+  should remove seeds completely from buem"), `building_registry.py`'s
+  `DEFAULT_SEED = 42` is gone, `ATTRIBUTE_SPECS["seed"].default` is now
+  `None`. Every occupancy call buem makes (`HouseholdProfile`/
+  `ElectricityConsumptionProfile`/`ServiceBuildingProfile`/
+  `generate_dhw_draws()`) now lets occupancy v5.0.0's own
+  `derive_default_seed()` own reproducibility completely — no buem-side
+  seed bookkeeping left. `test_hash_determinism` re-verified green under
+  the new behavior.
+- **`buem.analysis.netherlands.construction_year_stratification`**: a
+  real investigation into issue #3's buem-vs-CBS heating gap, stratified
+  by TABULA construction-year class/insulation level rather than just
+  building type. Found `validation.py`'s "first N buildings in file
+  order" sample selection is not representative of the real construction-
+  era mix (TH sampled 80% the oldest/worst-insulated class vs. 21% of the
+  real population) — correcting for this sampling skew alone drops TH's
+  reported ~6.4x ratio to ~3.4-4.3x and SFH's from 2.00x/3.45x to
+  1.80x/3.10x, a substantial (not complete) explanation for the gap,
+  independent of DHW/cooking. See `.claude/dhw_cooking_heat_handoff.md`.
+
 ## [3.2.0] - 2026-08-18
 
 ### Added

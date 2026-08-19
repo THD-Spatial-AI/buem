@@ -57,6 +57,22 @@ WEATHER_PROVIDER_YEAR_RANGES = {
     "era5-land": (1980, 2025),
 }
 
+# Plausibility bounds for a caller-supplied weather profile, checked at
+# the request boundary so a client gets actionable feedback rather than
+# an implausible result. Deliberately wide: these flag values that cannot
+# be physically correct (or indicate a unit mix-up, e.g. irradiance in
+# the wrong unit or temperature in Fahrenheit), not values that are
+# merely unusual for a given location. Reported as warnings, never
+# errors -- a genuinely extreme but real climate must still be
+# simulable. Provider-fetched weather is not checked here; that is the
+# `weather` package's own responsibility.
+WEATHER_PROFILE_PLAUSIBLE_RANGES = {
+    "T": (-60.0, 60.0),      # degC
+    "GHI": (0.0, 1500.0),    # W/m2 -- above the solar constant at surface
+    "DNI": (0.0, 1500.0),    # W/m2
+    "DHI": (0.0, 1500.0),    # W/m2
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -305,45 +321,60 @@ class BuildingAttributesSchema(Schema):
 
 
 class BuemSchema(Schema):
-    """Schema for BUEM section.
+    """Schema for the ``buem`` section of a request feature.
 
-    Accepts both v2 format (building_attributes) and v3 format
-    (building / envelope / thermal / solver).  The v3 sub-objects are
-    validated structurally by the JSON Schema layer, so marshmallow only
-    checks presence here.
+    Only the current (v4) request shape is accepted: a ``building``
+    object carrying ``envelope``, plus the optional ``thermal``,
+    ``solver``, ``weather`` and ``inputs`` siblings. Their structure is
+    validated by the JSON Schema layer, so marshmallow only checks
+    presence here.
+
+    ``building_attributes`` is declared but not accepted: it is the
+    superseded flat request format, kept in the schema purely so a
+    request still sending it fails with a clear migration message from
+    :meth:`require_building_envelope` rather than a generic
+    "unknown field" error. It remains buem's *internal* representation
+    downstream -- ``_convert_v3_to_v2()`` produces it -- but is no longer
+    a supported input.
     """
-    # v2 format
     building_attributes = fields.Nested(BuildingAttributesSchema, required=False, allow_none=True)
     child_components = fields.List(fields.Nested(ChildComponentSchema), required=False, allow_none=True)
     use_milp = fields.Bool(load_default=False)
 
-    # v3 format — structure validated by JSON Schema
     building = fields.Dict(required=False, allow_none=True)
     envelope = fields.Dict(required=False, allow_none=True)
     thermal = fields.Dict(required=False, allow_none=True)
     solver = fields.Dict(required=False, allow_none=True)
-
-    # v4 additions (v3->v4 promotion, 2026-08-14; sign-off: this session,
-    # see CLAUDE.md "Guardrails") — buem.weather (provider/year/profile,
-    # see versions/v4/request_schema.json's weather_source $def) and
-    # buem.inputs (electricity_load_profile). Structure validated by
-    # _convert_v3_to_v2, same as building/envelope/thermal/solver above.
     weather = fields.Dict(required=False, allow_none=True)
     inputs = fields.Dict(required=False, allow_none=True)
 
     @validates_schema
-    def require_v2_or_v3(self, data, **kwargs):
-        """Ensure either v2 (building_attributes) or v3 (building with envelope) is present."""
-        has_v2 = data.get('building_attributes') is not None
-        has_v3 = (
+    def require_building_envelope(self, data, **kwargs):
+        """Require the v4 request shape: ``building`` carrying ``envelope``.
+
+        Superseded request formats are rejected rather than silently
+        accepted. In particular a flat ``building_attributes`` payload --
+        the pre-v3 shape, which remains buem's *internal* representation
+        but is no longer a supported input -- fails here with a message
+        naming the field to migrate to.
+        """
+        has_building_envelope = (
             isinstance(data.get('building'), dict)
             and isinstance(data['building'].get('envelope'), dict)
         )
-        if not has_v2 and not has_v3:
+        if has_building_envelope:
+            return
+        if data.get('building_attributes') is not None:
             raise ValidationError(
-                "Provide either 'building_attributes' (v2) or 'building' with 'envelope' (v3)",
+                "'building_attributes' is a superseded request format and is no "
+                "longer accepted. Send the current format instead: 'building' "
+                "with an 'envelope' object.",
                 field_name='buem',
             )
+        raise ValidationError(
+            "Provide 'building' with an 'envelope' object.",
+            field_name='buem',
+        )
 
 
 class PropertiesSchema(Schema):
@@ -815,17 +846,17 @@ class GeoJsonValidator:
         if 'g_gl' in win_comp:
             building_attributes['g_gl_n_Window'] = win_comp['g_gl']
 
-        # Optional building metadata. capacity/num_persons/archetype forward
-        # occupancy generation inputs (occupancy_gains_handoff.md Gap 2,
-        # 2026-08-07) -- AttributeBuilder.generate_electricity_profile()
-        # already reads all three from merged_attrs and does its own
-        # int() casts on capacity/num_persons, so a plain passthrough here
-        # is sufficient. seed is deliberately NOT forwarded: it's an
-        # internal reproducibility knob, not part of the EnerPlanET
-        # request contract -- see CLAUDE.md "Occupancy is compulsory".
+        # Optional building metadata. capacity/num_persons/archetype/
+        # residential_units forward occupancy generation inputs --
+        # AttributeBuilder.generate_electricity_profile() reads them from
+        # merged_attrs and does its own numeric casts, so a plain
+        # passthrough is sufficient here. seed is deliberately NOT
+        # forwarded: it is an internal reproducibility knob, not part of
+        # the EnerPlanET request contract.
         for key in ('building_type', 'construction_period', 'country', 'n_storeys',
                     'neighbour_status', 'attic_condition', 'cellar_condition',
-                    'capacity', 'num_persons', 'archetype', 'equipment'):
+                    'capacity', 'num_persons', 'residential_units', 'archetype',
+                    'equipment', 'window_to_wall_ratio'):
             if key in building:
                 building_attributes[key] = building[key]
 
@@ -860,9 +891,11 @@ class GeoJsonValidator:
         # overrides the provider/year fetch entirely when present.
         weather_profile = weather_block.get('profile') if isinstance(weather_block, dict) else None
         if isinstance(weather_profile, dict) and weather_profile.get('path'):
-            building_attributes['weather'] = load_weather_profile(
+            weather_df = load_weather_profile(
                 weather_profile['path'], weather_profile.get('format', 'json'),
             )
+            self._check_weather_profile_ranges(weather_df, result, feature_idx)
+            building_attributes['weather'] = weather_df
             building_attributes['use_provided_weather'] = True
 
         # Caller-supplied electricity load profile file
@@ -898,6 +931,40 @@ class GeoJsonValidator:
             "Converted v3 format (building.envelope) to v2 internal format (building_attributes.components)",
             f"features[{feature_idx}].properties.buem"
         )
+
+    @staticmethod
+    def _check_weather_profile_ranges(
+        weather_df: pd.DataFrame, result: ValidationResult, feature_idx: int,
+    ):
+        """Range-check a caller-supplied weather profile.
+
+        Runs at the request boundary, where a client can still correct
+        the input, rather than inside the thermal model -- which consumes
+        weather exactly as given and never masks or adjusts it. Issues
+        are warnings, not errors: a real but extreme climate must remain
+        simulable, so this surfaces likely unit mix-ups and corrupt data
+        without blocking the request. See
+        ``WEATHER_PROFILE_PLAUSIBLE_RANGES``.
+        """
+        path = f"features[{feature_idx}].properties.buem.weather.profile"
+        for column, (low, high) in WEATHER_PROFILE_PLAUSIBLE_RANGES.items():
+            if column not in weather_df.columns:
+                continue
+            series = weather_df[column]
+            observed_min, observed_max = float(series.min()), float(series.max())
+            if observed_min < low or observed_max > high:
+                result.add_issue(
+                    ValidationLevel.WARNING,
+                    f"weather.profile column {column!r} spans "
+                    f"{observed_min:.1f} to {observed_max:.1f}, outside the "
+                    f"plausible range {low} to {high}",
+                    path,
+                    suggestion=(
+                        f"Check {column!r}'s units and source data. "
+                        "The profile is used exactly as supplied -- buem does "
+                        "not clip or adjust weather values."
+                    ),
+                )
 
     def _child_to_nested_components(self, child_components: list[dict]) -> dict[str, Any]:
         """Convert child_components array to nested components structure."""

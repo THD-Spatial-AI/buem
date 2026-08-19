@@ -406,8 +406,19 @@ Thermal Properties
        available → model uses its own scheduling-based internal gains profile.
 
    * - ``q_w_nd`` — specific hot-water demand [kWh/(m²·a)] from TABULA
-     - Annual energy for domestic hot water normalised by reference floor area.
-       Ranges from 10 to 15 kWh/(m²·a) in the German TABULA dataset.
+     - Annual energy for domestic hot water normalised by reference floor
+       area. Ranges from 10 to 15 kWh/(m²·a) in the German TABULA dataset.
+       Still not read anywhere -- superseded in practice by a richer,
+       wired-in path (2026-08-18): ``AttributeBuilder`` calls
+       ``occupancy.generate_dhw_draws()`` for every residential building
+       (not service buildings -- no DHW model there yet), and
+       ``ModelBUEM._addDhwCooking()`` converts the resulting hourly liters
+       into an additive ``dhw_kWh`` series (``buem.thermal.dhw_cooking``,
+       V·ρ·c·ΔT, ΔT=30.8 K -- real EN 12831-3 operating-condition
+       temperatures) plus a CBS-ratio-derived ``cooking_gas_kWh`` --
+       both post-processed *after* the 5R1C solve, never part of it. See
+       ``.claude/dhw_cooking_heat_handoff.md`` for the full method and
+       sourcing.
 
    * - ``design_T_min`` — outdoor design temperature [°C] from TABULA ``Theta_e``
      - Used for peak heating load sizing.  Default −12 °C (German DIN 4710).
@@ -416,15 +427,18 @@ Thermal Properties
      - Reduces transmission losses for unheated adjacent spaces (stairwells,
        corridors).  Default 1.0 (no reduction).  German data: 0.85–0.95.
 
-   * - ``comfortT_lb`` — heating setpoint [°C] from TABULA ``theta_i``
-     - The matched archetype's own assumed indoor heating setpoint, applied
-       as a constant lower comfort bound for every hour (no TABULA-equivalent
-       night/weekend setback). Fixed 2026-08-15 — previously never read;
-       every LOD2-mapped building silently used the generic 21.0 °C default
-       regardless of what its archetype specified. Falls back to 21.0 °C
-       when the matched row has no ``theta_i`` value. ``comfortT_ub`` has no
-       TABULA row equivalent (TABULA's residential reference calculation is
-       heating-only) and keeps its own 24.0 °C default unconditionally.
+   * - ``comfortT_lb`` / ``comfortT_ub`` — indoor comfort dead-band [°C]
+     - Not taken from the matched archetype. buem applies its own default
+       band of 18–21 °C (``building_registry.DEFAULT_COMFORT_T_LB`` /
+       ``DEFAULT_COMFORT_T_UB``), representing *observed occupant
+       behavior* rather than a standardized calculation setpoint: real
+       households heat to a lower average indoor temperature than
+       reference calculations assume, a documented cause of calculated
+       demand exceeding metered consumption. TABULA's ``theta_i`` is that
+       standardized setpoint — and is a constant 20 °C across every Dutch
+       archetype, so it carries no per-building information. Pass explicit
+       ``comfortT_lb``/``comfortT_ub`` (scalars, or per-timestep Series
+       for a real night/weekend setback schedule) to override.
 
 
 TABULA Column Mapping
@@ -500,9 +514,9 @@ TABULA Column Mapping
      - 1.0
 
    * - ``comfortT_lb``
-     - ``theta_i``
+     - — (not TABULA-derived; see above)
      - °C
-     - 21.0
+     - 18.0
 
    * - per-element ``U``
      - ``U_Wall_1/2/3``, ``U_Roof_1/2``, ``U_Floor_1/2``, ``U_Window_1``, ``U_Door_1``

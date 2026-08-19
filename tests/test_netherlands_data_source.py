@@ -104,6 +104,34 @@ def test_building_lat_lon_returns_none_and_warns_on_malformed_geometry(caplog):
     assert result is None
 
 
+def test_region_center_lat_lon_averages_only_decodable_rows():
+    """A row without geometry must be skipped, not counted as (0, 0) --
+    which would drag the region's shared weather fetch into the Atlantic."""
+    import pandas as pd
+
+    from buem.buildings.mapping.geometry_utils import region_center_lat_lon
+
+    hex_wkb = "010100002040710000DE22EC3639200841F10E781208301C41"
+    expected_lat, expected_lon = wkb_point_to_lat_lon(hex_wkb)
+    df = pd.DataFrame({"building_centroid_geom": [hex_wkb, None, hex_wkb]})
+
+    lat, lon = region_center_lat_lon(df)
+
+    assert lat == pytest.approx(expected_lat)
+    assert lon == pytest.approx(expected_lon)
+
+
+def test_region_center_lat_lon_raises_when_no_geometry_at_all():
+    """Falling back to a module-default location here would simulate a
+    region against another country's climate."""
+    import pandas as pd
+
+    from buem.buildings.mapping.geometry_utils import region_center_lat_lon
+
+    with pytest.raises(ValueError, match="no building.*real geometry|No building"):
+        region_center_lat_lon(pd.DataFrame({"building_centroid_geom": [None, None]}))
+
+
 # ── CsvBuildingSource: real Netherlands/Loenen data ──────────────────────
 
 

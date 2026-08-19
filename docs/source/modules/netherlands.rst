@@ -387,35 +387,73 @@ Stage 4 — TABULA archetype linking + U-values
 residential building's real TABULA archetype row, from real signals
 independent of city2tabula:
 
-1. **A real energy label, when present (24%)**: NTA 8800/ISSO 82.1 treats
-   a construction-year class and a "typical baseline label" as two views
-   of the same historical insulation-standard tier — a real label maps
-   directly to the year-class whose typical performance it matches
-   (``LABEL_TO_YEAR_CLASS``), overriding the construction-year-derived
-   class, because the label reflects the building's *actual current*
-   envelope (post-renovation, if any) — something a year-class average
-   cannot.
-2. **The real construction year otherwise (76%)**, bucketed into TABULA
-   NL's own class boundaries (confirmed directly from the bundled
-   ``tabula.csv``, not assumed): NL.01 ≤1964, NL.02 1965–1974, NL.03
-   1975–1991, NL.04 1992–2005, NL.05 2006–2014, NL.06 2015+ — boundaries
-   that already align with the real Dutch Bouwbesluit code-change history
-   (1965/1975/1992/2015).
+1. **The real construction year determines the era**, bucketed into
+   TABULA NL's own class boundaries (read directly from the bundled
+   ``tabula.csv``): NL.01 ≤1964, NL.02 1965–1974, NL.03 1975–1991,
+   NL.04 1992–2005, NL.05 2006–2014, NL.06 2015+ — boundaries that
+   align with the real Dutch Bouwbesluit code-change history
+   (1965/1975/1992/2015). The era is never overridden: a renovated 1980
+   building is still structurally a 1980 building, with that era's
+   geometry, storey count and thermal mass.
+2. **A real energy label, when present (24%), selects the refurbishment
+   variant within that era.** TABULA provides three variant rows per
+   archetype (``Number_BuildingVariant`` 1/2/3: as-built, standard
+   refurbishment, nZEB refurbishment). NTA 8800/ISSO 82.1 associate each
+   construction era with a typical baseline label
+   (``LABEL_TO_YEAR_CLASS``); a label materially better than its era's
+   typical level indicates the building has been refurbished. The gap in
+   year-class steps drives the choice — 1–2 tiers better selects the
+   standard-refurbishment variant, 3 or more the nZEB variant
+   (``label_to_refurbishment_variant()``). Buildings without a label keep
+   the as-built variant, so an undetected refurbishment cannot currently
+   be reflected.
 
-Either route resolves via ``tabula_helpers.lookup_tabula_archetype()``
-(parameterized onto the NL sheet specifically for this, 2026-08-17) —
-the *same* selection logic (prefer a ``.Gen.`` variant, lowest id for
-determinism) :doc:`buildings`'s German path and the live-request path
-already use, not a reimplementation. A match sets
+Both resolve via ``tabula_helpers.lookup_tabula_archetype()`` — the same
+selection logic (prefer a ``.Gen.`` variant, then the requested variant
+number, then the lowest id for determinism) :doc:`buildings`'s German
+path and the live-request path already use. A match sets
 ``tabula_variant_code_id``/``tabula_variant_code`` to that real row's own
-``id``/``Code_BuildingVariant`` — so ``LOD2Mapper.map_building()`` needs
-**no code changes at all** to work for Netherlands buildings once this
-has run.
+``id``/``Code_BuildingVariant``, so ``LOD2Mapper.map_building()`` picks
+up the correct variant with no further linking step.
 
-Real result for Loenen (2026-08-17): **3,101/3,101 residential buildings
-(100%) matched** — 742 via a real label, 2,359 via construction year.
+Refurbishment measures
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The three variant rows of an archetype share identical base
+``U_<Component>_1`` columns; the refurbished performance lives in
+per-component measure columns (``Code_MeasureType_<Component>_1``,
+``R_PredefinedMeasure_<Component>_1``).
+``tabula_helpers.apply_refurbishment_measures()`` converts those into
+adjusted U-values, applied in ``LOD2Mapper.map_building()`` after the
+editable override table so measures compound with whichever base U-value
+is in effect:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
+
+   * - Measure type
+     - Meaning
+     - Adjustment
+
+   * - ``Add``
+     - Insulation added to the existing construction
+     - ``U_new = 1 / (1/U_old + R)`` (resistances in series)
+
+   * - ``Replace``, ``ReplaceInsulation``
+     - Component or its insulation layer replaced outright (e.g. new glazing)
+     - ``U_new = 1 / R``
+
+   * - ``0`` / absent
+     - No measure (all as-built variant rows)
+     - unchanged
+
+Real result for Loenen: **3,101/3,101 residential buildings (100%)
+matched** — 742 via a real label, 2,359 via construction year.
 Type distribution: SFH 2,493 (80.4%), TH 568 (18.3%), MFH 28 (0.9%),
-AB 12 (0.4%).
+AB 12 (0.4%). Of the 742 label-matched buildings, 322 resolve to the
+standard-refurbishment variant and 86 to the nZEB variant; the remaining
+334 carry a label matching their era's typical level and stay as-built.
 
 The editable U-value table
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -512,6 +550,119 @@ Re-running the full pipeline
    mapper = LOD2Mapper(CsvBuildingSource("<dir>"), country="NL", u_value_overrides=overrides)
 
 
+Running the model over a region
+----------------------------------
+
+Setup
+^^^^^^^
+
+.. code-block:: bash
+
+   conda activate buem_env
+   cd <repo root>          # --data-dir is resolved relative to the cwd
+   buem validate
+
+``WEATHER_DATA_DIR`` must resolve to real processed provider archives (the
+NetCDF output of ``weather run --provider ...``) before anything imports
+``buem``; the repo's ``.env`` sets it on a configured machine. Note that
+``buem validate`` checks ``BUEM_WEATHER_DIR``/``BUEM_RESULTS_DIR``/
+``BUEM_LOG_DIR`` only — it can report PASS while a run still fails at
+import for want of an archive.
+
+Defaults, and why they are what they are:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 15 60
+
+   * - Setting
+     - Default
+     - Source / rationale
+
+   * - Weather provider
+     - ``merra-2``
+     - ``building_registry.DEFAULT_WEATHER_PROVIDER``. ``era5-land``
+       currently fails at this cell/year (an unrepaired de-accumulation
+       boundary); ``cosmo-rea6`` works if selected explicitly.
+
+   * - Weather year
+     - 2018
+     - ``building_registry.DEFAULT_YEAR`` — the year archive access is
+       verified working for.
+
+   * - CBS period
+     - ``2018JJ00``
+     - Derived as ``<weather-year>JJ00`` so the two cannot drift apart.
+       Real Apeldoorn gas consumption roughly halved between 2018 and
+       2024, so a year mismatch is a large error, not a rounding one.
+
+   * - Region / weather point
+     - derived
+     - The mean real centroid of the region's own buildings
+       (``geometry_utils.region_center_lat_lon``). One fetch is shared
+       across the whole run: a village spans a few kilometres, well
+       inside one reanalysis grid cell.
+
+   * - Comfort dead-band
+     - 18–21 °C
+     - ``building_registry.DEFAULT_COMFORT_T_LB``/``_UB``.
+
+   * - Window-to-wall ratio
+     - 0.5
+     - ``building_registry.DEFAULT_WINDOW_TO_WALL_RATIO``, applied to each
+       exposed wall; overridable per request.
+
+Whole-region run
+^^^^^^^^^^^^^^^^^^
+
+``buem.analysis.batch`` runs every building through the same
+``LOD2Mapper`` → ``AttributeBuilder`` → ``CfgBuilding`` → ``ModelBUEM``
+path as a single-building run, across a ``ProcessPoolExecutor``, writing
+one row per building to Parquet incrementally. ``--source csv`` selects a
+``CsvBuildingSource`` region; ``--source excel`` (the default) is the
+German workbook path.
+
+.. code-block:: bash
+
+   python -m buem.analysis.batch --source csv \
+       --data-dir src/buem/data/buildings/netherlands \
+       --country NL --residential-only \
+       --workers 16 --resume \
+       --output results/loenen.parquet
+
+Worth knowing:
+
+- **One weather fetch** is made in the parent and handed to each worker
+  once via the pool initializer, rather than pickled per building.
+  ``LOD2Mapper`` is likewise built once per worker, not once per task.
+- **``--resume`` is safe to pass always.** Building ids already in the
+  output are skipped and their rows carried through, so an interrupted
+  run continues instead of restarting.
+- **``u_value_reference.csv`` is picked up automatically** from
+  ``--data-dir``, so a batch run and a validation run of the same region
+  apply identical U-values.
+- **``--residential-only`` / ``--labeled-only``** filter on the
+  ``is_residential`` / ``matched_via_label`` columns Stage 3/4 produce.
+  Asking for a filter a source cannot honour raises rather than quietly
+  running the unfiltered population.
+- One building failing is recorded as an ``error`` row, never an aborted
+  run.
+
+On Linux, ``scripts/run_region_batch.sh`` wraps this: it checks
+``WEATHER_DATA_DIR``, pins the BLAS thread count to 1 per worker (the
+per-building linear algebra is small, and nested thread pools
+oversubscribe the cores), sizes ``--workers`` to the box, and detaches
+under ``nohup`` so an SSH session can drop without killing the run.
+
+Measured throughput, 16 workers on a 22-logical-core machine: **~1.95
+buildings/s**, i.e. about 27 minutes for all 3,101 residential Loenen
+buildings. Memory is a few hundred MB per worker. The per-building cost
+is dominated by the LP solve (4 × 8760 = 35,040 variables, CLARABEL with
+an OSQP fallback), so it varies little between buildings — meaning
+throughput scales with worker count, and a whole community is a
+laptop-scale job, not one that needs a cluster.
+
+
 Validation
 --------------
 
@@ -606,7 +757,33 @@ results" charter rather than a data-ingestion one):
   real ``AttributeBuilder``/``CfgBuilding``/``ModelBUEM`` path
   ``buem.analysis.batch`` uses (one shared regional weather fetch, real
   U-value overrides), and reports simulated heating demand alongside the
-  CBS-derived figure.
+  CBS-derived figure. Two entry points:
+
+  .. code-block:: bash
+
+     # Sampled smoke test: first N buildings per group, minutes to run
+     python -m buem.analysis.netherlands.validation \
+         --data-dir src/buem/data/buildings/netherlands \
+         --region-code GM0200 --samples-per-type 5 [--labeled-only]
+
+     # Population-complete: aggregate a finished batch run, no simulation
+     python -m buem.analysis.netherlands.validation \
+         --from-parquet results/loenen.parquet --region-code GM0200
+     python -m buem.analysis.netherlands.validation \
+         --from-parquet results/loenen.parquet --region-code GM0200 --labeled-only
+
+  ``--from-parquet`` exists because the sampled path takes the **first N
+  buildings in file order**, and that order is not random with respect to
+  construction era — see "sampling skew" below, where the effect is
+  measured rather than assumed. Aggregating a whole-region batch run has
+  no sample to skew, and every slice (all buildings, label-matched only)
+  comes from the same simulation rather than a separate one, so the two
+  are directly comparable. Both paths share the CBS lookup, conversion
+  and reporting code, so they cannot drift apart. Each building's
+  whole-building result is divided by its own ``residential_units``
+  before the group mean, matching CBS's per-dwelling figures.
+
+  Both paths need internet: the CBS 81528NED figure is fetched live.
 
 **First real run, Loenen, 2 buildings/group** — immediately useful, not
 just a clean pass: SFH results landed in a plausible range (ratio 0.72-
@@ -704,16 +881,193 @@ even with the per-dwelling fix and a larger, noise-resistant sample.
 can't drift apart by accident in a future run; pass ``--period``
 explicitly to compare mismatched years on purpose.
 
-**Honest state of this validation**: useful, and has already found and
-fixed one real bug (the per-dwelling normalization). What's left
-unexplained is no longer plausibly sample noise or a year mismatch —
-both were real contributors and are now controlled for, and a real,
-still-too-high gap remains. Candidate explanations not yet
-investigated: a systematic archetype/U-value mismatch for these types,
-the gas→heat conversion's 78%/90% assumptions running too low for this
-specific housing mix, or a genuine buem-side gap (see the DHW/cooking
-discussion below, and ``open.md`` for the full list of what's still
-open here).
+**Honest state of this validation (before the two updates below)**:
+useful, and has already found and fixed one real bug (the per-dwelling
+normalization). What's left unexplained is no longer plausibly sample
+noise or a year mismatch — both were real contributors and are now
+controlled for, and a real, still-too-high gap remains.
+
+**Update 1 (2026-08-18) — DHW/cooking modeling wired in, real effect
+quantified.** ``ModelBUEM`` now models domestic hot water and gas-cooking
+energy (:doc:`buildings`'s ``q_w_nd`` row, ``buem.thermal.dhw_cooking``) —
+``validation`` reports a second comparison alongside the original: buem's
+own ``heating_kWh + dhw_kWh + cooking_gas_kWh`` against CBS's *real,
+unstripped* gas total (no more 78%/20%/2% stripping needed on the CBS
+side). Run for real against the same Apeldoorn sample:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 12 8 12 12 10 12 12 10
+
+   * - type
+     - neigh
+     - n
+     - heat kWh
+     - CBS heat
+     - ratio
+     - total kWh
+     - CBS full
+     - ratio
+   * - AB
+     - B_Alone
+     - 5
+     - 42,226
+     - 6,103
+     - 6.92
+     - 44,456
+     - 7,825
+     - 5.68
+   * - AB
+     - B_N1
+     - 4
+     - 12,674
+     - 6,103
+     - 2.08
+     - 13,935
+     - 7,825
+     - 1.78
+   * - MFH
+     - B_Alone
+     - 5
+     - 35,425
+     - 6,103
+     - 5.80
+     - 41,078
+     - 7,825
+     - 5.25
+   * - MFH
+     - B_N1
+     - 5
+     - 40,583
+     - 6,103
+     - 6.65
+     - 45,690
+     - 7,825
+     - 5.84
+   * - SFH
+     - B_Alone
+     - 5
+     - 32,856
+     - 16,390
+     - 2.00
+     - 43,864
+     - 21,013
+     - 2.09
+   * - SFH
+     - B_N1
+     - 5
+     - 39,232
+     - 11,384
+     - 3.45
+     - 50,404
+     - 14,595
+     - 3.45
+   * - TH
+     - B_N1
+     - 5
+     - 61,583
+     - 9,670
+     - 6.37
+     - 73,328
+     - 12,397
+     - 5.92
+   * - TH
+     - B_N2
+     - 5
+     - 51,539
+     - 8,092
+     - 6.37
+     - 63,027
+     - 10,375
+     - 6.08
+
+DHW/cooking modestly improves 7 of 9 groups' ratios (~5-20% relative
+reduction), leaves one flat, and slightly worsens one — real, but nowhere
+near enough to close a 2-7× gap on its own (DHW+cooking are only ~22% of
+a typical Dutch gas bill by CBS's own split). Confirms the gap's dominant
+driver lies elsewhere.
+
+**Update 2 (2026-08-18) — a real, substantial contributor found:
+construction-year sampling skew.** ``buem.analysis.netherlands
+.construction_year_stratification`` checked whether this validation's
+"first N buildings in file order" sample selection is representative of
+the real TABULA construction-era mix. It is not: TH's sample was 80% the
+oldest, worst-insulated TABULA class (``NL.01``, wall U ≈ 5.26 W/m²K) vs.
+only 21% of the real population; SFH was skewed similarly, less severely.
+Simulating one real building per (type, era) stratum and weighting by
+each era's real population share gives, for the same groups above:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 10 12 18 18 14 14 14
+
+   * - type
+     - neigh
+     - sample-implied kWh/m²
+     - population-weighted kWh/m²
+     - skew inflation
+     - reported ratio
+     - skew-adjusted ratio
+   * - SFH
+     - B_Alone
+     - 219.6
+     - 197.3
+     - 1.11×
+     - 2.00
+     - **1.80**
+   * - SFH
+     - B_N1
+     - 219.6
+     - 197.3
+     - 1.11×
+     - 3.45
+     - **3.10**
+   * - TH
+     - B_N1
+     - 350.4
+     - 185.3
+     - 1.89×
+     - 6.37
+     - **3.37**
+   * - TH
+     - B_N2
+     - 276.4
+     - 185.3
+     - 1.49×
+     - 6.37
+     - **4.27**
+
+Sampling skew toward older/worse-insulated archetypes alone accounts for
+roughly half of TH's reported gap and a real chunk of SFH's — a
+substantial, quantified, but not complete explanation, independent of the
+DHW/cooking finding above. A genuine residual gap remains for both types.
+AB/MFH (only 12 and 28 total residential buildings in the whole dataset)
+are too small for the same population-share treatment — their ratios
+carry a separate small-N caveat.
+
+Candidate explanations still not investigated: whether the remaining
+residual gap traces to archetype/U-value matching accuracy itself, or the
+gas→heat conversion's 78%/90% assumptions running too low for this
+specific housing mix. See ``.claude/dhw_cooking_heat_handoff.md`` for the
+full session write-up.
+
+
+Population-complete results
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Every table above is a sampled run** (3-5 buildings per group, taken in
+file order) and is superseded. The sampling was the point of the skew
+diagnosis immediately above; rather than continue correcting for it, the
+whole population is now simulated in one pass
+(``buem.analysis.batch --source csv``) and aggregated
+(``validation --from-parquet``).
+
+The current dated results -- all 3,101 residential buildings and the 742
+label-matched subset, with the per-group tables and an explanation of the
+two averaging conventions -- live in :doc:`../validation/loenen_cbs`.
+They are kept there rather than here so each run is recorded with the
+configuration that produced it, and can be compared against a later
+re-run like for like.
 
 
 Known open items

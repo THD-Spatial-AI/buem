@@ -15,11 +15,11 @@ from buem.buildings.mapping.element_factory import (
 )
 from buem.buildings.mapping.live_synthesis import (
     FALLBACK_DOOR_RATIO,
-    FALLBACK_WINDOW_RATIO_PER_DIRECTION,
     normalize_opening_azimuths,
     synthesize_missing_openings,
 )
 from buem.buildings.pipeline import DEFAULT_WORKBOOK
+from buem.config.building_registry import DEFAULT_WINDOW_TO_WALL_RATIO
 
 # The bundled TABULA reference workbook is *.xlsx-gitignored (repo-wide rule,
 # predates this test file) -- present on a dev machine that's run the offline
@@ -240,9 +240,47 @@ def test_synthesize_missing_openings_fallback_when_no_tabula_match(caplog):
     assert door["surface"] == "Wall_2"
     assert door["area"] == pytest.approx(FALLBACK_DOOR_RATIO * 80.0)
 
-    # South wall (Wall_1) window uses the flat per-direction fallback ratio.
+    # Windows are sized from the wall's own area, independent of whether
+    # an archetype matched.
     south_window = next(w for w in result["Windows"]["elements"] if w["surface"] == "Wall_1")
-    assert south_window["area"] == pytest.approx(FALLBACK_WINDOW_RATIO_PER_DIRECTION * 53.0)
+    assert south_window["area"] == pytest.approx(DEFAULT_WINDOW_TO_WALL_RATIO * 53.0)
+
+
+def test_uniform_window_ratios_is_orientation_independent():
+    """Every direction gets the same ratio, so a wall's glazing follows
+    its own area and real azimuth rather than a reference archetype's
+    assumed orientation."""
+    from buem.buildings.mapping.element_factory import uniform_window_ratios
+
+    ratios = uniform_window_ratios()
+    assert set(ratios) == {"north", "east", "south", "west"}
+    assert set(ratios.values()) == {DEFAULT_WINDOW_TO_WALL_RATIO}
+
+    assert uniform_window_ratios(0.25)["south"] == 0.25
+    # None means "use the default", so the default is resolved in exactly
+    # one place and cannot diverge from a caller-supplied value.
+    assert uniform_window_ratios(None) == uniform_window_ratios()
+    # An out-of-range value raises rather than silently reverting to the
+    # default, which would model a building the caller did not describe.
+    for bad in (-0.1, 1.0, 1.5):
+        with pytest.raises(ValueError, match="window_to_wall_ratio"):
+            uniform_window_ratios(bad)
+
+
+def test_synthesized_windows_inherit_host_wall_azimuth():
+    """A south-facing wall must receive south-facing glazing -- the
+    orientation mismatch that motivated dropping TABULA's per-direction
+    window columns."""
+    comps = _walls_only_components(area_1=53.0, area_2=80.0)
+    result = synthesize_missing_openings(
+        comps, building_type="MFH", construction_period="1965-1974", country="NL",
+    )
+    walls_by_id = {w["id"]: w for w in comps["Walls"]["elements"]}
+    assert result["Windows"]["elements"], "every exposed wall should receive glazing"
+    for win in result["Windows"]["elements"]:
+        host = walls_by_id[win["surface"]]
+        assert win["azimuth"] == pytest.approx(host["azimuth"])
+        assert win["area"] == pytest.approx(DEFAULT_WINDOW_TO_WALL_RATIO * host["area"])
 
 
 def test_synthesize_missing_openings_preserves_explicit_override():
@@ -421,35 +459,39 @@ def test_lod2mapper_uses_real_roof_azimuth_not_hardcoded_zero():
 
 
 @requires_bundled_workbook
-def test_lod2mapper_reads_theta_i_as_comfortT_lb():
-    """The matched TABULA archetype's own indoor setpoint (theta_i) must
-    drive comfortT_lb -- previously never read anywhere, silently leaving
-    every LOD2-mapped building at ThermalProperties' generic 21.0 default
-    regardless of what its archetype actually specifies (2026-08-15 fix,
-    found while investigating a large buem-vs-TABULA heating-demand gap
-    for DE.N.SFH.01.Gen -- theta_i=20.0 for that archetype)."""
+def test_lod2mapper_uses_buem_comfort_defaults_not_tabula_theta_i():
+    """A mapped building keeps buem's own comfort dead-band rather than
+    the matched archetype's ``theta_i``.
+
+    TABULA's ``theta_i`` is the setpoint its *reference calculation*
+    assumes (a constant 20 degC across every Dutch archetype, carrying no
+    per-building information), whereas buem's default represents observed
+    occupant behavior -- see building_registry.DEFAULT_COMFORT_T_LB."""
     from buem.buildings.datasources.excel_source import ExcelBuildingSource
     from buem.buildings.mapping.lod2_mapper import LOD2Mapper
+    from buem.config.building_registry import (
+        DEFAULT_COMFORT_T_LB,
+        DEFAULT_COMFORT_T_UB,
+    )
 
     source = ExcelBuildingSource(DEFAULT_WORKBOOK)
     mapper = LOD2Mapper(source, country="DE")
     bldg = mapper.map_building(52203)  # SFH, DE.N.SFH.01.Gen, theta_i=20.0
     assert bldg is not None
-    assert bldg.thermal.comfortT_lb == 20.0
-    # comfortT_ub has no TABULA row equivalent -- unchanged from the
-    # ThermalProperties default.
-    assert bldg.thermal.comfortT_ub == 24.0
+    assert bldg.thermal.comfortT_lb == DEFAULT_COMFORT_T_LB
+    assert bldg.thermal.comfortT_ub == DEFAULT_COMFORT_T_UB
 
 
-def test_lod2mapper_falls_back_to_default_lb_without_theta_i():
-    """A row with no theta_i value must keep the original 21.0 default --
-    the fix is additive, not a blanket lower setpoint for every building."""
-    import pandas as pd
-
+def test_thermal_properties_comfort_defaults_come_from_registry():
+    """ThermalProperties' own dataclass defaults must track the single
+    source of truth, so the two cannot drift apart."""
     from buem.buildings.building import ThermalProperties
-    from buem.buildings.mapping.tabula_helpers import safe_series_float
+    from buem.config.building_registry import (
+        DEFAULT_COMFORT_T_LB,
+        DEFAULT_COMFORT_T_UB,
+    )
 
-    row_without_theta_i = pd.Series({"c_m": 165.0})
-    lb = safe_series_float(row_without_theta_i, "theta_i", 21.0)
-    assert lb == 21.0
-    assert ThermalProperties(comfortT_lb=lb).comfortT_lb == 21.0
+    props = ThermalProperties()
+    assert props.comfortT_lb == DEFAULT_COMFORT_T_LB
+    assert props.comfortT_ub == DEFAULT_COMFORT_T_UB
+    assert props.comfortT_lb < props.comfortT_ub

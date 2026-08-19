@@ -9,12 +9,14 @@ from typing import Any
 
 import pandas as pd
 
-# occupancy (https://github.com/UU-BUEM/occupancy) is compulsory (2026-08-07),
-# same treatment as weather -- imported unconditionally like pandas/pvlib.
+# occupancy (https://github.com/UU-BUEM/occupancy) is a compulsory
+# dependency, same treatment as weather -- imported unconditionally like
+# pandas/pvlib.
 from occupancy import (  # type: ignore[import]
     ElectricityConsumptionProfile,
     HouseholdProfile,
     ServiceBuildingProfile,
+    generate_dhw_draws,
     to_buem_profiles,
 )
 
@@ -260,11 +262,11 @@ class AttributeBuilder:
         elecLoad can be overridden with a caller-supplied series
         (use_provided_elecLoad) -- Q_ig/occ_nothome/occ_sleeping still come
         from a real occupancy generation in that case, via
-        occupancy.to_buem_profiles(elec_load=...); this no longer skips
-        calling occupancy entirely (pre-2026-08-14 behavior, which also lost
-        Q_ig/occ_nothome/occ_sleeping). Household equipment can optionally be
-        filtered via the "equipment" attribute (residential building_type
-        only).
+        occupancy.to_buem_profiles(elec_load=...), rather than skipping the
+        occupancy call entirely (which would also lose
+        Q_ig/occ_nothome/occ_sleeping). Household equipment can optionally
+        be filtered via the "equipment" attribute (residential
+        building_type only).
         """
         use_provided_elec = bool(self.merged_attrs.get("use_provided_elecLoad", False))
         provided_elec_load: pd.Series | None = None
@@ -310,19 +312,35 @@ class AttributeBuilder:
                 equipment_table = _resolve_equipment_table(household, seed, equipment_spec)
                 elec_gen = ElectricityConsumptionProfile(household, equipment=equipment_table, seed=seed)
                 result = elec_gen.to_result()
+                # DHW liters generation is household-specific: occupancy's
+                # DHW model is not wired to service buildings, so this
+                # stays inside the residential branch only.
+                # seed=None deliberately, not seed=seed: this lets
+                # occupancy derive its own deterministic "dhw"-kind seed
+                # (occupancy.core.seed.derive_default_seed), decorrelated
+                # from this household's own elecLoad/Q_ig draws rather
+                # than replaying the same numeric seed across two
+                # independent stochastic processes. Still fully
+                # reproducible (the same building always yields the same
+                # DHW draws), just independent of the household's seed.
+                dhw_liters: pd.Series | None = generate_dhw_draws(
+                    result.profile,
+                    num_persons=num_persons,
+                    cooking_active=result.profile.get("cooking_active"),
+                    seed=None,
+                )["dhw_liters_total"]
             else:
                 # Non-residential: route through occupancy's ServiceBuildingProfile
                 # instead of forcing every building through HouseholdProfile.
-                # ServiceBuildingProfile has no per-item equipment selection yet
-                # (see .claude/occupancy_module_activities.md) -- a supplied
-                # equipment selector is a no-op here, not an error.
+                # ServiceBuildingProfile has no per-item equipment selection
+                # -- a supplied equipment selector is a no-op here, not an
+                # error.
                 if equipment_spec:
                     logger.warning(
                         "equipment inclusion/exclusion was supplied for "
                         "service-building building_type %r, but "
                         "occupancy.ServiceBuildingProfile has no per-item "
-                        "equipment selection yet -- ignoring (see "
-                        ".claude/occupancy_module_activities.md).",
+                        "equipment selection -- ignoring.",
                         building_type,
                     )
                 capacity_raw = self.merged_attrs.get("capacity", ATTRIBUTE_SPECS["capacity"].default)
@@ -348,12 +366,14 @@ class AttributeBuilder:
                 # A_ref is in REQUIRED_FROM_CALLER, so merged_attrs always has a
                 # real value here -- but it may still be the flat 100.0
                 # placeholder `_convert_v3_to_v2` substitutes when a v3 client
-                # omits A_ref (see .claude/open.md's "A_ref fallback" bug note),
-                # not the true geometry-derived floor area CfgBuilding computes
-                # afterwards. All 8 service-building types now carry a
-                # gain_w_per_m2 (occupancy CHANGELOG [Unreleased]), so this is
-                # safe to pass unconditionally for the service-building branch.
+                # omits A_ref, not the true geometry-derived floor area
+                # CfgBuilding computes afterwards. All 8 service-building
+                # types carry a gain_w_per_m2, so this is safe to pass
+                # unconditionally for the service-building branch.
                 floor_area_m2 = float(self.merged_attrs.get("A_ref", ATTRIBUTE_SPECS["A_ref"].default))
+                # No DHW model for service buildings yet -- the signals
+                # generate_dhw_draws() consumes are household-specific.
+                dhw_liters = None
 
             if provided_elec_load is not None:
                 # occupancy's own result.profile.index is on-the-hour
@@ -374,6 +394,39 @@ class AttributeBuilder:
                 result, floor_area_m2=floor_area_m2, elec_load=provided_elec_load
             )
 
+            # Scale one dwelling's gains up to the whole building for
+            # multi-dwelling buildings (AB/MFH). TABULA models an apartment
+            # block as a single thermal zone spanning every dwelling
+            # (its AB/MFH archetypes carry n_Apartment counts of 15-56),
+            # and buem's envelope is likewise the whole block -- so the
+            # internal gains driving that envelope must cover every
+            # dwelling in it, not one household.
+            #
+            # Scaling one generated profile is preferred over generating N
+            # independent ones: it keeps occupancy's own household-size
+            # calibration valid (its stochastic generators are calibrated
+            # for real household sizes, not a fictitious 50-person
+            # household) at a fraction of the cost. The simplification is
+            # that dwellings are treated as perfectly correlated, which
+            # leaves annual energy totals exact but overstates the
+            # simultaneity of peak internal gains.
+            #
+            # occ_nothome/occ_sleeping are deliberately not scaled: they
+            # are fractions of occupants, dimensionless and already
+            # building-wide. A caller-supplied elecLoad is also left alone
+            # -- a real measured series is whatever the caller measured.
+            units = float(self.merged_attrs.get("residential_units", 1.0) or 1.0)
+            if units > 1.0:
+                buem_inputs["Q_ig"] = buem_inputs["Q_ig"] * units
+                if provided_elec_load is None:
+                    buem_inputs["elecLoad"] = buem_inputs["elecLoad"] * units
+                if dhw_liters is not None:
+                    dhw_liters = dhw_liters * units
+                logger.info(
+                    "Scaled occupancy gains by %.0f dwelling(s) for multi-dwelling "
+                    "building_type=%r", units, building_type,
+                )
+
             # Align index with weather (8760 hourly points)
             if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:
                 buem_inputs = {
@@ -386,6 +439,15 @@ class AttributeBuilder:
             self.merged_attrs["occ_nothome"] = buem_inputs["occ_nothome"]
             self.merged_attrs["occ_sleeping"] = buem_inputs["occ_sleeping"]
             self.merged_attrs["year"] = weather_year  # Force year consistency
+
+            # DHW/cooking are both optional -- ModelBUEM treats a missing
+            # dhw_liters/cooking_active as "not computed", not an error.
+            if dhw_liters is not None:
+                if isinstance(weather_df, pd.DataFrame) and not weather_df.empty:
+                    dhw_liters = _reindex_or_raise(dhw_liters, weather_df.index, "dhw_liters")
+                self.merged_attrs["dhw_liters"] = dhw_liters
+            if "cooking_active" in buem_inputs:
+                self.merged_attrs["cooking_active"] = buem_inputs["cooking_active"]
 
         except Exception as exc:
             raise RuntimeError(f"Electricity profile generation failed: {exc}") from exc
@@ -408,8 +470,11 @@ class AttributeBuilder:
                 self.merged_attrs["elecLoad"], weather_index, "elecLoad"
             )
 
-        # Align other profiles (Q_ig, occ_nothome, etc.) if needed
-        for key in ("Q_ig", "occ_nothome", "occ_sleeping"):
+        # Align other profiles (Q_ig, occ_nothome, etc.) if needed. dhw_liters/
+        # cooking_active are optional (absent for service buildings -- see
+        # generate_electricity_profile), hence included here too rather than
+        # assumed always-present like the first three.
+        for key in ("Q_ig", "occ_nothome", "occ_sleeping", "dhw_liters", "cooking_active"):
             if (
                 key in self.merged_attrs
                 and isinstance(self.merged_attrs[key], pd.Series)

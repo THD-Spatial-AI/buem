@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from buem.buildings.components.base import EnvelopeElement
+from buem.config.building_registry import DEFAULT_COMFORT_T_LB, DEFAULT_COMFORT_T_UB
 
 
 @dataclass
@@ -101,8 +102,8 @@ class ThermalProperties:
     n_air_use: float = 0.5
     c_m: float = 165.0
     thermal_class: str = "medium"
-    comfortT_lb: float = 21.0
-    comfortT_ub: float = 24.0
+    comfortT_lb: float = DEFAULT_COMFORT_T_LB
+    comfortT_ub: float = DEFAULT_COMFORT_T_UB
     design_T_min: float = -12.0
     F_sh_hor: float = 0.80
     F_sh_vert: float = 0.75

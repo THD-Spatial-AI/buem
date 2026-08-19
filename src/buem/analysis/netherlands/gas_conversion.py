@@ -5,37 +5,31 @@ household gas) against ``ModelBUEM``'s simulated heating demand (kWh,
 *space heating only*).
 
 Deliberately three separate, independently-documented, independently-
-adjustable constants rather than one collapsed ratio (per the user,
-2026-08-18: "Why value of gas -> heat conversion are you considering,
-let me know?") -- each has its own provenance and its own uncertainty,
-and collapsing them would hide exactly where a disagreement should be
-resolved:
+adjustable constants rather than one collapsed ratio -- each has its own
+provenance and its own uncertainty, and collapsing them would hide
+exactly where a disagreement should be resolved:
 
 1. **Calorific value** (``GAS_CALORIFIC_VALUE_KWH_PER_M3``): converts raw
-   m3 to raw energy content. Solid, not really a judgment call -- this is
-   the official Dutch standard (Gasunie/CBS "bovenwaarde", 35.17 MJ/m3 =
-   9.769 kWh/m3), used by every Dutch energy supplier for billing and by
-   CBS itself for its own published conversions. Verified via web search
-   against multiple independent Dutch sources, 2026-08-18 -- not
-   invented, not the "common ~10 kWh/m3 rule of thumb" some consumer
-   sites use loosely.
+   m3 to raw energy content. Not a judgment call -- this is the official
+   Dutch standard (Gasunie/CBS "bovenwaarde", 35.17 MJ/m3 = 9.769 kWh/m3),
+   used by every Dutch energy supplier for billing and by CBS itself for
+   its own published conversions. Not the "common ~10 kWh/m3 rule of
+   thumb" some consumer sites use loosely.
 
 2. **Space-heating share** (``SPACE_HEATING_SHARE_OF_GAS``): CBS's own
    81528NED gas figure is *total* household gas -- space heating **and**
-   domestic hot water **and** cooking. ``ModelBUEM`` currently simulates
-   space heating only (checked directly: ``q_w_nd``, TABULA's own
-   hot-water-demand parameter, is carried in ``ThermalProperties`` but
-   never actually read by ``model_buem.sim_model()`` -- no DHW
-   simulation exists to compare against, so it must be subtracted from
-   the CBS side instead). CBS's own 2016 national breakdown (the most
-   authoritative match, since it's the same organization as 81528NED
-   itself): 78% heating / 20% hot water / 2% cooking. A single national
-   average applied uniformly across housing types -- the real per-type
-   split isn't published anywhere found during this session's research,
-   and likely varies (a bigger detached home's DHW share is probably
+   domestic hot water **and** cooking combined. Where ``ModelBUEM``
+   simulates space heating only and carries no DHW/cooking output of its
+   own, this share has to be applied to strip the CBS side down to a
+   comparable space-heating-only figure. CBS's own 2016 national
+   breakdown (the most authoritative match available, being the same
+   organization as 81528NED itself): 78% heating / 20% hot water / 2%
+   cooking. A single national average applied uniformly across housing
+   types -- a real per-type split is not published anywhere found and
+   likely varies (a bigger detached home's DHW share is probably
    proportionally smaller than a small apartment's) -- flagged as the
-   least-verified of the three factors precisely because it's a blended
-   average, not because the *source figure* itself is weak.
+   least-verified of the three factors precisely because it is a blended
+   average, not because the source figure itself is weak.
 
 3. **Boiler efficiency** (``BOILER_EFFICIENCY_UPPER_VALUE``): gas energy
    *input* is not useful heat *delivered* -- a modern HR (condensing)
@@ -58,21 +52,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GAS_CALORIFIC_VALUE_KWH_PER_M3 = 9.769
+from buem.config.reference_values import load_dhw_cooking_constants
+from buem.thermal.dhw_cooking import (
+    COOKING_SHARE_OF_GAS,
+    DHW_SHARE_OF_GAS,
+    SPACE_HEATING_SHARE_OF_GAS,
+)
+
+# Re-exported from buem.thermal.dhw_cooking rather than defined here --
+# these three CBS-2016-sourced shares are also consumed directly by
+# ModelBUEM's DHW/cooking post-processing, so `dhw_cooking` is the single
+# source of truth; this module keeps the names importable from here too
+# (`gas_conversion.SPACE_HEATING_SHARE_OF_GAS` etc.) for backward
+# compatibility with existing callers/tests. Full provenance lives on the
+# constants themselves at their canonical home.
+
+# Same single-point-of-configuration CSV as dhw_cooking.py's constants
+# (src/buem/data/reference/dhw_cooking_constants.csv) -- these two live in
+# the same file, read directly here rather than re-exported through
+# dhw_cooking.py since they are gas-conversion-specific, not DHW/cooking-
+# energy math. Edit the CSV to change either; no Python change needed.
+_CONSTANTS = load_dhw_cooking_constants()
+
+GAS_CALORIFIC_VALUE_KWH_PER_M3 = _CONSTANTS["GAS_CALORIFIC_VALUE_KWH_PER_M3"]
 """Official Dutch natural gas upper calorific value (35.17 MJ/m3, the
 Slochteren/G-gas billing standard). Source: Gasunie/CBS, cross-checked
-against multiple independent Dutch energy-supplier references,
-2026-08-18. Not the fuzzy "~10 kWh/m3" figure some consumer sites use."""
+against independent Dutch energy-supplier references. Not the fuzzy
+"~10 kWh/m3" figure some consumer sites use."""
 
-SPACE_HEATING_SHARE_OF_GAS = 0.78
-"""Fraction of a typical Dutch household's total gas consumption used
-for space heating specifically (vs. domestic hot water ~20%, cooking
-~2%). Source: CBS's own 2016 national household energy breakdown -- a
-blended national average, not housing-type-specific. See module
-docstring for why this, not the boiler-efficiency factor, is the one
-most likely to need real per-type data if this comparison is refined."""
-
-BOILER_EFFICIENCY_UPPER_VALUE = 0.90
+BOILER_EFFICIENCY_UPPER_VALUE = _CONSTANTS["BOILER_EFFICIENCY_UPPER_VALUE"]
 """Assumed fraction of gas's upper-calorific-value energy content
 delivered as useful heat, i.e. after real boiler conversion losses.
 ~90-96% is typical for a modern HR (condensing) boiler on the upper
@@ -120,6 +128,8 @@ def gas_m3_to_useful_heat_kwh(
 
 __all__ = [
     "BOILER_EFFICIENCY_UPPER_VALUE",
+    "COOKING_SHARE_OF_GAS",
+    "DHW_SHARE_OF_GAS",
     "GAS_CALORIFIC_VALUE_KWH_PER_M3",
     "SPACE_HEATING_SHARE_OF_GAS",
     "GasToHeatBreakdown",

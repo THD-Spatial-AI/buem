@@ -122,3 +122,13 @@ testpaths = ["tests"]
 # collection for the entire suite rather than just itself. Run it directly
 # (`python tests/run_test.py`) when needed instead of via pytest.
 addopts = "--ignore=tests/run_test.py"
+markers = [
+    "slow: takes seconds rather than milliseconds -- a real weather fetch, a full model solve, or a timing comparison that needs a cold/warm cache pair. Deselect with `-m 'not slow'`.",
+]
+# A numpy RuntimeWarning inside a solve ("invalid value encountered in ...")
+# means a NaN or +/-inf reached an aggregation -- physically meaningless output
+# that still produces a number, so it must fail loudly rather than scroll past
+# in the warnings summary. The suite is clean under this today; if a third-party
+# warning ever needs exempting, add a narrow `default::RuntimeWarning:<module>`
+# entry rather than dropping the rule.
+filterwarnings = ["error::RuntimeWarning"]

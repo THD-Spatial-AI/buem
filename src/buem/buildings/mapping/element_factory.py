@@ -31,6 +31,7 @@ from dataclasses import dataclass
 
 from buem.buildings.components.base import EnvelopeElement
 from buem.buildings.mapping.tabula_helpers import azimuth_diff, azimuth_to_direction
+from buem.config.building_registry import DEFAULT_WINDOW_TO_WALL_RATIO
 
 # ── shared wall-geometry record ──────────────────────────────────────────────
 
@@ -128,6 +129,32 @@ VENT_AREA_BACK = 0.5    # m² — smaller opening on the back wall
 _VENT_CAP_RATIO = 0.10  # max fraction of wall area for ventilation opening
 
 MIN_WALL_AREA_FOR_WINDOWS = 5.0  # m² — walls smaller than this do not receive windows
+
+
+def uniform_window_ratios(ratio: float | None = None) -> dict[str, float]:
+    """Window-to-wall ratios for :func:`synthesize_openings`, applying the
+    same fraction to every compass direction.
+
+    Each exposed wall receives ``ratio × its own area`` as glazing,
+    inheriting that wall's real azimuth and tilt, so orientation follows
+    the building's actual geometry. The only directionality in the
+    envelope is therefore each surface's own azimuth and tilt -- there is
+    no separate per-direction glazing rule to keep consistent with it.
+
+    ``ratio`` of ``None`` resolves to
+    ``building_registry.DEFAULT_WINDOW_TO_WALL_RATIO``. This is the single
+    place that default is applied, so a caller-supplied value and the
+    default cannot diverge. An out-of-range value raises rather than
+    falling back to the default: silently substituting a different ratio
+    than the caller asked for would model a building they did not
+    describe.
+    """
+    resolved = DEFAULT_WINDOW_TO_WALL_RATIO if ratio is None else float(ratio)
+    if not 0.0 <= resolved < 1.0:
+        raise ValueError(
+            f"window_to_wall_ratio must be in [0, 1), got {resolved}"
+        )
+    return {"north": resolved, "east": resolved, "south": resolved, "west": resolved}
 
 
 def assign_vent_areas(

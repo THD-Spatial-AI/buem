@@ -72,6 +72,48 @@ def test_dummy_fixture_runs_end_to_end(fixture_name, expected_building_type):
     assert (model.cooling_load <= 0).all()
 
 
+def test_dhw_cooking_wired_for_residential_not_service():
+    """occupancy v4.0.0's generate_dhw_draws()/cooking_active should flow
+    all the way through AttributeBuilder -> CfgBuilding -> ModelBUEM's
+    post-processed dhw_kWh/cooking_gas_kWh, for the residential fixture
+    only -- occupancy's DHW model isn't wired to service buildings yet
+    (see .claude/dhw_cooking_heat_handoff.md)."""
+    residential_attrs = _load_building_attributes("building_01_small_residential.json")
+    merged = AttributeBuilder(payload_attrs=residential_attrs).build()
+    assert isinstance(merged.get("dhw_liters"), pd.Series)
+    assert (merged["dhw_liters"] >= 0).all()
+
+    cfg = CfgBuilding(merged).to_cfg_dict()
+    assert isinstance(cfg.get("dhw_liters"), pd.Series)  # survives CfgBuilding's ATTRIBUTE_SPECS pass-through
+
+    model = ModelBUEM(cfg)
+    model.sim_model(use_milp=False)
+
+    assert model.dhw_kWh is not None
+    assert (model.dhw_kWh >= 0).all()
+    assert model.dhw_kWh.sum() > 0  # a real household draws *some* hot water over a year
+    assert "DHW Load" in model.detailedResults.columns
+
+    if model.cooking_gas_kWh is not None:
+        # cooking_active is present only when the household's equipment
+        # table includes a "kitchen"-category item -- real but not
+        # guaranteed for every archetype/seed, so this branch is
+        # conditional rather than a hard assertion.
+        assert (model.cooking_gas_kWh >= 0).all()
+        assert "Cooking Gas Load" in model.detailedResults.columns
+
+    # Service buildings: no DHW model on occupancy's side yet -- confirm
+    # this stays a clean "not computed", not a silent wrong value or a crash.
+    service_attrs = _load_building_attributes("building_02_medium_office.json")
+    merged_service = AttributeBuilder(payload_attrs=service_attrs).build()
+    assert merged_service.get("dhw_liters") is None
+
+    cfg_service = CfgBuilding(merged_service).to_cfg_dict()
+    model_service = ModelBUEM(cfg_service)
+    model_service.sim_model(use_milp=False)
+    assert model_service.dhw_kWh is None
+
+
 def test_time_varying_comfort_bounds_change_heating_shape():
     """A comfortT_lb schedule with a deep night setback should shift heating
     demand away from those hours, unlike a flat scalar bound -- exercising the
@@ -84,8 +126,11 @@ def test_time_varying_comfort_bounds_change_heating_shape():
     model_scalar = ModelBUEM(scalar_cfg)
     model_scalar.sim_model(use_milp=False)
 
-    # Night setback (0-6h): lower bound relaxed to 15 degC vs. the default 21 degC.
-    lb_series = pd.Series(np.where(night_mask, 15.0, 21.0), index=weather_index)
+    # Night setback (0-6h) only: the daytime value tracks the scalar
+    # baseline so the two runs differ in the setback alone, not in their
+    # daytime setpoint.
+    daytime_lb = float(scalar_cfg["comfortT_lb"])
+    lb_series = pd.Series(np.where(night_mask, 15.0, daytime_lb), index=weather_index)
     series_cfg = copy.deepcopy(DEFAULT_CFG)
     series_cfg["comfortT_lb"] = lb_series
     model_series = ModelBUEM(series_cfg)

@@ -282,27 +282,35 @@ def test_summarize_weather_ghi_pairwise_diff_no_nan_across_index_offsets():
 
 @requires_bundled_workbook
 def test_provider_comparison_end_to_end_building_52203_merra2():
-    """Matches this session's manually-verified figure for building 52203,
-    merra-2, post-theta_i-fix (heating=50,434.7 kWh) within a small
-    tolerance -- a real regression guard against either the theta_i fix or
-    the analysis pipeline silently drifting."""
+    """Regression guard on the end-to-end figure for building 52203 with
+    the merra-2 provider: 41,816.4 kWh.
+
+    This value tracks buem's modeling assumptions and moves when they
+    change deliberately -- most recently when the comfort dead-band
+    became buem's own 18-21 degC default (representing observed occupant
+    behavior rather than TABULA's standardized 20 degC calculation
+    setpoint), and when window area became a fraction of each wall's own
+    area rather than TABULA's per-direction window columns. Its purpose
+    is to catch *unintended* drift in the analysis pipeline, so update it
+    only alongside a deliberate modeling change."""
     from buem.analysis.provider_comparison import run_building_across_providers
     from buem.analysis.weather_providers import extract_provider_weather
     from buem.buildings.datasources.excel_source import ExcelBuildingSource
     from buem.buildings.mapping.lod2_mapper import LOD2Mapper
+    from buem.config.building_registry import DEFAULT_COMFORT_T_LB
 
     source = ExcelBuildingSource(DEFAULT_WORKBOOK)
     mapper = LOD2Mapper(source, country="DE")
     building = mapper.map_building(52203)
     assert building is not None
-    assert building.thermal.comfortT_lb == 20.0  # theta_i fix, see resolved.md
+    assert building.thermal.comfortT_lb == DEFAULT_COMFORT_T_LB
 
     weather = extract_provider_weather(52.0, 5.0, 2018, providers=("merra-2",))
     results = run_building_across_providers(building, weather)
 
     assert set(results) == {"merra-2"}
     r = results["merra-2"]
-    assert float(r.heating_kW.sum()) == pytest.approx(50434.7, rel=0.01)
+    assert float(r.heating_kW.sum()) == pytest.approx(41816.4, rel=0.01)
     assert len(r.heating_kW) == 8760
 
 
@@ -327,7 +335,10 @@ def test_batch_run_building_52203_merra2_writes_ok_row(tmp_path):
     row = df.iloc[0]
     assert row["status"] == "ok"
     assert row["building_feature_id"] == 52203
-    assert row["heating_kWh"] == pytest.approx(50434.7, rel=0.01)
+    # Same regression guard as
+    # test_provider_comparison_end_to_end_building_52203_merra2 -- see
+    # its docstring for when this value legitimately changes.
+    assert row["heating_kWh"] == pytest.approx(41816.4, rel=0.01)
 
 
 @requires_bundled_workbook
@@ -358,6 +369,100 @@ def test_batch_run_previously_crashing_party_wall_buildings_now_succeed(tmp_path
         row = df.loc[bid]
         assert row["status"] == "ok", f"building {bid}: {row['error']}"
         assert row["heating_kWh"] > 0
+
+
+# ── batch: source selection, filtering and resume (no simulation) ───────
+# These exercise run_batch()'s bookkeeping directly, without a solve, so
+# they stay fast enough to run on every commit.
+
+
+class _FakeSource:
+    """Minimal stand-in exposing only what the id-selection step reads."""
+
+    def __init__(self, buildings: pd.DataFrame):
+        self.buildings = buildings
+
+
+def _nl_like_buildings() -> pd.DataFrame:
+    return pd.DataFrame({
+        "building_feature_id": [1, 2, 3, 4],
+        "is_residential": [True, True, False, True],
+        "matched_via_label": [True, False, True, False],
+    })
+
+
+def test_select_building_ids_filters_residential_and_labeled():
+    from buem.analysis.batch import BatchConfig, _select_building_ids
+
+    source = _FakeSource(_nl_like_buildings())
+
+    assert _select_building_ids(source, BatchConfig(source_kind="csv", data_dir=".")) == [1, 2, 3, 4]
+    assert _select_building_ids(
+        source, BatchConfig(source_kind="csv", data_dir=".", residential_only=True),
+    ) == [1, 2, 4]
+    assert _select_building_ids(
+        source, BatchConfig(source_kind="csv", data_dir=".", residential_only=True, labeled_only=True),
+    ) == [1]
+
+
+def test_select_building_ids_raises_when_filter_column_absent():
+    """Silently running the unfiltered population when a filter cannot be
+    honoured would report a population figure as if it were a subset."""
+    from buem.analysis.batch import BatchConfig, _select_building_ids
+
+    source = _FakeSource(pd.DataFrame({"building_feature_id": [1, 2]}))
+    with pytest.raises(ValueError, match="is_residential"):
+        _select_building_ids(source, BatchConfig(source_kind="csv", data_dir=".", residential_only=True))
+
+
+def test_select_building_ids_prefers_explicit_ids_over_filters():
+    from buem.analysis.batch import BatchConfig, _select_building_ids
+
+    source = _FakeSource(_nl_like_buildings())
+    config = BatchConfig(source_kind="csv", data_dir=".", building_ids=[3], residential_only=True)
+    assert _select_building_ids(source, config) == [3]
+
+
+def test_read_completed_rows_round_trips_and_reshapes(tmp_path):
+    """Resume re-emits finished rows, so they must survive the round trip
+    onto the current column set -- including a file written before a
+    column existed."""
+    from buem.analysis.batch import _RESULT_COLUMNS, _read_completed_rows
+
+    path = tmp_path / "partial.parquet"
+    pd.DataFrame([
+        {"building_feature_id": 7, "status": "ok", "heating_kWh": 1234.5},
+    ]).to_parquet(path)
+
+    rows = _read_completed_rows(path)
+
+    assert len(rows) == 1
+    assert set(rows[0]) == set(_RESULT_COLUMNS)
+    assert rows[0]["building_feature_id"] == 7
+    assert rows[0]["heating_kWh"] == 1234.5
+    assert rows[0]["dhw_kWh"] is None
+
+
+def test_read_completed_rows_empty_when_no_previous_run(tmp_path):
+    from buem.analysis.batch import _read_completed_rows
+
+    assert _read_completed_rows(tmp_path / "does_not_exist.parquet") == []
+
+
+def test_batch_config_source_path_switches_on_kind():
+    from buem.analysis.batch import BatchConfig
+
+    assert BatchConfig(source_kind="excel", workbook_path="wb.xlsx").source_path == "wb.xlsx"
+    assert BatchConfig(source_kind="csv", data_dir="regions/nl").source_path == "regions/nl"
+    with pytest.raises(ValueError, match="requires data_dir"):
+        _ = BatchConfig(source_kind="csv").source_path
+
+
+def test_build_source_rejects_unknown_kind():
+    from buem.analysis.batch import build_source
+
+    with pytest.raises(ValueError, match="Unknown source kind"):
+        build_source("postgres", "somewhere")
 
 
 @requires_bundled_workbook

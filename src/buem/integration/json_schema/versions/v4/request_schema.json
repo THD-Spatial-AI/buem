@@ -111,7 +111,18 @@
         "num_persons": {
           "type": "integer",
           "minimum": 1,
-          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14, added 2026-08-07). Not present in EnerPlanET's real v4. Household size passed to occupancy.HouseholdProfile. Ignored for service-building building_type values, where capacity applies instead. Omit to use cfg_attribute.DEFAULT_NUM_PERSONS."
+          "description": "Buem-side proposal, live as of the v4 promotion (2026-08-14, added 2026-08-07). Not present in EnerPlanET's real v4. Occupants per dwelling, passed to occupancy.HouseholdProfile. For a multi-dwelling building this is the size of one household, not the building's total occupancy -- see residential_units. Ignored for service-building building_type values, where capacity applies instead. Omit to use cfg_attribute.DEFAULT_NUM_PERSONS."
+        },
+        "window_to_wall_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 1,
+          "description": "Buem-side proposal, added to v4 2026-08-18 with explicit sign-off. Not present in EnerPlanET's real v4. Fraction of each exposed wall's area that is glazed, applied uniformly to every wall; each synthesized window inherits its host wall's own azimuth and tilt, so orientation follows the building's real geometry. Used only when 'envelope' supplies no window elements. Omit to use buem's own default."
+        },
+        "residential_units": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Buem-side proposal, added to v4 2026-08-18 with explicit sign-off. Not present in EnerPlanET's real v4. Number of dwellings in this building. Omit or send 1 for single-dwelling houses (SFH/TH); send the real dwelling count for apartment blocks and multi-family buildings (AB/MFH), where one feature represents the whole block. Scales the occupancy-generated internal gains and electricity load from one dwelling up to the whole building, matching the whole-block envelope the thermal solve uses."
         },
         "archetype": {
           "type": "string",

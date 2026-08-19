@@ -117,4 +117,32 @@ def building_lat_lon(bldg_row: pd.Series) -> tuple[float, float] | None:
         return None
 
 
-__all__ = ["building_lat_lon", "wkb_point_to_lat_lon"]
+def region_center_lat_lon(buildings_df: pd.DataFrame) -> tuple[float, float]:
+    """Mean real (latitude, longitude) across every building row that has
+    decodable geometry -- a single representative point for a region.
+
+    Used to place the one shared weather fetch a whole-region run makes:
+    a village or small town spans a few kilometres, well inside a single
+    reanalysis grid cell, so per-building fetches would return the same
+    series at far greater cost.
+
+    Raises
+    ------
+    ValueError
+        If no row carries usable geometry, since silently falling back to
+        a module-default location would simulate the region against
+        another country's climate.
+    """
+    lats: list[float] = []
+    lons: list[float] = []
+    for _, row in buildings_df.iterrows():
+        result = building_lat_lon(row)
+        if result is not None:
+            lats.append(result[0])
+            lons.append(result[1])
+    if not lats:
+        raise ValueError("No building in this source has real geometry to derive a region center from.")
+    return sum(lats) / len(lats), sum(lons) / len(lons)
+
+
+__all__ = ["building_lat_lon", "region_center_lat_lon", "wkb_point_to_lat_lon"]

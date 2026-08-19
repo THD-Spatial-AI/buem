@@ -183,6 +183,56 @@ def _tabula_reference_sheet() -> pd.DataFrame:
     return ExcelBuildingSource(DEFAULT_WORKBOOK).tabula
 
 
+def apply_refurbishment_measures(
+    tabula_row: pd.Series,
+    u_values: dict[str, float],
+) -> dict[str, float]:
+    """Apply a TABULA refurbishment variant's predefined measures to a set
+    of component U-values.
+
+    Each TABULA ``Code_Building`` carries up to three variant rows
+    (``Number_BuildingVariant`` 1/2/3): the as-built state, a standard
+    refurbishment package, and an nZEB-level refurbishment. The variant
+    rows share identical base ``U_<Component>_1`` columns; the refurbished
+    performance is expressed through per-component measure columns
+    (``Code_MeasureType_<Component>_1``, ``R_PredefinedMeasure_<Component>_1``)
+    which this function converts into adjusted U-values:
+
+    - ``Add`` (insulation added to the existing construction):
+      ``U_new = 1 / (1/U_old + R_measure)`` (thermal resistances in series).
+    - ``Replace`` / ``ReplaceInsulation`` (component or its insulation layer
+      replaced outright, e.g. new glazing): ``U_new = 1 / R_measure``,
+      treating the measure's R as the new construction's total resistance.
+    - Measure code ``0``/absent or ``R_measure <= 0``: unchanged (the
+      as-built variant rows carry all-zero measure columns, making this
+      function a no-op for them).
+
+    Parameters
+    ----------
+    tabula_row : pd.Series
+        A single TABULA variant row (any ``Number_BuildingVariant``).
+    u_values : dict
+        Base U-values keyed by component name (``"Wall"``, ``"Roof"``,
+        ``"Floor"``, ``"Window"``, ``"Door"``), W/(m²K).
+
+    Returns
+    -------
+    dict
+        Same keys, refurbishment-adjusted U-values.
+    """
+    adjusted: dict[str, float] = {}
+    for component, u_old in u_values.items():
+        r_measure = safe_series_float(tabula_row, f"R_PredefinedMeasure_{component}_1", 0.0)
+        measure_type = str(tabula_row.get(f"Code_MeasureType_{component}_1", "0") or "0").strip()
+        if r_measure is None or r_measure <= 0 or measure_type in ("0", "nan", ""):
+            adjusted[component] = u_old
+        elif measure_type == "Add":
+            adjusted[component] = 1.0 / (1.0 / u_old + r_measure)
+        else:  # Replace / ReplaceInsulation
+            adjusted[component] = 1.0 / r_measure
+    return adjusted
+
+
 def lookup_tabula_archetype(
     building_type: str,
     construction_period: str | None,
@@ -190,6 +240,7 @@ def lookup_tabula_archetype(
     *,
     bldg_tabula_id: str | None = None,
     sheet: pd.DataFrame | None = None,
+    variant_number: int | None = None,
 ) -> pd.Series | None:
     """Resolve a TABULA archetype row for the live (non-LOD2) synthesis path.
 
@@ -231,8 +282,17 @@ def lookup_tabula_archetype(
         that case -- see buildings.rst "Missing TABULA values use safe
         defaults" -- exactly as for any other missing TABULA value.
 
+    variant_number : int or None
+        Refurbishment variant to select among the matches
+        (``Number_BuildingVariant``: 1 = as-built, 2 = standard
+        refurbishment, 3 = nZEB refurbishment). ``None`` keeps the
+        default behavior (lowest ``id``, i.e. the as-built variant).
+        Falls back to the default selection when the requested variant
+        does not exist for the matched archetype.
+
     Among multiple matches (refurbishment states, sub-variants), prefers a
-    generic (``".Gen."``) variant, then the lowest ``id`` for determinism.
+    generic (``".Gen."``) variant, then the requested ``variant_number``
+    when given, then the lowest ``id`` for determinism.
     """
     if sheet is None:
         try:
@@ -269,4 +329,13 @@ def lookup_tabula_archetype(
     generic = matches[matches["Code_BuildingVariant"].str.contains(r"\.Gen\.", regex=True, na=False)]
     if not generic.empty:
         matches = generic
+    if variant_number is not None and "Number_BuildingVariant" in matches.columns:
+        requested = matches[matches["Number_BuildingVariant"] == variant_number]
+        if not requested.empty:
+            return requested.sort_values("id").iloc[0]
+        logger.warning(
+            "Requested TABULA refurbishment variant %d not found for "
+            "building_type=%r year_class=%r -- falling back to the as-built variant.",
+            variant_number, building_type, year_class,
+        )
     return matches.sort_values("id").iloc[0]

@@ -39,9 +39,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from buem.buildings.mapping.element_factory import WallInfo, identify_front_back, synthesize_openings
+from buem.buildings.mapping.element_factory import (
+    WallInfo,
+    identify_front_back,
+    synthesize_openings,
+    uniform_window_ratios,
+)
 from buem.buildings.mapping.tabula_helpers import (
-    compute_window_ratios,
     lookup_tabula_archetype,
     safe_series_float,
 )
@@ -61,11 +65,10 @@ logger = logging.getLogger(__name__)
 # share of envelope area, so the fallback always synthesizes something
 # physically plausible rather than leaving these components empty.
 #
-# ~15% glazing-to-wall ratio per cardinal direction sits mid-range for
-# existing European residential stock (TABULA archetypes bundled here run
-# roughly 8-25% depending on era/type); a single flat door area fraction
-# gives a ~2 m2 door on a typical ~40 m2 front wall.
-FALLBACK_WINDOW_RATIO_PER_DIRECTION = 0.15
+# Window sizing no longer differs between the archetype-matched and
+# fallback paths: both use building_registry.DEFAULT_WINDOW_TO_WALL_RATIO
+# via element_factory.uniform_window_ratios(). Only the door ratio still
+# needs a fallback, giving a ~2 m2 door on a typical ~40 m2 front wall.
 FALLBACK_DOOR_RATIO = 0.05
 FALLBACK_WINDOW_U = 2.8
 FALLBACK_WINDOW_G_GL = 0.5
@@ -114,6 +117,7 @@ def synthesize_missing_openings(
     construction_period: str | None,
     country: str | None,
     bldg_tabula_id: str | None = None,
+    window_to_wall_ratio: float | None = None,
 ) -> dict[str, Any]:
     """Fill in missing Windows/Doors/Ventilation from Walls geometry.
 
@@ -169,7 +173,11 @@ def synthesize_missing_openings(
 
     if tabula_row is not None:
         a_wall_1 = safe_series_float(tabula_row, "A_Wall_1", 0.0)
-        window_ratios = compute_window_ratios(tabula_row, a_wall_1)
+        # Windows are sized from each wall's own area rather than from
+        # TABULA's per-direction window columns, so both this path and
+        # LOD2Mapper's use one orientation-independent rule -- see
+        # element_factory.uniform_window_ratios().
+        window_ratios = uniform_window_ratios(window_to_wall_ratio)
         door_ratio = (
             safe_series_float(tabula_row, "A_Door_1", 0.0) / a_wall_1 if a_wall_1 > 0 else 0.0
         )
@@ -185,7 +193,7 @@ def synthesize_missing_openings(
             building_type, construction_period, country,
         )
     else:
-        window_ratios = {d: FALLBACK_WINDOW_RATIO_PER_DIRECTION for d in ("north", "east", "south", "west")}
+        window_ratios = uniform_window_ratios(window_to_wall_ratio)
         door_ratio = FALLBACK_DOOR_RATIO
         window_U, window_g_gl = FALLBACK_WINDOW_U, FALLBACK_WINDOW_G_GL
         door_U, n_air_use, horizontal = FALLBACK_DOOR_U, FALLBACK_N_AIR_USE, 0.0

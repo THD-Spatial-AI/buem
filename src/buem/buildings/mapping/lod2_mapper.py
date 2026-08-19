@@ -64,9 +64,10 @@ from buem.buildings.mapping.element_factory import (
     WallInfo,
     identify_front_back,
     synthesize_openings,
+    uniform_window_ratios,
 )
 from buem.buildings.mapping.tabula_helpers import (
-    compute_window_ratios,
+    apply_refurbishment_measures,
     safe_series_float,
     select_primary_variant,
 )
@@ -200,6 +201,17 @@ class LOD2Mapper:
                 window_U = float(override_row["U_Window"])
                 door_U = float(override_row["U_Door"])
 
+        # 5c. Apply the matched variant row's own refurbishment measures
+        # (a no-op for as-built variant rows, whose measure columns are
+        # all zero). Applied after the override table so added insulation
+        # compounds with whichever base U-value is in effect.
+        adjusted = apply_refurbishment_measures(tabula_row, {
+            "Wall": wall_U, "Roof": roof_U, "Floor": floor_U,
+            "Window": window_U, "Door": door_U,
+        })
+        wall_U, roof_U, floor_U = adjusted["Wall"], adjusted["Roof"], adjusted["Floor"]
+        window_U, door_U = adjusted["Window"], adjusted["Door"]
+
         # 6. Classify walls into shared (party) vs exposed
         wall_infos = self._classify_walls(walls_df)
         exposed_walls = [w for w in wall_infos if not w.is_shared]
@@ -217,7 +229,12 @@ class LOD2Mapper:
         #    synthesize window/door/ventilation elements (shared with the
         #    live request-handling path — see element_factory.synthesize_openings).
         a_wall_1 = safe_series_float(tabula_row, "A_Wall_1", 0.0)
-        win_ratios = compute_window_ratios(tabula_row, a_wall_1)
+        # Windows are sized from each wall's own area, not from TABULA's
+        # per-direction window columns -- see
+        # element_factory.uniform_window_ratios(). Doors still use
+        # TABULA's own door-to-wall ratio, which carries no orientation
+        # assumption.
+        win_ratios = uniform_window_ratios()
         door_ratio = (
             safe_series_float(tabula_row, "A_Door_1", 0.0) / a_wall_1
             if a_wall_1 > 0 else 0.0
@@ -345,18 +362,13 @@ class LOD2Mapper:
             q_w_nd=safe_series_float(tabula_row, "q_w_nd", None),
             design_T_min=safe_series_float(tabula_row, "Theta_e", -12.0),
             F_red_htr=safe_series_float(tabula_row, "F_red_htr1", 1.0),
-            # theta_i: TABULA's own assumed indoor heating setpoint for this
-            # archetype (e.g. 20.0 degC) -- previously never read anywhere in
-            # buem, so every LOD2-mapped building silently got the generic
-            # ThermalProperties default (21.0) regardless of what its matched
-            # archetype actually specifies, a continuous +1 degC bias with no
-            # TABULA-equivalent night/weekend setback either. comfortT_ub has
-            # no TABULA row equivalent (TABULA's reference calculation for
-            # residential archetypes is heating-only) and keeps its own
-            # default. Falls back to the same 21.0 default when theta_i is
-            # absent from the matched row, so behavior is unchanged for any
-            # building without a real archetype match.
-            comfortT_lb=safe_series_float(tabula_row, "theta_i", 21.0),
+            # Comfort setpoints are deliberately left at buem's own
+            # defaults rather than taken from the matched archetype's
+            # `theta_i`. TABULA's theta_i is the setpoint its *reference
+            # calculation* assumes (a constant 20 degC across every Dutch
+            # archetype, so it carries no per-building information here),
+            # whereas buem's default represents observed occupant
+            # behavior -- see building_registry.DEFAULT_COMFORT_T_LB.
         )
 
         # 12. Compute reference floor area from LOD2 floor areas

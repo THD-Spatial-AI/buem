@@ -14,6 +14,7 @@ models via Docker containers.
    introduction/index
    installation/index
    modules/index
+   validation/index
    api_integration/index
    deployment/index
 
