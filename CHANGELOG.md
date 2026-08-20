@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-08-21
+
+Major bump: every previously-published Netherlands CBS validation figure
+for both Loenen and Heeten is superseded and retracted by this release.
+`buem`'s own simulated output and API behaviour are unchanged; what
+changed is which buildings the Netherlands residential population
+includes, which moves every headline comparison figure substantially.
+
+### Fixed
+
+- **Residential classification counted non-dwelling structures as
+  houses.** Cross-checking buem's Loenen/Heeten residential building
+  counts against real government housing statistics found both datasets
+  1.7–2.2x too large: 3,101 "residential" buildings in Loenen against an
+  official 1,424–1,435 residential addresses; 2,671 in Heeten against an
+  official 1,568–1,578. Root cause: BAG registers every physical
+  structure as its own Pand — garden sheds, garages, farm outbuildings —
+  and `nl_building_classifier.classify_all()` had no minimum-registration
+  check on the residential path, only on buildings already flagged
+  `is_greenhouse_or_warehouse`/`is_glass_roof`. Fixed using a signal
+  already available in the pipeline: the RIVM energy-labels GeoPackage's
+  `aant_verblijfsobj` field is null (not literally `0`) for a Pand with
+  no dwelling unit registered under it at all — a Pand matched in that
+  data with a null or zero unit count is now excluded from residential
+  classification, the same treatment a flagged greenhouse already got. A
+  Pand entirely absent from the RIVM data stays ambiguous, not excluded.
+  Confirmed correct, not just plausible: every AB/MFH building has a
+  registered unit (100%, always formally registered) vs. only 37–50% of
+  "SFH"-classified buildings; buildings under 30 m² footprint have one
+  only ~5% of the time. Filtering on this reproduces the real village
+  address counts almost exactly: Loenen 1,461 (official 1,424–1,435),
+  Heeten 1,570 (official 1,568–1,578).
+- **This inflated the previously-published validation figures in the
+  wrong direction.** A garden shed has near-zero absolute heating demand,
+  so it also gets a near-zero buem/CBS ratio; diluted into a population
+  of thousands, those non-dwellings were pulling the reported median
+  *down*, not up. Loenen's median buem/CBS ratio moves from the
+  previously-published 0.98 ("essentially matches CBS") to **2.19** on
+  the real housing stock; Heeten moves from 1.77 to **2.42**. The
+  earlier fixes in this validation effort (window U-value correction,
+  TABULA refurbishment variants, comfort-setpoint correction, DHW/cooking
+  modelling, dwelling-count repair) are all still real and still
+  applied — they were being measured against the wrong population.
+  One consequence: Loenen and Heeten looked structurally different
+  before this fix (issue #14's ~80% relative gap, explained at the time
+  by a real Heeten house-size difference, which still holds). After the
+  identical fix on both regions, they converge to within ~10% of each
+  other — most of the apparent Heeten anomaly was the same contamination
+  problem, present to a different degree in each region's raw data.
+  `docs/source/validation/{loenen,heeten}_cbs.rst` rewritten with the
+  correction kept in full alongside the new figures. (#15)
+
+### Added
+
+- **`intensity_kwh_m2`** on `buem.analysis.netherlands.validation
+  .per_building_ratios()`/`stratified_ratio_table()` — the same
+  numerator divided by a building's real floor area rather than its
+  dwelling count, with no CBS dependency. This is what surfaced Heeten's
+  real house-size difference from Loenen, and is the fairer way to
+  compare two regions/eras directly against each other.
+
+## [4.2.0] - 2026-08-20
+
+### Fixed
+
+- **Heeten's RIVM data gap** (#13). Heeten's building data was missing
+  real dwelling counts and refurbishment-variant selection entirely —
+  both need the raw RIVM energy-labels GeoPackage, not found on this
+  machine when the Heeten validation was first published. Located since
+  (the same nationwide export Loenen's own data was built from). New
+  `scripts/reclassify_with_rivm_labels.py` re-runs the existing, already-
+  tested `nl_archetype_mapper.map_buildings()` against it. Effect on
+  Heeten: refurbishment variant went from 100% as-built to a real
+  2,360/262/53 split; dwelling counts went from 0 real RIVM-sourced to
+  2,322. Median buem/CBS ratio improved 2.03 → 1.81 (total) / 2.07 → 1.77
+  (heating-only); still meaningfully above Loenen's contemporaneous
+  0.98/1.79 at the time, tracked as issue #14 (later superseded — see
+  5.0.0). `RIVM_ENERGY_LABELS_GPKG` added to `.env.example`.
+
 ## [4.1.0] - 2026-08-20
 
 ### Added
