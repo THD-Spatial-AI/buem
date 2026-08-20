@@ -117,7 +117,7 @@ A real, substantial improvement over the first run (median 2.03 -> 1.81
 total, 2.07 -> 1.77 heating-only; count-weighted 2.50 -> 2.37) — but
 **still well above Loenen's 0.98 (heating-only median) / 1.78-1.79
 (count-weighted)**, not explained by the RIVM data gap this fix closed.
-See `Residual gap, unexplained`_.
+See `Residual gap — explained: Heeten's real houses are bigger`_.
 
 
 All 2,671 residential buildings, by type and construction-year class
@@ -289,27 +289,44 @@ test_bundled_reference_tables_cover_every_occupancy_service_type`` both
 exercise it directly and pass, independent of these batch runs.
 
 
-.. _residual-gap-unexplained:
+.. _residual-gap-explained:
 
-Residual gap, unexplained
-------------------------------
+Residual gap — explained: Heeten's real houses are bigger
+----------------------------------------------------------------
 
-Both regions now went through the identical pipeline against the same
-real RIVM data — the difference between them (Heeten's 1.77-1.81 vs.
-Loenen's 0.98-1.79, depending on metric) is no longer a data-quality
-artifact, and is not yet explained. Candidates not yet checked:
+Both regions now go through the identical pipeline against the same
+real RIVM data, so the remaining gap (Heeten's 1.77-1.81 vs. Loenen's
+0.98-1.79, depending on metric) is not a data-quality artifact. Three
+candidates were checked (tracked in issue #14); two ruled out, one
+confirmed:
 
-- Real geometry/opening-synthesis quality differences between the two
-  regions' underlying CityJSON extractions (Heeten's TABULA-match log
-  shows more "no TABULA archetype resolved... synthesizing... from safe-
-  default ratios" fallbacks than Loenen's per-building run logged — not
-  yet quantified against Loenen's own rate).
-- A genuine regional difference in Raalte's real gas consumption pattern
-  vs. Apeldoorn's, independent of buem.
-- Weather-point sensitivity: Heeten's own centroid (52.329N, 6.280E) is a
-  different merra-2 cell than Loenen's (52.120N, 6.026E).
+- **Ruled out — opening-synthesis fallback rate.** Loenen: 24/3,105
+  buildings (0.77%) hit the safe-default fallback. Heeten: 21/2,675
+  (0.78%) — essentially identical.
+- **Ruled out — weather.** Loenen and Heeten's merra-2 2018 cells are
+  nearly identical (mean T 10.88 vs 10.65 degC, heating-degree-days
+  2,919 vs 2,963 -- a 1.5% difference).
+- **Confirmed — real house size.** For SFH (78% of Heeten's residential
+  stock): mean real floor area (``A_ref``) is 391.4 m2 in Heeten vs.
+  250.2 m2 in Loenen (1.56x). buem's per-square-metre heating
+  *intensity* is actually **lower** for Heeten (188.2 vs 211.6 kWh/m2,
+  0.89x) -- ruling out a per-building modelling overestimate. The higher
+  per-dwelling ratio is fully explained by real, measured floor area: a
+  bigger house needs more absolute heat, in reality as much as in the
+  model. CBS's per-dwelling gas figure is a flat regional average by
+  housing-type category with no floor-area dimension, so it does not
+  adjust for this -- a municipality with genuinely larger houses reads
+  as running higher than CBS on a per-dwelling ratio even with an
+  accurate model. Consistent with CBS's own Raalte figures actually
+  being *lower* than Apeldoorn's for the same category (``detached``:
+  2,070 vs. 2,390 m3/yr), the opposite of what a "buem overestimates
+  Heeten" story would need.
 
-Tracked as a new issue rather than assumed to be one of the above.
+Not a defect to fix, but a real methodological question worth a
+separate decision: whether a per-m2 intensity ratio would be a fairer
+cross-municipality comparison than the current per-dwelling ratio,
+given real house size varies by region and CBS does not publish a
+per-m2 figure to compare against directly. Not acted on here.
 
 
 Combined with Loenen
@@ -348,3 +365,10 @@ either municipality individually or the model in general. Use each
 region's own numbers (:doc:`loenen_cbs`, this page) for a claim about
 that region; use the combined figure only to describe this specific
 5,772-building sample.
+
+The combined figure staying elevated is not a sign the fix was
+incomplete: Heeten's real houses are genuinely larger than Loenen's
+(see `Residual gap — explained: Heeten's real houses are bigger`_), and
+pooling a municipality with bigger real homes into the same per-dwelling
+statistic pulls the combined median toward Heeten's, independent of
+model accuracy in either region.
