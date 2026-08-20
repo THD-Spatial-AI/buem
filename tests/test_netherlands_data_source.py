@@ -1,7 +1,7 @@
 """
 Tests for ``CsvBuildingSource`` and ``geometry_utils`` (WKB point decoding
 + RD-New -> WGS84 reprojection), built for the real Netherlands/Loenen
-data under ``src/buem/data/buildings/netherlands/``.
+data under ``src/buem/data/buildings/netherlands/Loenen/``.
 
 **Data provenance changed 2026-08-16**: this data was originally a
 city2tabula-derived CSV export, which turned out to carry two independent,
@@ -12,7 +12,7 @@ extraction straight from the real CityJSON (3D BAG) source
 (``buem.buildings.datasources.cityjson_extractor`` -- see that module's
 own docstring for the extraction/party-wall/storeys methodology). The old
 city2tabula CSVs are kept for reference under
-``src/buem/data/buildings/netherlands/_city2tabula_backup/`` but are no
+``src/buem/data/buildings/netherlands/Loenen/_city2tabula_backup/`` but are no
 longer read by anything. Building IDs are a fresh sequential scheme
 (``cityjson_extractor`` assigns them in sorted-BAG-pand-id order) --
 **not** the old city2tabula ``building_feature_id`` values referenced in
@@ -42,7 +42,7 @@ import pytest
 from buem.buildings.datasources.csv_source import CsvBuildingSource
 from buem.buildings.mapping.geometry_utils import building_lat_lon, wkb_point_to_lat_lon
 
-NL_DATA_DIR = "src/buem/data/buildings/netherlands"
+NL_DATA_DIR = "src/buem/data/buildings/netherlands/Loenen"
 
 # A real building, independently ground-truthed against CityJSON during
 # the 2026-08-16 investigation (4 walls/80.48 m2, 1 roof/39.84 m2, 1

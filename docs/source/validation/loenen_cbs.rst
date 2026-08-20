@@ -20,7 +20,7 @@ Reproduce with:
    python scripts/repair_nl_dwelling_counts.py
 
    python -m buem.analysis.batch --source csv \
-       --data-dir src/buem/data/buildings/netherlands \
+       --data-dir src/buem/data/buildings/netherlands/Loenen \
        --country NL --workers 16 --resume \
        --output results/loenen.parquet
 

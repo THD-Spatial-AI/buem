@@ -116,12 +116,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-# run_test.py is a standalone manual smoke script (no test_ functions/asserts,
-# prints results) that happens to match pytest's default *_test.py collection
-# glob and runs ModelBUEM.sim_model() at import time -- a failure there aborts
-# collection for the entire suite rather than just itself. Run it directly
-# (`python tests/run_test.py`) when needed instead of via pytest.
-addopts = "--ignore=tests/run_test.py"
 markers = [
     "slow: takes seconds rather than milliseconds -- a real weather fetch, a full model solve, or a timing comparison that needs a cold/warm cache pair. Deselect with `-m 'not slow'`.",
 ]

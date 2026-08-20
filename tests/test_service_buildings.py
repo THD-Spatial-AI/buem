@@ -123,6 +123,6 @@ def test_bundled_reference_tables_cover_every_occupancy_service_type():
     there would otherwise silently become unmappable here."""
     import occupancy
 
-    table = pd.read_csv("src/buem/data/buildings/netherlands/service_building_reference.csv")
+    table = pd.read_csv("src/buem/data/buildings/netherlands/Loenen/service_building_reference.csv")
     missing = set(occupancy.SERVICE_BUILDING_TYPES) - set(table["service_building_type"])
     assert not missing, f"service_building_reference.csv is missing rows for {sorted(missing)}"

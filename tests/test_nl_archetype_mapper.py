@@ -15,7 +15,7 @@ from buem.buildings.datasources.nl_archetype_mapper import (
     year_to_construction_class,
 )
 
-NL_DATA_DIR = "src/buem/data/buildings/netherlands"
+NL_DATA_DIR = "src/buem/data/buildings/netherlands/Loenen"
 
 _nl_tabula_missing_reason = None
 try:

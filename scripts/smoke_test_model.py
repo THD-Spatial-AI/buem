@@ -1,3 +1,10 @@
+"""Manual smoke test: run the module-level demo config through ModelBUEM
+and print heating/cooling totals and dead-band hours.
+
+Usage::
+
+    python scripts/smoke_test_model.py
+"""
 import os
 
 os.environ.setdefault('BUEM_WEATHER_DIR', os.path.abspath('src/buem/data/weather'))

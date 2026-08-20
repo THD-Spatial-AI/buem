@@ -48,13 +48,17 @@ municipality of Raalte), with **zero code changes** (2026-08-18):
      - SFH 77.5% / TH 20.5% / MFH 1.7% / AB 0.4%
      - Stage 3
 
-Each region gets its own directory under ``src/buem/data/buildings/``
-(``netherlands/`` for Loenen, ``netherlands_heeten/`` for Heeten) —
+Each region gets its own directory under
+``src/buem/data/buildings/netherlands/`` (``Loenen/``, ``Heeten/``) —
 kept separate rather than merged, since they're different municipalities
 in different provinces and wouldn't map to one CBS regional benchmark
 (see "Validation" below) either way. ``tabula.csv`` (country-level
 reference data, not region-specific) is identical across regions —
-just copied, not regenerated.
+just copied, not regenerated. The three small editable reference tables
+(``u_value_reference.csv``, ``service_building_reference.csv``,
+``refurbishment_measure_reference.csv``) currently exist only under
+``Loenen/`` — they were built and validated against Loenen's CBS
+comparison and have not yet been copied to ``Heeten/``.
 
 
 Why this pipeline exists
@@ -448,7 +452,7 @@ regardless of where the thermal description came from:
      - ``service_building_reference.csv``
      - ``occupancy.ServiceBuildingProfile``
 
-``src/buem/data/buildings/netherlands/service_building_reference.csv``
+``src/buem/data/buildings/netherlands/Loenen/service_building_reference.csv``
 carries one row per (``service_building_type``,
 ``construction_year_class``) — all 8 of occupancy's registered types,
 across the same 6 Dutch construction eras. Provenance differs by column,
@@ -661,7 +665,7 @@ Per the user (2026-08-17: "we make a clean table with year of
 construction in an axis and building type in another, providing U values
 that users can easily change if needed"), these values are additionally
 published as a small, plain, human-editable file —
-``src/buem/data/buildings/netherlands/u_value_reference.csv`` — rather
+``src/buem/data/buildings/netherlands/Loenen/u_value_reference.csv`` — rather
 than requiring anyone to hand-edit a 200-column TABULA row. Columns:
 ``construction_year_class``, ``building_type``, ``U_Wall``, ``U_Roof``,
 ``U_Floor``, ``U_Window``, ``U_Door``.
@@ -781,7 +785,7 @@ German workbook path.
 .. code-block:: bash
 
    python -m buem.analysis.batch --source csv \
-       --data-dir src/buem/data/buildings/netherlands \
+       --data-dir src/buem/data/buildings/netherlands/Loenen \
        --country NL --residential-only \
        --workers 16 --resume \
        --output results/loenen.parquet
@@ -919,7 +923,7 @@ results" charter rather than a data-ingestion one):
 
      # Sampled smoke test: first N buildings per group, minutes to run
      python -m buem.analysis.netherlands.validation \
-         --data-dir src/buem/data/buildings/netherlands \
+         --data-dir src/buem/data/buildings/netherlands/Loenen \
          --region-code GM0200 --samples-per-type 5 [--labeled-only]
 
      # Population-complete: aggregate a finished batch run, no simulation

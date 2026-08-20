@@ -109,7 +109,7 @@ across processes and writes one row per building to Parquet.
 # buildings on 16 cores). --resume is safe to pass always: it skips ids
 # already in the output, so an interrupted run continues.
 python -m buem.analysis.batch --source csv \
-    --data-dir src/buem/data/buildings/netherlands \
+    --data-dir src/buem/data/buildings/netherlands/Loenen \
     --country NL --residential-only \
     --workers 16 --resume \
     --output results/loenen.parquet

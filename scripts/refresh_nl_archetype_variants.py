@@ -1,4 +1,4 @@
-"""One-time migration of ``src/buem/data/buildings/netherlands/
+"""One-time migration of ``src/buem/data/buildings/netherlands/Loenen/
 lod2_building_feature.csv`` to refurbishment-variant-aware TABULA links.
 
 Earlier versions of ``nl_archetype_mapper.map_buildings`` used a real
@@ -33,7 +33,7 @@ from buem.buildings.datasources.nl_archetype_mapper import (
 from buem.buildings.mapping.tabula_helpers import lookup_tabula_archetype
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DATA_DIR = _REPO_ROOT / "src" / "buem" / "data" / "buildings" / "netherlands"
+_DATA_DIR = _REPO_ROOT / "src" / "buem" / "data" / "buildings" / "netherlands" / "Loenen"
 _BUILDINGS_CSV = _DATA_DIR / "lod2_building_feature.csv"
 
 

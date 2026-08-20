@@ -6,7 +6,7 @@ export.
 Why this exists
 ----------------
 The city2tabula-derived Netherlands/Loenen export
-(``src/buem/data/buildings/netherlands/``) was found to carry TWO
+(``src/buem/data/buildings/netherlands/Loenen/``) was found to carry TWO
 independent, compounding duplication bugs (see ``.claude/residential/
 resolved.md`` and ``open.md``, 2026-08-15/16): exact-duplicate export rows
 (fixed in ``csv_source.py``), and a second "near-identical batch" layer

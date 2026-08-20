@@ -12,7 +12,7 @@
 #   scripts/run_region_batch.sh [DATA_DIR] [OUTPUT] [WORKERS]
 #
 #   DATA_DIR  CsvBuildingSource region directory
-#             (default: src/buem/data/buildings/netherlands)
+#             (default: src/buem/data/buildings/netherlands/Loenen)
 #   OUTPUT    Parquet path         (default: results/<region>.parquet)
 #   WORKERS   Worker processes     (default: all cores minus two)
 #
@@ -32,7 +32,7 @@
 # than restarting.
 set -euo pipefail
 
-DATA_DIR="${1:-src/buem/data/buildings/netherlands}"
+DATA_DIR="${1:-src/buem/data/buildings/netherlands/Loenen}"
 REGION_NAME="$(basename "${DATA_DIR}")"
 OUTPUT="${2:-results/${REGION_NAME}.parquet}"
 CONDA_ENV="${CONDA_ENV:-buem_env}"

@@ -19,6 +19,9 @@ from buem.analysis.netherlands.validation import (
     TypeGroupResult,
     aggregate_parquet,
     format_report,
+    per_building_ratios,
+    service_building_intensity_table,
+    stratified_ratio_table,
 )
 
 
@@ -256,3 +259,136 @@ def test_aggregate_parquet_raises_when_nothing_simulated(tmp_path, _stub_cbs):
     path = _write_parquet(tmp_path, [{"building_feature_id": 1, "status": "error", "heating_kWh": None}])
     with pytest.raises(ValueError, match="no successfully-simulated rows"):
         aggregate_parquet(path, region_code="GM0200", period="2018JJ00")
+
+
+# ── per_building_ratios / stratified_ratio_table / service_building_intensity_table ────
+# The per-building counterpart to aggregate_parquet's group means: CBS has
+# no construction-year dimension, so every building in a (building_type,
+# neighbour_status) group shares that group's one CBS figure -- see
+# per_building_ratios' own docstring.
+
+
+def test_per_building_ratios_computes_expected_ratio_per_building(tmp_path, _stub_cbs):
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "heating_kWh": 10000.0, "dhw_kWh": 2000.0,
+         "cooking_gas_kWh": 200.0, "construction_year_class": "NL.01"},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00")
+
+    expected_cbs = gas_m3_to_useful_heat_kwh(1000.0, space_heating_share=1.0).useful_heat_kwh
+    assert len(ratios) == 1
+    row = ratios.iloc[0]
+    assert row["per_dwelling_kwh"] == 12200.0
+    assert row["ratio"] == pytest.approx(12200.0 / expected_cbs)
+
+
+def test_per_building_ratios_heating_only_metric_excludes_dhw_cooking(tmp_path, _stub_cbs):
+    """The two metrics are not interchangeable: 'heating_only' uses just
+    heating_kWh against CBS's 78%-stripped figure, not the full total."""
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "heating_kWh": 10000.0, "dhw_kWh": 2000.0,
+         "cooking_gas_kWh": 200.0, "construction_year_class": "NL.01"},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00", metric="heating_only")
+
+    expected_cbs = gas_m3_to_useful_heat_kwh(1000.0).useful_heat_kwh
+    row = ratios.iloc[0]
+    assert row["per_dwelling_kwh"] == 10000.0
+    assert row["ratio"] == pytest.approx(10000.0 / expected_cbs)
+
+
+def test_per_building_ratios_rejects_unknown_metric(tmp_path, _stub_cbs):
+    path = _write_parquet(tmp_path, [{"building_feature_id": 1, "construction_year_class": "NL.01"}])
+    with pytest.raises(ValueError, match="metric must be"):
+        per_building_ratios(path, region_code="GM0200", period="2018JJ00", metric="bogus")
+
+
+def test_per_building_ratios_excludes_non_residential_building_types(tmp_path, _stub_cbs):
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "construction_year_class": "NL.01"},
+        {"building_feature_id": 2, "building_type": "warehouse", "neighbour_status": "B_Alone",
+         "construction_year_class": "NL.01", "A_ref": 500.0},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00")
+    assert set(ratios["building_type"]) == {"SFH"}
+
+
+def test_per_building_ratios_drops_rows_with_no_cbs_key(tmp_path, _stub_cbs):
+    """SFH/B_N2 has no CBS housing-type mapping (an SFH is never reported as
+    mid-terrace) -- such a row cannot get a ratio and must not appear."""
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "neighbour_status": "B_N2", "construction_year_class": "NL.01"},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00")
+    assert ratios.empty
+
+
+def test_per_building_ratios_same_group_shares_one_cbs_denominator(tmp_path, _stub_cbs):
+    """Two buildings in the same (type, neighbour_status) group get
+    different ratios from different simulated output, but against the
+    identical CBS reference -- the group's single figure, not a per-era
+    one (CBS has no era dimension)."""
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "heating_kWh": 10000.0, "construction_year_class": "NL.01"},
+        {"building_feature_id": 2, "heating_kWh": 20000.0, "construction_year_class": "NL.03"},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00")
+    by_id = ratios.set_index("building_feature_id")
+    assert by_id.loc[2, "ratio"] == pytest.approx(by_id.loc[1, "ratio"] * (22200.0 / 12200.0))
+
+
+def test_stratified_ratio_table_reports_median_per_type_and_era(tmp_path, _stub_cbs):
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "heating_kWh": 10000.0, "construction_year_class": "NL.01"},
+        {"building_feature_id": 2, "heating_kWh": 10000.0, "construction_year_class": "NL.01"},
+        {"building_feature_id": 3, "heating_kWh": 90000.0, "construction_year_class": "NL.01"},
+        {"building_feature_id": 4, "heating_kWh": 10000.0, "construction_year_class": "NL.03"},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00")
+    table = stratified_ratio_table(ratios)
+
+    nl01 = table[(table["building_type"] == "SFH") & (table["construction_year_class"] == "NL.01")].iloc[0]
+    nl03 = table[(table["building_type"] == "SFH") & (table["construction_year_class"] == "NL.03")].iloc[0]
+    assert nl01["n"] == 3
+    # median of the two equal ratios, ignoring the outlier -- the whole
+    # point of reporting median alongside mean.
+    assert nl01["median_ratio"] == pytest.approx(ratios[ratios["building_feature_id"] == 1]["ratio"].iloc[0])
+    assert nl01["mean_ratio"] > nl01["median_ratio"]
+    assert nl03["n"] == 1
+
+
+def test_service_building_intensity_table_computes_kwh_per_m2(tmp_path):
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "building_type": "warehouse", "neighbour_status": "B_Alone",
+         "heating_kWh": 100000.0, "dhw_kWh": 0.0, "cooking_gas_kWh": 0.0,
+         "construction_year_class": "NL.01", "A_ref": 500.0},
+    ])
+    table = service_building_intensity_table(path)
+    assert len(table) == 1
+    row = table.iloc[0]
+    assert row["service_building_type"] == "warehouse"
+    assert row["n"] == 1
+    assert row["mean_kwh_m2"] == pytest.approx(200.0)
+    assert row["median_kwh_m2"] == pytest.approx(200.0)
+
+
+def test_service_building_intensity_table_groups_null_construction_year_as_unknown(tmp_path):
+    """construction_year_class is never populated for service buildings --
+    grouping on the raw null would silently drop them from the table."""
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "building_type": "warehouse", "neighbour_status": "B_Alone",
+         "heating_kWh": 100000.0, "dhw_kWh": 0.0, "cooking_gas_kWh": 0.0,
+         "construction_year_class": None, "A_ref": 500.0},
+    ])
+    table = service_building_intensity_table(path)
+    assert len(table) == 1
+    assert table.iloc[0]["construction_year_class"] == "unknown"
+
+
+def test_service_building_intensity_table_empty_when_no_service_buildings(tmp_path):
+    path = _write_parquet(tmp_path, [{"building_feature_id": 1}])
+    table = service_building_intensity_table(path)
+    assert table.empty
+    assert list(table.columns) == [
+        "service_building_type", "construction_year_class", "n", "mean_kwh_m2", "median_kwh_m2",
+    ]

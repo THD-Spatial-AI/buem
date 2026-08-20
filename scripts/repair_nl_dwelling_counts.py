@@ -31,7 +31,7 @@ from buem.buildings.datasources.nl_archetype_mapper import (
     repair_dwelling_counts,
 )
 
-DEFAULT_DATA_DIR = Path("src/buem/data/buildings/netherlands")
+DEFAULT_DATA_DIR = Path("src/buem/data/buildings/netherlands/Loenen")
 
 
 def main(argv: list[str] | None = None) -> int:

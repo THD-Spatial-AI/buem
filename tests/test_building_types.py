@@ -3,13 +3,8 @@ Integration smoke-test: run a residential and a service-building dummy
 fixture end-to-end (GeoJSON -> AttributeBuilder -> ModelBUEM).
 
 Deliberately calls ModelBUEM.sim_model() directly instead of
-buem.main.run_model() -- the latter (and anything importing
-buem.integration.scripts.geojson_processor) currently fails to import due
-to a pre-existing, unrelated gap (buem.main imports the non-existent
-buem.results.standard_plots, see CLAUDE.md "Open follow-ups"). Avoiding
-that chain keeps this test collectible under pytest, unlike
-test_energy.py/test_geojson_integration.py/test_scaling.py/
-test_worker_debug.py.
+buem.main.run_model() -- this test only needs the solve itself, not
+run_model()'s plotting/reporting side effects.
 """
 import copy
 import json

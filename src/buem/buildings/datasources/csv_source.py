@@ -191,7 +191,7 @@ class CsvBuildingSource:
 
     Examples
     --------
-    >>> src = CsvBuildingSource("data/buildings/netherlands")
+    >>> src = CsvBuildingSource("data/buildings/netherlands/Loenen")
     >>> print(f"Buildings: {len(src.buildings)}")
     """
 

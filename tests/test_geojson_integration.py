@@ -1,23 +1,13 @@
-#!/usr/bin/env python3
-"""
-Comprehensive test suite for BUEM GeoJSON validation and processing.
+"""End-to-end pytest coverage for BUEM GeoJSON validation and processing.
 
-This script tests the complete pipeline:
-1. Schema validation
-2. Component format conversion
-3. Processing pipeline
-4. Response format validation
-
-Usage:
-  python test_geojson_integration.py
-  python test_geojson_integration.py --verbose
-  python test_geojson_integration.py --test-files path/to/additional/files/*.geojson
+Exercises the same four stages more targeted tests elsewhere in this
+directory cover individually (schema validation, superseded-format
+rejection, ``GeoJsonProcessor`` end-to-end, response-schema compliance),
+but through one shared fixture-building harness (``GeoJsonTestSuite``)
+that assembles realistic multi-building payloads.
 """
-import argparse
 import json
 import logging
-import sys
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -538,132 +528,8 @@ class GeoJsonTestSuite:
             }]
         }
 
-    def run_all_tests(self) -> dict[str, Any]:
-        """Run all test suites."""
-        self.log("Starting comprehensive GeoJSON test suite...")
 
-        wall_start = datetime.now(UTC)
-        start_time = time.monotonic()
-
-        # Run test suites
-        validation_results = self.test_schema_validation()
-        conversion_results = self.test_format_conversion()
-        processing_results = self.test_processing_pipeline()
-        compliance_results = self.test_response_schema_compliance()
-
-        wall_end = datetime.now(UTC)
-        end_time = time.monotonic()
-        elapsed = end_time - start_time
-
-        # Compile summary
-        total_tests = (validation_results['passed'] + validation_results['failed'] +
-                       conversion_results['passed'] + conversion_results['failed'] +
-                       processing_results['passed'] + processing_results['failed'] +
-                       compliance_results['passed'] + compliance_results['failed'])
-
-        total_passed = (validation_results['passed'] + conversion_results['passed'] +
-                        processing_results['passed'] + compliance_results['passed'])
-
-        summary = {
-            'start_time': wall_start.isoformat(),
-            'end_time': wall_end.isoformat(),
-            'elapsed_seconds': elapsed,
-            'total_tests': total_tests,
-            'total_passed': total_passed,
-            'total_failed': total_tests - total_passed,
-            'success_rate': (total_passed / total_tests * 100) if total_tests > 0 else 0,
-            'test_suites': {
-                'validation': validation_results,
-                'conversion': conversion_results,
-                'processing': processing_results,
-                'compliance': compliance_results
-            }
-        }
-
-        return summary
-
-    def print_summary(self, summary: dict[str, Any]):
-        """Print test summary."""
-        print("\n" + "="*60)
-        print("BUEM GEOJSON TEST SUITE RESULTS")
-        print("="*60)
-
-        print(f"Test run: {summary['start_time']}")
-        print(f"Duration: {summary['elapsed_seconds']:.2f} seconds")
-        print(f"Total tests: {summary['total_tests']}")
-        print(f"Passed: {summary['total_passed']} âœ…")
-        print(f"Failed: {summary['total_failed']} âŒ")
-        print(f"Success rate: {summary['success_rate']:.1f}%")
-
-        print("\nTest Suite Breakdown:")
-        for suite_name, suite_results in summary['test_suites'].items():
-            passed = suite_results['passed']
-            failed = suite_results['failed']
-            total = passed + failed
-            if total > 0:
-                rate = passed / total * 100
-                status = "âœ…" if failed == 0 else "âš ï¸" if passed > failed else "âŒ"
-                print(f"  {suite_name.title():15} {passed:2d}/{total:2d} ({rate:5.1f}%) {status}")
-
-        # Show failed tests if any
-        failed_tests = []
-        for suite_results in summary['test_suites'].values():
-            for test in suite_results['tests']:
-                if not test['passed']:
-                    failed_tests.append(test)
-
-        if failed_tests:
-            print(f"\nFailed Tests ({len(failed_tests)}):")
-            for test in failed_tests:
-                print(f"  âŒ {test['test_name']}: {test['message']}")
-                if 'error' in test:
-                    print(f"     Error: {test['error']}")
-
-        print("\n" + "="*60)
-
-        overall_success = summary['total_failed'] == 0
-        print(f"Overall Result: {'PASS âœ…' if overall_success else 'FAIL âŒ'}")
-        print("="*60)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="BUEM GeoJSON Test Suite")
-    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
-    parser.add_argument('--test-files', nargs='*', help='Additional test files to include')
-
-    args = parser.parse_args()
-
-    try:
-        test_suite = GeoJsonTestSuite(verbose=args.verbose)
-
-        # Run all tests
-        summary = test_suite.run_all_tests()
-
-        # Print results
-        test_suite.print_summary(summary)
-
-        # Exit with appropriate code
-        if summary['total_failed'] > 0:
-            sys.exit(1)
-        else:
-            sys.exit(0)
-
-    except KeyboardInterrupt:
-        print("\nTest suite interrupted by user")
-        sys.exit(130)
-    except (KeyError, TypeError, ZeroDivisionError) as e:
-        print(f"Test suite failed with error: {e}")
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-
-
-# â”€â”€ pytest-compatible wrappers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# -- pytest wrappers -----------------------------------------------------
 
 def test_schema_validation():
     """pytest: schema validation suite."""

@@ -37,7 +37,7 @@ CLI
 Sampled smoke test (fast, but see the sampling caveat above)::
 
     python -m buem.analysis.netherlands.validation \\
-        --data-dir src/buem/data/buildings/netherlands \\
+        --data-dir src/buem/data/buildings/netherlands/Loenen \\
         --region-code GM0200 --samples-per-type 5
 
 Population-complete, aggregating a finished ``buem.analysis.batch`` run
@@ -58,7 +58,11 @@ from pathlib import Path
 import pandas as pd
 
 from buem.analysis.netherlands.cbs_reference import BUEM_TYPE_TO_CBS_KEY, fetch_consumption
-from buem.analysis.netherlands.gas_conversion import GasToHeatBreakdown, gas_m3_to_useful_heat_kwh
+from buem.analysis.netherlands.gas_conversion import (
+    SPACE_HEATING_SHARE_OF_GAS,
+    GasToHeatBreakdown,
+    gas_m3_to_useful_heat_kwh,
+)
 from buem.analysis.provider_comparison import building_attrs_from
 from buem.analysis.weather_providers import extract_provider_weather
 from buem.buildings.building import Building
@@ -362,6 +366,160 @@ def aggregate_parquet(
     return _cbs_results_for_groups(group_means, region_code, period)
 
 
+def per_building_ratios(
+    parquet_path: str | Path,
+    *,
+    region_code: str,
+    period: str,
+    max_m2_per_dwelling: float | None = None,
+    metric: str = "total",
+) -> pd.DataFrame:
+    """One row per successfully-simulated *residential* building, carrying
+    its own buem/CBS ratio -- the population :func:`aggregate_parquet`
+    collapses into a single mean per (building_type, neighbour_status)
+    group.
+
+    Needed for any statistic below group level (a population median, or a
+    breakdown by construction-year class): CBS's 81528NED table has no
+    construction-year dimension (see
+    ``construction_year_stratification``'s own docstring for why), so
+    every building in a (building_type, neighbour_status) group shares
+    that group's one CBS reference figure as its ratio's denominator --
+    the per-building numerator is real, the denominator is the group's.
+
+    ``metric`` selects which of ``TypeGroupResult``'s two parallel
+    comparisons this reproduces at building level -- the two are not
+    interchangeable and give visibly different numbers on the same data:
+
+    - ``"total"`` (default): (heating + dhw + cooking) per dwelling vs.
+      CBS's *unstripped* gas-total useful heat -- matches
+      ``ratio_total_to_cbs_full``, the count-weighted headline figure.
+    - ``"heating_only"``: space heating alone vs. CBS's gas figure with the
+      national 78% space-heating share stripped off -- matches
+      ``ratio_simulated_to_cbs``, the metric behind the previously-published
+      per-building median (e.g. ``docs/source/validation/loenen_cbs.rst``'s
+      "0.98"). DHW/cooking is real, modelled output that this metric
+      excludes from both sides on purpose, for comparison against results
+      computed before DHW/cooking modelling existed.
+    """
+    if metric not in ("total", "heating_only"):
+        raise ValueError(f"metric must be 'total' or 'heating_only', got {metric!r}")
+
+    df = pd.read_parquet(parquet_path)
+    df = df[df["status"] == "ok"].copy()
+
+    residential_types = {t for (t, _n) in BUEM_TYPE_TO_CBS_KEY}
+    df = df[df["building_type"].isin(residential_types)]
+    if df.empty:
+        raise ValueError(f"{parquet_path} contains no successfully-simulated residential rows.")
+
+    if max_m2_per_dwelling is not None:
+        df = df[dwelling_area_check(df) <= max_m2_per_dwelling]
+
+    units = df["residential_units"].fillna(1.0).where(lambda s: s > 0, 1.0)
+    if metric == "total":
+        numerator_kwh = df["heating_kWh"] + df["dhw_kWh"].fillna(0.0) + df["cooking_gas_kWh"].fillna(0.0)
+        space_heating_share = 1.0
+    else:
+        numerator_kwh = df["heating_kWh"]
+        space_heating_share = SPACE_HEATING_SHARE_OF_GAS
+    per_dwelling = numerator_kwh / units
+
+    cbs_keys_needed = {
+        BUEM_TYPE_TO_CBS_KEY[(t, n)]
+        for t, n in zip(df["building_type"], df["neighbour_status"], strict=True)
+        if (t, n) in BUEM_TYPE_TO_CBS_KEY
+    }
+    cbs_data = fetch_consumption(region_code, period, list(cbs_keys_needed)) if cbs_keys_needed else {}
+    cbs_useful_heat = {
+        key: gas_m3_to_useful_heat_kwh(fig.gas_m3_per_year, space_heating_share=space_heating_share).useful_heat_kwh
+        for key, fig in cbs_data.items()
+        if fig.gas_m3_per_year is not None
+    }
+
+    def _ratio(btype: str, nstatus: str, simulated: float) -> float | None:
+        cbs_key = BUEM_TYPE_TO_CBS_KEY.get((btype, nstatus))
+        cbs_val = cbs_useful_heat.get(cbs_key) if cbs_key else None
+        if cbs_val is None or cbs_val <= 0:
+            return None
+        return simulated / cbs_val
+
+    result = pd.DataFrame({
+        "building_feature_id": df["building_feature_id"],
+        "building_type": df["building_type"],
+        "neighbour_status": df["neighbour_status"],
+        "construction_year_class": df["construction_year_class"],
+        "matched_via_label": df.get("matched_via_label"),
+        "residential_units_source": df.get("residential_units_source"),
+        "per_dwelling_kwh": per_dwelling,
+        "ratio": [
+            _ratio(t, n, v)
+            for t, n, v in zip(df["building_type"], df["neighbour_status"], per_dwelling, strict=True)
+        ],
+    })
+    return result.dropna(subset=["ratio"])
+
+
+def stratified_ratio_table(ratios: pd.DataFrame) -> pd.DataFrame:
+    """Median/mean/count buem-vs-CBS ratio per (building_type,
+    construction_year_class) stratum, from :func:`per_building_ratios`'
+    per-building output.
+
+    The median is the population statistic reported as this comparison's
+    headline elsewhere (see ``docs/source/validation/loenen_cbs.rst``) --
+    the mean is skewed upward by a long right tail (small-N MFH/AB groups
+    with outlier ratios), so a stratum's median is a better read of what a
+    typical building in it looks like.
+    """
+    grouped = ratios.groupby(["building_type", "construction_year_class"])["ratio"]
+    table = grouped.agg(n="count", median_ratio="median", mean_ratio="mean").reset_index()
+    return table.sort_values(["building_type", "construction_year_class"]).reset_index(drop=True)
+
+
+def service_building_intensity_table(parquet_path: str | Path) -> pd.DataFrame:
+    """Simulated annual heating+DHW+cooking intensity (kWh/m2) for
+    non-residential buildings, grouped by (service_building_type,
+    construction_year_class).
+
+    No CBS comparison exists for these: CBS's 81528NED table is
+    residential-dwelling consumption only (see ``TypeGroupResult``'s and
+    ``docs/source/validation/loenen_cbs.rst``'s "Service buildings" notes
+    -- "they carry no CBS housing-type key, so they do not enter the
+    ratios above"). This reports buem's own simulated output on its own
+    terms, comparable informally against the residential intensity table
+    from the same run.
+
+    ``construction_year_class`` is only ever populated by the residential
+    TABULA-era classification stage (``nl_archetype_mapper.map_buildings``)
+    -- a service building's source row carries it as null, since
+    ``archetype_spec.py``'s non-residential path resolves an era from
+    ``service_building_reference.csv`` directly rather than storing one
+    back onto the building. Grouping on a null key would silently drop
+    every service building (pandas' default groupby behaviour), so null is
+    relabelled ``"unknown"`` rather than excluded.
+    """
+    df = pd.read_parquet(parquet_path)
+    df = df[df["status"] == "ok"].copy()
+
+    residential_types = {t for (t, _n) in BUEM_TYPE_TO_CBS_KEY}
+    df = df[~df["building_type"].isin(residential_types)]
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "service_building_type", "construction_year_class", "n", "mean_kwh_m2", "median_kwh_m2",
+        ])
+
+    total_kwh = df["heating_kWh"] + df["dhw_kWh"].fillna(0.0) + df["cooking_gas_kWh"].fillna(0.0)
+    tmp = pd.DataFrame({
+        "service_building_type": df["building_type"],
+        "construction_year_class": df["construction_year_class"].fillna("unknown"),
+        "intensity_kwh_m2": total_kwh / df["A_ref"],
+    })
+    table = tmp.groupby(["service_building_type", "construction_year_class"])["intensity_kwh_m2"].agg(
+        n="count", mean_kwh_m2="mean", median_kwh_m2="median",
+    ).reset_index()
+    return table.sort_values(["service_building_type", "construction_year_class"]).reset_index(drop=True)
+
+
 def run_validation(
     data_dir: str | Path,
     *,
@@ -380,7 +538,7 @@ def run_validation(
     ----------
     data_dir : str or Path
         A ``CsvBuildingSource`` directory (e.g.
-        ``src/buem/data/buildings/netherlands``) already run through
+        ``src/buem/data/buildings/netherlands/Loenen``) already run through
         ``nl_archetype_mapper`` (real ``building_type``/
         ``tabula_variant_code_id`` populated).
     u_value_overrides_path : str or Path, optional
@@ -637,5 +795,8 @@ __all__ = [
     "dwelling_area_check",
     "format_report",
     "main",
+    "per_building_ratios",
     "run_validation",
+    "service_building_intensity_table",
+    "stratified_ratio_table",
 ]

@@ -21,7 +21,7 @@ from buem.analysis.netherlands.construction_year_stratification import (
 )
 from buem.buildings.datasources.csv_source import CsvBuildingSource
 
-NL_DATA_DIR = "src/buem/data/buildings/netherlands"
+NL_DATA_DIR = "src/buem/data/buildings/netherlands/Loenen"
 
 _nl_data_missing_reason = None
 try:

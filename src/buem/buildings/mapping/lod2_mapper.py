@@ -121,7 +121,7 @@ class LOD2Mapper:
         ISO country code for all buildings (default ``"DE"``).
     u_value_overrides : pd.DataFrame or None
         Optional editable U-value table (2026-08-17, e.g.
-        ``src/buem/data/buildings/netherlands/u_value_reference.csv`` --
+        ``src/buem/data/buildings/netherlands/Loenen/u_value_reference.csv`` --
         see that file and ``nl_archetype_mapper``'s module docstring for
         why this exists: TABULA's own per-row U-values are trustworthy,
         but the user asked for "a clean table... providing U values that

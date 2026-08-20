@@ -20,7 +20,7 @@ request files, and its `buem multibuilding` CLI is wired to a fixed set of
 
 ```bash
 python -m buem.analysis.batch --source csv \
-    --data-dir src/buem/data/buildings/netherlands \
+    --data-dir src/buem/data/buildings/netherlands/Loenen \
     --country NL --residential-only \
     --workers 16 --resume \
     --output results/loenen.parquet

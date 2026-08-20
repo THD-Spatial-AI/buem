@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-08-20
+
 ### Added
 
 - **Service (non-residential) buildings can be simulated** (#7). They were
@@ -57,6 +59,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   went up 18×). Re-running recomputes from the registered value rather
   than compounding an earlier repair. Result: 167 repaired, 0 implausible
   remaining.
+- **Heeten's first population-complete buem-vs-CBS validation**, and a new
+  reusable per-building-ratio analysis to produce it. `buem.analysis
+  .netherlands.validation` gains `per_building_ratios()` (one row per
+  building carrying its own buem/CBS ratio, rather than one row per
+  group — needed for a population median or a breakdown below group
+  level, since CBS's 81528NED table has no construction-year dimension
+  to compare against directly) and `stratified_ratio_table()` (median/
+  mean/n by `(building_type, construction_year_class)`, built on top of
+  it), plus `service_building_intensity_table()` for non-residential
+  buildings, which CBS has no reference for at all. `per_building_ratios`
+  takes an explicit `metric` (`"total"` or `"heating_only"`) since the
+  two are not interchangeable and give visibly different numbers on the
+  same data — `"heating_only"` reproduces the previously-published
+  per-building median (Loenen: 0.98), `"total"` matches the count-weighted
+  headline (Loenen: 1.78/1.79).
+  Both Loenen (3,101 residential + 2 service) and Heeten (2,671
+  residential + 3 service) were run through the full whole-population
+  pipeline for this. Loenen's figures reproduce the already-published
+  ones (count-weighted 1.79 vs. published 1.78, median 0.98 vs. published
+  0.98) — a real cross-check that this new code path is correct, not
+  just internally consistent. Heeten is a first, and materially higher:
+  median 2.03–2.07 vs. Loenen's 0.98–1.18, because Heeten is missing two
+  of the three corrections Loenen has — see "Fixed" below. Both regions'
+  service buildings simulate: Loenen 286 kWh/m² (2 warehouses), Heeten
+  289 kWh/m² (3 warehouses), consistent with each other and with Loenen's
+  previously-published figure.
+  Live-verified (not assumed from prior notes) that the
+  `occupancy.ServiceBuildingProfile` connection this all depends on is
+  still working against the currently-installed package (v5.0.0):
+  `test_dummy_fixture_runs_end_to_end[...office...]` and
+  `test_bundled_reference_tables_cover_every_occupancy_service_type` both
+  exercise it directly and pass, and both batch runs above simulated real
+  warehouses through the same path.
+
+### Fixed
+
+- **Heeten's dwelling counts are now populated** (previously absent
+  entirely, not merely sometimes wrong as Loenen's were) via the same
+  `repair_dwelling_counts()` fallback Loenen's own repair uses when no
+  registered count exists: 349 of 2,671 buildings derived from floor
+  area, the remaining 2,322 default to 1 (a real dwelling for the vast
+  majority of Dutch SFH/TH stock, matching what RIVM's own data showed
+  for Loenen's equivalent buildings). This is a real, warranted
+  correction, not a full fix — see the known limitation below.
+- The three small country-level reference tables (`u_value_reference
+  .csv`, `service_building_reference.csv`,
+  `refurbishment_measure_reference.csv`) are copied into
+  `netherlands/Heeten/` alongside `tabula.csv`, so its batch run gets the
+  same window-U-value correction and service-building capability
+  Loenen's has, rather than silently falling back to TABULA's
+  uncorrected values and skipping every service building (both are
+  `_load_region_table`'s documented graceful-degrade behavior when a
+  region directory doesn't carry its own copy).
+
+### Known limitation
+
+- **Heeten's refurbishment-variant selection is not real.** 638 of 2,671
+  buildings (23.9%, matching Loenen's own real-label coverage almost
+  exactly) have a matched RIVM energy label, but none of them select a
+  refurbished TABULA envelope variant from it — every Heeten building
+  simulates as-built. The label *class* needed to pick standard-vs-nZEB
+  (`nl_archetype_mapper.label_to_refurbishment_variant`) was never
+  persisted for Heeten's data and cannot be recovered without the raw
+  RIVM energy-labels GeoPackage, which is not present on this machine (a
+  Heeten CityJSON geometry export exists locally at
+  `D:\test\envelope-extractor\data\envelope\heeten.city.json`, confirmed
+  by inspection to carry only 3D BAG geometry — roof/wall/volume/
+  construction-year attributes — no RIVM label or dwelling-count fields,
+  so it does not close this gap). Loenen's own history is the best
+  estimate of the size of this effect: migrating just refurbishment-
+  variant selection (before the window-U or dwelling-count fixes existed)
+  moved its label-matched subset's mean ratio from 4.96 to 4.22 — Heeten
+  is still missing this migration entirely, on top of the other two
+  fixes above. Tracked in a new issue rather than fixed here, since
+  fixing it needs a real data source this session does not have.
+
+### Changed
+
+- **Netherlands region data consolidated under one parent directory.**
+  `src/buem/data/buildings/netherlands/` (Loenen) and the previously
+  separate `src/buem/data/buildings/netherlands_heeten/` are now
+  `src/buem/data/buildings/netherlands/Loenen/` and
+  `.../netherlands/Heeten/` respectively — regions stay separate
+  directories (per-municipality CBS benchmarks don't merge either way),
+  just nested under a common parent. All `--data-dir` defaults
+  (`buem.analysis.batch`, `buem.analysis.netherlands.validation`,
+  `scripts/run_region_batch.sh`, `scripts/repair_nl_dwelling_counts.py`,
+  `scripts/refresh_nl_archetype_variants.py`) and docs/tests referencing
+  the old paths are updated. The three small editable reference tables
+  (`u_value_reference.csv`, `service_building_reference.csv`,
+  `refurbishment_measure_reference.csv`) move with Loenen's data — they
+  were built and validated against Loenen and have not been copied to
+  Heeten.
+- **`tests/` no longer holds non-test scripts.** Several files matched
+  pytest's `test_*.py` collection glob by name only — no `test_`
+  functions, driven instead by a `main()`/`if __name__` entry point
+  (manual smoke tests, a worker-count benchmark, a debug harness, one
+  script that posts to a local dev server). Moved to `scripts/`:
+  `run_test.py` → `smoke_test_model.py`, `test_energy.py` →
+  `smoke_test_energy.py`, `test_scaling.py` → `benchmark_worker_scaling.py`,
+  `test_worker_debug.py` → `debug_worker_pool.py`, `test_postgeojson.py`
+  → `manual_api_smoke_test.py` (also fixed a hardcoded, machine-specific
+  absolute path it wrote its output to). `pyproject.toml`'s
+  `--ignore=tests/run_test.py` addopt is no longer needed and is removed.
+  `tests/test_wget.py` (a standalone COSMO-REA6 GRIB downloader with no
+  `buem` imports and no test functions, superseded once weather became a
+  compulsory fetch through the `weather` package) is deleted outright.
+  `tests/test_geojson_integration.py` keeps its real pytest coverage but
+  drops ~140 lines of dead CLI-runner code (`main()`, `argparse`,
+  `run_all_tests()`/`print_summary()`) that pytest never executed.
 
 ## [4.0.0] - 2026-08-19
 

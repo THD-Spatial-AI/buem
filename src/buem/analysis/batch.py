@@ -6,7 +6,7 @@ written incrementally to a single Parquet file.
 Two sources are supported, selected by ``--source``. ``excel`` reads the
 bundled TABULA/city2tabula workbook (the German path). ``csv`` reads a
 ``CsvBuildingSource`` region directory such as
-``src/buem/data/buildings/netherlands``, which is what makes a
+``src/buem/data/buildings/netherlands/Loenen``, which is what makes a
 whole-community run possible: simulating every building once and writing
 the per-building results means downstream analysis
 (``buem.analysis.netherlands.validation --from-parquet``) aggregates the
@@ -40,7 +40,7 @@ CLI
     python -m buem.analysis.batch --limit 20 --provider merra-2 --output results.parquet
 
     python -m buem.analysis.batch --source csv \\
-        --data-dir src/buem/data/buildings/netherlands \\
+        --data-dir src/buem/data/buildings/netherlands/Loenen \\
         --country NL --residential-only --resume --output loenen.parquet
 
 See ``tests/test_analysis.py`` for a small (2-3 building) smoke test of
@@ -555,7 +555,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source", type=str, default="excel", choices=["excel", "csv"], help="Building source: the bundled TABULA workbook, or a CsvBuildingSource region directory.")
     parser.add_argument("--workbook", type=str, default=str(DEFAULT_WORKBOOK), help="TABULA/city2tabula workbook path (--source excel).")
-    parser.add_argument("--data-dir", type=str, default=None, help="CsvBuildingSource directory, e.g. src/buem/data/buildings/netherlands (--source csv).")
+    parser.add_argument("--data-dir", type=str, default=None, help="CsvBuildingSource directory, e.g. src/buem/data/buildings/netherlands/Loenen (--source csv).")
     parser.add_argument("--u-value-overrides", type=str, default=None, help="U-value override table (default: u_value_reference.csv inside --data-dir).")
     parser.add_argument("--residential-only", action="store_true", help="Only buildings flagged is_residential.")
     parser.add_argument("--labeled-only", action="store_true", help="Only buildings with a real energy label (matched_via_label).")

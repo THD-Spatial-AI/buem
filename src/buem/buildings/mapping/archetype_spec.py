@@ -140,7 +140,7 @@ def spec_from_tabula(
 def spec_from_service_reference(reference_row: pd.Series) -> ArchetypeSpec:
     """Build a spec from a row of the non-residential reference table.
 
-    See ``src/buem/data/buildings/netherlands/service_building_reference.csv``
+    See ``src/buem/data/buildings/netherlands/Loenen/service_building_reference.csv``
     for the table's own provenance notes: the envelope U-values follow the
     same Bouwbesluit construction-year series already cross-checked for
     the residential path (its thermal requirements are not
