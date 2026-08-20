@@ -215,15 +215,46 @@ def classify_all(
     """Add ``building_type``/``neighbour_status``/``is_residential``/
     ``service_building_type`` columns to a copy of ``buildings_df``.
 
-    A building flagged non-residential (greenhouse/warehouse/glasshouse)
-    gets ``is_residential=False`` and null TABULA type/neighbour_status
-    either way -- never forced into a residential archetype. Large enough
-    ones (``>= MIN_SERVICE_BUILDING_FOOTPRINT_M2``) additionally get a
-    real ``service_building_type`` (one of occupancy's registered
-    service-building ids); buildings too small to be a real occupied
-    structure get neither -- excluded from both residential and service
-    modeling. See module docstring for the real Loenen evidence behind
-    this split.
+    A building flagged non-residential gets ``is_residential=False`` and
+    null TABULA type/neighbour_status either way -- never forced into a
+    residential archetype. Large enough ones (``>=
+    MIN_SERVICE_BUILDING_FOOTPRINT_M2``) additionally get a real
+    ``service_building_type`` (one of occupancy's registered service-
+    building ids); buildings too small to be a real occupied structure
+    get neither -- excluded from both residential and service modeling.
+
+    Two independent signals both mark a building non-residential:
+
+    1. 3D BAG's own ``is_greenhouse_or_warehouse``/``is_glass_roof``
+       flags. See module docstring for the real Loenen evidence behind
+       the size split above.
+    2. ``units_by_pand_id[pid]`` (``aant_verblijfsobj``, the RIVM energy-
+       labels GeoPackage's own count of registered residential units for
+       this Pand) being present but zero or null -- i.e. the Pand *is*
+       in RIVM's data, and RIVM records **no residential unit
+       registered under it at all**. A Pand entirely absent from
+       ``units_by_pand_id`` (no RIVM match either way) is treated as
+       unknown, not non-residential -- it still defaults to the
+       ambiguous 1-dwelling assumption, only genuinely no-registration
+       excludes.
+
+    This second signal was added 2026-08-21 after cross-checking real
+    government housing statistics (BAG-derived, via a public aggregator)
+    for Loenen and Heeten: buem's residential building counts ran 1.7-2.2x
+    the official per-village address counts. Root cause: BAG registers
+    every physical structure as its own Pand, including garden sheds,
+    garages, and farm outbuildings -- none of these carry
+    ``is_greenhouse_or_warehouse``/``is_glass_roof`` (those flags mean
+    literal greenhouses/warehouses), so they fell through to the
+    residential branch by default, each simulated as a 1-dwelling SFH.
+    Checked directly against real Loenen/Heeten data, not assumed: every
+    AB/MFH building has a registered unit (100%, as expected -- always
+    formally registered), vs. only 37-50% of "SFH"-classified buildings,
+    and buildings under 30 m2 footprint have one only ~5% of the time.
+    Filtering to "has a registered unit" reproduces the real village
+    address counts almost exactly (Loenen 1,443 vs. official 1,424-1,435;
+    Heeten 1,570 vs. official 1,568-1,578) -- confirmed a much more
+    precise signal than an arbitrary minimum-footprint cutoff.
     """
     graph = build_adjacency(buildings_df)
     sizes = connected_component_sizes(graph)
@@ -232,10 +263,22 @@ def classify_all(
     neighbour_statuses: list[str | None] = []
     is_residential: list[bool] = []
     service_building_types: list[str | None] = []
+    n_no_registered_unit = 0
     for _, row in buildings_df.iterrows():
         pid = row["bag_pand_id"]
-        non_residential = bool(row.get("is_greenhouse_or_warehouse")) or bool(row.get("is_glass_roof"))
+        units = units_by_pand_id.get(pid)
+        # A Pand matched in RIVM's data with no residential unit registered
+        # under it at all -- distinct from "no RIVM match" (units_by_pand_id
+        # has no entry for pid), which stays ambiguous rather than excluded.
+        no_registered_unit = pid in units_by_pand_id and (pd.isna(units) or units == 0)
+        non_residential = (
+            bool(row.get("is_greenhouse_or_warehouse"))
+            or bool(row.get("is_glass_roof"))
+            or no_registered_unit
+        )
         if non_residential:
+            if no_registered_unit:
+                n_no_registered_unit += 1
             building_types.append(None)
             neighbour_statuses.append(None)
             is_residential.append(False)
@@ -244,7 +287,6 @@ def classify_all(
         service_building_types.append(None)
         degree = len(graph.get(pid, ()))
         component_size = sizes.get(pid, 1)
-        units = units_by_pand_id.get(pid)
         btype, nstatus = classify_building_type(degree, component_size, units)
         building_types.append(btype)
         neighbour_statuses.append(nstatus)
@@ -262,8 +304,9 @@ def classify_all(
     if n_non_residential:
         logger.info(
             "classify_all: %d/%d buildings flagged non-residential -- %d linked to a "
-            "service_building_type, %d too small to be a real occupied structure (excluded entirely)",
-            n_non_residential, len(result), n_service, n_unmodeled,
+            "service_building_type, %d too small to be a real occupied structure (excluded entirely), "
+            "%d of those excluded for having no RIVM-registered residential unit",
+            n_non_residential, len(result), n_service, n_unmodeled, n_no_registered_unit,
         )
     logger.info("classify_all: building_type distribution: %s",
                 result.loc[result["is_residential"], "building_type"].value_counts().to_dict())

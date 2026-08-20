@@ -23,15 +23,23 @@ municipality of Raalte), with **zero code changes** (2026-08-18):
      - Heeten
      - Note
 
-   * - Buildings
+   * - Buildings (raw Pand extraction)
      - 3,105
      - 2,675
      - —
 
+   * - **Real residential population** (issue #15, 2026-08-21)
+     - **1,461**
+     - **1,570**
+     - 1,644/2,675 Pand records had no RIVM-registered dwelling unit
+       (sheds/garages/outbuildings) and are excluded — see
+       :doc:`../validation/loenen_cbs`'s "Correction" section
+
    * - RIVM id match rate
      - 99.4%
      - 100%
-     - Stage 2
+     - Stage 2 — against the raw 3,105/2,675 extraction, not the
+       residential-only population
 
    * - Real energy label coverage
      - 23.9%
@@ -39,14 +47,17 @@ municipality of Raalte), with **zero code changes** (2026-08-18):
      - striking agreement — a stable national pattern, not a Loenen fluke
 
    * - TABULA archetype match rate
-     - 100% (3,101/3,101 residential)
-     - 100% (2,671/2,671 residential)
-     - Stage 4
+     - 100% (1,461/1,461 residential)
+     - 100% (1,570/1,570 residential)
+     - Stage 4 — of the real residential population, not the raw
+       extraction
 
    * - Building type shape
-     - SFH 80.4% / TH 18.3% / MFH 0.9% / AB 0.4%
-     - SFH 77.5% / TH 20.5% / MFH 1.7% / AB 0.4%
-     - Stage 3
+     - SFH 64.5% / TH 32.8% / MFH 1.9% / AB 0.8%
+     - SFH 66.0% / TH 30.5% / MFH 2.9% / AB 0.6%
+     - Stage 3 — of the real residential population; the raw-extraction
+       shape (SFH 80%+/TH 18%/apartment <1%) was itself a symptom of the
+       contamination issue #15 fixed, not the real housing-type mix
 
 Each region gets its own directory under
 ``src/buem/data/buildings/netherlands/`` (``Loenen/``, ``Heeten/``) —
@@ -56,9 +67,12 @@ in different provinces and wouldn't map to one CBS regional benchmark
 reference data, not region-specific) is identical across regions —
 just copied, not regenerated. The three small editable reference tables
 (``u_value_reference.csv``, ``service_building_reference.csv``,
-``refurbishment_measure_reference.csv``) currently exist only under
-``Loenen/`` — they were built and validated against Loenen's CBS
-comparison and have not yet been copied to ``Heeten/``.
+``refurbishment_measure_reference.csv``) are copied into both
+``Loenen/`` and ``Heeten/`` (2026-08-20) — built and validated against
+Loenen's CBS comparison, but genuinely country-level (Bouwbesluit/TABULA
+construction-year data, not Loenen-specific content), so Heeten's batch
+runs get the same corrections rather than silently falling back to
+uncorrected TABULA values.
 
 
 Why this pipeline exists
@@ -608,12 +622,14 @@ window conductance scales with both the U-value error and the glazed
 area, so the two compound. Absent, the file is simply not applied and
 TABULA's published value stands.
 
-Real result for Loenen: **3,101/3,101 residential buildings (100%)
-matched** — 742 via a real label, 2,359 via construction year.
-Type distribution: SFH 2,493 (80.4%), TH 568 (18.3%), MFH 28 (0.9%),
-AB 12 (0.4%). Of the 742 label-matched buildings, 322 resolve to the
-standard-refurbishment variant and 86 to the nZEB variant; the remaining
-334 carry a label matching their era's typical level and stay as-built.
+Real result for Loenen (2026-08-21, real residential population per
+issue #15 — see "Multiple regions" table above): **1,461/1,461
+residential buildings (100%) matched** — 742 via a real label, 719 via
+construction year. Type distribution: SFH 942 (64.5%), TH 479 (32.8%),
+MFH 28 (1.9%), AB 12 (0.8%). Of the 742 label-matched buildings, 322
+resolve to the standard-refurbishment variant and 86 to the nZEB variant;
+the remaining 334 carry a label matching their era's typical level and
+stay as-built.
 
 The editable U-value table
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

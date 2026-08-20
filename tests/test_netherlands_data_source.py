@@ -48,7 +48,19 @@ NL_DATA_DIR = "src/buem/data/buildings/netherlands/Loenen"
 # the 2026-08-16 investigation (4 walls/80.48 m2, 1 roof/39.84 m2, 1
 # floor/39.43 m2, single storey, built 1907) -- looked up by its stable
 # BAG identifier rather than a hardcoded (and now-changed) numeric id.
+# Geometry-only fixture: used exclusively where the assertion is about
+# raw extracted geometry, never residential classification -- this
+# building's own small footprint means it is itself one of the
+# no-registered-dwelling-unit exclusions issue #15 fixed (2026-08-21),
+# so LOD2Mapper.map_building() now correctly returns None for it.
 _KNOWN_BAG_PAND_ID = "NL.IMBAG.Pand.0200100000938969"
+
+# A separate real building for classification-dependent (LOD2Mapper /
+# U-value-override) tests, which need a Pand that is still classified
+# residential after issue #15's fix: SFH/B_Alone/NL.01, real 98.2 m2
+# floor area across 3 storeys, built 1931, a real matched TABULA
+# archetype -- unambiguously a real house, not an outbuilding.
+_KNOWN_RESIDENTIAL_BAG_PAND_ID = "NL.IMBAG.Pand.0200100000021015"
 
 _nl_data_missing_reason = None
 try:
@@ -208,17 +220,18 @@ def test_csv_building_source_get_tabula_row_resolves_real_archetype():
 
 @requires_nl_data
 def test_csv_building_source_most_buildings_have_a_tabula_match():
-    """As of 2026-08-17 (nl_archetype_mapper), the vast majority of
-    regenerated buildings have a real TABULA archetype match -- only
-    the ~4/3,105 flagged non-residential (greenhouse/warehouse/
-    glasshouse, see cityjson_extractor's is_greenhouse_or_warehouse/
-    is_glass_roof columns) are deliberately left unmatched. Supersedes
-    the 2026-08-16 "no match yet" regression guard now that the
-    follow-up it was watching for has landed."""
+    """As of 2026-08-21 (nl_building_classifier's registration-status
+    exclusion, issue #15), the real residential population is ~1,461 of
+    3,105 raw Pand records -- the rest are Pands with no RIVM-registered
+    dwelling unit (garden sheds/garages/outbuildings), correctly left
+    unmatched, not a regression. Virtually all of the real residential
+    population still gets a TABULA match (previously: "most buildings
+    have a match" was checked against an inflated ~3,101-building
+    population that included those same non-dwellings)."""
     source = CsvBuildingSource(NL_DATA_DIR)
     n_matched = source.buildings["tabula_variant_code_id"].notna().sum()
-    assert n_matched > 3000
-    bldg_row = source.buildings.iloc[0]
+    assert 1400 < n_matched < 1500
+    bldg_row = source.buildings[source.buildings["tabula_variant_code_id"].notna()].iloc[0]
     tabula_row = source.get_tabula_row(bldg_row["tabula_variant_code_id"])
     assert tabula_row is not None
     assert tabula_row["Code_Country"] == "NL"
@@ -226,11 +239,11 @@ def test_csv_building_source_most_buildings_have_a_tabula_match():
 
 @requires_nl_data
 def test_lod2mapper_maps_known_building_end_to_end():
-    """Full pipeline for the same building independently ground-truthed
-    against CityJSON throughout this investigation (see
-    _KNOWN_BAG_PAND_ID): real TABULA match, real (not default 52.0/5.0)
-    lat/lon, and windows/doors/ventilation actually synthesized now that
-    a real archetype exists (previously blocked entirely -- see
+    """Full pipeline for a real, unambiguously-residential building (see
+    _KNOWN_RESIDENTIAL_BAG_PAND_ID): real TABULA match, real (not
+    default 52.0/5.0) lat/lon, and windows/doors/ventilation actually
+    synthesized now that a real archetype exists (previously blocked
+    entirely -- see
     test_lod2mapper_returns_none_pending_tabula_archetype_mapping's
     2026-08-16 note, now removed since this is exactly what it was
     watching for)."""
@@ -238,7 +251,7 @@ def test_lod2mapper_maps_known_building_end_to_end():
 
     source = CsvBuildingSource(NL_DATA_DIR)
     mapper = LOD2Mapper(source, country="NL")
-    match = source.buildings[source.buildings["bag_pand_id"] == _KNOWN_BAG_PAND_ID].iloc[0]
+    match = source.buildings[source.buildings["bag_pand_id"] == _KNOWN_RESIDENTIAL_BAG_PAND_ID].iloc[0]
     bldg = mapper.map_building(int(match["building_feature_id"]))
 
     assert bldg is not None
@@ -270,7 +283,7 @@ def test_lod2mapper_applies_u_value_overrides():
     overrides = pd.read_csv(f"{NL_DATA_DIR}/u_value_reference.csv")
     source = CsvBuildingSource(NL_DATA_DIR)
     mapper = LOD2Mapper(source, country="NL", u_value_overrides=overrides)
-    match = source.buildings[source.buildings["bag_pand_id"] == _KNOWN_BAG_PAND_ID].iloc[0]
+    match = source.buildings[source.buildings["bag_pand_id"] == _KNOWN_RESIDENTIAL_BAG_PAND_ID].iloc[0]
     bldg = mapper.map_building(int(match["building_feature_id"]))
 
     assert bldg is not None

@@ -124,6 +124,37 @@ def test_classify_all_end_to_end_row_of_three_plus_detached_plus_apartment():
     assert pd.isna(by_id.loc["detached", "service_building_type"])
 
 
+def test_classify_all_excludes_buildings_with_no_registered_residential_unit():
+    """A Pand matched in RIVM's data (present in units_by_pand_id) but
+    with zero or null residential units registered under it is a real
+    non-dwelling (a shed/garage/outbuilding), not an ambiguous case --
+    excluded from residential classification the same as a flagged
+    greenhouse/warehouse, distinct from no RIVM match at all."""
+    df = pd.DataFrame([
+        _bldg("shed_zero", None, footprint=15.0),
+        _bldg("shed_null", None, footprint=20.0),
+        _bldg("real_house_no_match", None, footprint=90.0),
+        _bldg("real_house_matched", None, footprint=110.0),
+    ])
+    units = {"shed_zero": 0.0, "shed_null": float("nan"), "real_house_matched": 1.0}
+    result = classify_all(df, units)
+    by_id = result.set_index("bag_pand_id")
+
+    assert by_id.loc["shed_zero", "is_residential"] == False  # noqa: E712
+    assert pd.isna(by_id.loc["shed_zero", "building_type"])
+    assert by_id.loc["shed_null", "is_residential"] == False  # noqa: E712
+    assert pd.isna(by_id.loc["shed_null", "building_type"])
+
+    # No RIVM match at all stays ambiguous, not excluded -- unlike a
+    # matched-but-zero/null record, "unknown" isn't treated as evidence
+    # of non-residential.
+    assert by_id.loc["real_house_no_match", "is_residential"] == True  # noqa: E712
+    assert by_id.loc["real_house_no_match", "building_type"] == "SFH"
+
+    assert by_id.loc["real_house_matched", "is_residential"] == True  # noqa: E712
+    assert by_id.loc["real_house_matched", "building_type"] == "SFH"
+
+
 def test_classify_all_glass_roof_large_enough_also_links_to_service_type():
     """A real large glass-roofed structure (e.g. a genuine greenhouse
     complex) should link to a service type too, not just b3_kas_warenhuis
