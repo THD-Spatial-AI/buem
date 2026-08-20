@@ -401,6 +401,19 @@ def per_building_ratios(
       "0.98"). DHW/cooking is real, modelled output that this metric
       excludes from both sides on purpose, for comparison against results
       computed before DHW/cooking modelling existed.
+
+    The returned frame also carries ``intensity_kwh_m2`` -- the same
+    numerator (heating, or heating+dhw+cooking, matching ``metric``)
+    divided by the *whole building's* real reference floor area
+    (``A_ref``, buem's own computed usable floor area: real LOD2 ground-
+    footprint area times storey count, not divided by dwelling count).
+    This has no CBS side and needs none: it is what surfaced Heeten's
+    real house-size difference from Loenen (see
+    ``docs/source/validation/heeten_cbs.rst``'s "Residual gap" section)
+    -- ``ratio``/``per_dwelling_kwh`` answer "how does this compare to
+    CBS", ``intensity_kwh_m2`` answers "how efficient is buem's own
+    envelope model here", a fair like-for-like across regions/eras
+    regardless of real house size or dwelling-count data quality.
     """
     if metric not in ("total", "heating_only"):
         raise ValueError(f"metric must be 'total' or 'heating_only', got {metric!r}")
@@ -452,6 +465,7 @@ def per_building_ratios(
         "matched_via_label": df.get("matched_via_label"),
         "residential_units_source": df.get("residential_units_source"),
         "per_dwelling_kwh": per_dwelling,
+        "intensity_kwh_m2": numerator_kwh / df["A_ref"],
         "ratio": [
             _ratio(t, n, v)
             for t, n, v in zip(df["building_type"], df["neighbour_status"], per_dwelling, strict=True)
@@ -461,18 +475,32 @@ def per_building_ratios(
 
 
 def stratified_ratio_table(ratios: pd.DataFrame) -> pd.DataFrame:
-    """Median/mean/count buem-vs-CBS ratio per (building_type,
-    construction_year_class) stratum, from :func:`per_building_ratios`'
-    per-building output.
+    """Median/mean/count buem-vs-CBS ratio, *and* buem's own median/mean
+    heating intensity (kWh/m2, whole-building real floor area -- see
+    :func:`per_building_ratios`'s ``intensity_kwh_m2`` docstring), per
+    (building_type, construction_year_class) stratum, from
+    :func:`per_building_ratios`'s per-building output.
 
     The median is the population statistic reported as this comparison's
     headline elsewhere (see ``docs/source/validation/loenen_cbs.rst``) --
     the mean is skewed upward by a long right tail (small-N MFH/AB groups
     with outlier ratios), so a stratum's median is a better read of what a
-    typical building in it looks like.
+    typical building in it looks like. The same applies to intensity.
+
+    Intensity has no CBS dependency, so it is a fair way to compare two
+    regions/eras directly against each other even where their CBS
+    reference or real house size differ -- unlike ``ratio``, which mixes
+    buem's own output with whatever CBS/house-size differences exist
+    between the strata being compared.
     """
-    grouped = ratios.groupby(["building_type", "construction_year_class"])["ratio"]
-    table = grouped.agg(n="count", median_ratio="median", mean_ratio="mean").reset_index()
+    grouped = ratios.groupby(["building_type", "construction_year_class"])
+    table = grouped.agg(
+        n=("ratio", "count"),
+        median_ratio=("ratio", "median"),
+        mean_ratio=("ratio", "mean"),
+        median_intensity_kwh_m2=("intensity_kwh_m2", "median"),
+        mean_intensity_kwh_m2=("intensity_kwh_m2", "mean"),
+    ).reset_index()
     return table.sort_values(["building_type", "construction_year_class"]).reset_index(drop=True)
 
 

@@ -297,6 +297,35 @@ def test_per_building_ratios_heating_only_metric_excludes_dhw_cooking(tmp_path, 
     assert row["ratio"] == pytest.approx(10000.0 / expected_cbs)
 
 
+def test_per_building_ratios_intensity_kwh_m2_uses_whole_building_a_ref(tmp_path, _stub_cbs):
+    """Unlike per_dwelling_kwh/ratio, intensity is never divided by
+    residential_units -- it is the whole building's own numerator over
+    its own real floor area, independent of dwelling-count data quality
+    or CBS."""
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "building_type": "AB", "neighbour_status": "B_Alone",
+         "heating_kWh": 12000.0, "dhw_kWh": 2400.0, "cooking_gas_kWh": 120.0,
+         "A_ref": 600.0, "residential_units": 12.0, "construction_year_class": "NL.01"},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00", metric="total")
+    row = ratios.iloc[0]
+    assert row["intensity_kwh_m2"] == pytest.approx(14520.0 / 600.0)
+    # per_dwelling_kwh/ratio, in contrast, is divided by residential_units.
+    assert row["per_dwelling_kwh"] == pytest.approx(14520.0 / 12.0)
+
+
+def test_per_building_ratios_intensity_kwh_m2_respects_metric(tmp_path, _stub_cbs):
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "heating_kWh": 10000.0, "dhw_kWh": 2000.0,
+         "cooking_gas_kWh": 200.0, "A_ref": 120.0, "construction_year_class": "NL.01"},
+    ])
+    total = per_building_ratios(path, region_code="GM0200", period="2018JJ00", metric="total")
+    heating_only = per_building_ratios(path, region_code="GM0200", period="2018JJ00", metric="heating_only")
+
+    assert total.iloc[0]["intensity_kwh_m2"] == pytest.approx(12200.0 / 120.0)
+    assert heating_only.iloc[0]["intensity_kwh_m2"] == pytest.approx(10000.0 / 120.0)
+
+
 def test_per_building_ratios_rejects_unknown_metric(tmp_path, _stub_cbs):
     path = _write_parquet(tmp_path, [{"building_feature_id": 1, "construction_year_class": "NL.01"}])
     with pytest.raises(ValueError, match="metric must be"):
@@ -355,6 +384,24 @@ def test_stratified_ratio_table_reports_median_per_type_and_era(tmp_path, _stub_
     assert nl01["median_ratio"] == pytest.approx(ratios[ratios["building_feature_id"] == 1]["ratio"].iloc[0])
     assert nl01["mean_ratio"] > nl01["median_ratio"]
     assert nl03["n"] == 1
+
+
+def test_stratified_ratio_table_reports_intensity_alongside_ratio(tmp_path, _stub_cbs):
+    """Intensity has no CBS dependency -- unlike ratio, two strata with
+    identical simulated intensity get identical intensity stats even
+    when their CBS reference (and therefore their ratio) differs."""
+    path = _write_parquet(tmp_path, [
+        {"building_feature_id": 1, "heating_kWh": 10000.0, "dhw_kWh": 0.0, "cooking_gas_kWh": 0.0,
+         "A_ref": 100.0, "construction_year_class": "NL.01"},
+        {"building_feature_id": 2, "heating_kWh": 20000.0, "dhw_kWh": 0.0, "cooking_gas_kWh": 0.0,
+         "A_ref": 200.0, "construction_year_class": "NL.01"},
+    ])
+    ratios = per_building_ratios(path, region_code="GM0200", period="2018JJ00", metric="heating_only")
+    table = stratified_ratio_table(ratios)
+
+    nl01 = table[(table["building_type"] == "SFH") & (table["construction_year_class"] == "NL.01")].iloc[0]
+    assert nl01["median_intensity_kwh_m2"] == pytest.approx(100.0)
+    assert nl01["mean_intensity_kwh_m2"] == pytest.approx(100.0)
 
 
 def test_service_building_intensity_table_computes_kwh_per_m2(tmp_path):
