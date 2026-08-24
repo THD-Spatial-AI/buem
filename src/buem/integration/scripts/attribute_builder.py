@@ -3,6 +3,7 @@ Build complete building attributes by merging payload, database, and defaults.
 Generate weather and electricity profiles, and align timeseries indices.
 """
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -243,9 +244,24 @@ class AttributeBuilder:
         requested location/year (no processed archive, bad response, etc.)
         always raises -- there is no fallback, since substituting any other
         location's weather (real or not) would silently model the wrong
-        building."""
+        building.
+
+        BUEM_WEATHER_FALLBACK (default: true) gates this fetch itself, for
+        deployments where something upstream (an Orchestrator) always
+        supplies weather and a missing block should fail loudly instead of
+        buem silently resolving its own -- see enerplanet/buem#10. Standalone
+        buem installs that want buem to resolve weather itself leave this
+        unset."""
         if bool(self.merged_attrs.get("use_provided_weather", False)):
             return  # Keep the provided/merged weather DataFrame as-is
+
+        if os.environ.get("BUEM_WEATHER_FALLBACK", "true").strip().lower() in ("false", "0", ""):
+            raise RuntimeError(
+                "buem.weather is required and BUEM_WEATHER_FALLBACK=false -- "
+                "this deployment does not resolve its own weather. The caller "
+                "must supply buem.weather.profile (a file path) or set "
+                "BUEM_WEATHER_FALLBACK=true to allow buem's own per-location fetch."
+            )
 
         lat = float(self.merged_attrs.get("latitude", ATTRIBUTE_SPECS["latitude"].default))
         lon = float(self.merged_attrs.get("longitude", ATTRIBUTE_SPECS["longitude"].default))

@@ -887,6 +887,16 @@ class GeoJsonValidator:
         if isinstance(weather_block, dict) and weather_block.get('provider'):
             building_attributes['weather_provider'] = weather_block['provider']
 
+        # Caller-supplied inline weather timeseries (buem.weather.index +
+        # .variables) -- the shape weather serve's GET .../point?format=json
+        # returns, and what an Orchestrator-mediated caller sends directly
+        # rather than via a file path. Checked before .profile below so a
+        # file path can still override inline data if a request sends both.
+        inline_weather = self._weather_from_payload(weather_block if isinstance(weather_block, dict) else None)
+        if inline_weather is not None:
+            building_attributes['weather'] = inline_weather
+            building_attributes['use_provided_weather'] = True
+
         # Caller-supplied weather profile file (buem.weather.profile) --
         # overrides the provider/year fetch entirely when present.
         weather_profile = weather_block.get('profile') if isinstance(weather_block, dict) else None
@@ -965,6 +975,25 @@ class GeoJsonValidator:
                         "not clip or adjust weather values."
                     ),
                 )
+
+    @staticmethod
+    def _weather_from_payload(weather_block: dict[str, Any] | None) -> pd.DataFrame | None:
+        """Convert a caller-supplied buem.weather block's inline index/variables
+        into a DataFrame (DatetimeIndex, columns among T/GHI/DNI/DHI).
+
+        Shape matches weather serve's GET .../point?format=json response:
+        {"index": [ISO 8601 strings], "variables": {"T": [...], "GHI": [...],
+        "DNI": [...], "DHI": [...]}}. Returns None if weather_block is falsy,
+        has no "index", or has no recognized column under "variables" -- the
+        caller falls through to AttributeBuilder's own fetch in that case.
+        """
+        if not weather_block or "index" not in weather_block:
+            return None
+        variables = weather_block.get("variables", {})
+        cols = {c: variables[c] for c in ("T", "GHI", "DNI", "DHI") if c in variables}
+        if not cols:
+            return None
+        return pd.DataFrame(cols, index=pd.to_datetime(weather_block["index"]))
 
     def _child_to_nested_components(self, child_components: list[dict]) -> dict[str, Any]:
         """Convert child_components array to nested components structure."""

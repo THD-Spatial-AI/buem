@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Caller-supplied inline `buem.weather` ({index, variables}) is parsed and
+  used again -- upstream's v5 restructuring moved weather resolution into
+  `AttributeBuilder.generate_weather_profile()`, which only recognised a
+  `buem.weather.profile` file path, silently discarding inline data and
+  falling through to buem's own per-location fetch instead.
+  `GeoJsonValidator._weather_from_payload` restores the parsing;
+  `use_provided_weather` is set the same way the file-path branch already did.
+
+### Added
+
+- `BUEM_WEATHER_FALLBACK` (default: unset/true) gates
+  `generate_weather_profile()`'s own fetch. Deployments where an
+  upstream caller (an Orchestrator) always supplies weather set this to
+  `false`, so a missing `buem.weather` fails loudly instead of buem
+  silently resolving it via its own real fetch.
+
 ### Changed
 
 - **Breaking**: `/api/process` now requires `buem.weather` on every
