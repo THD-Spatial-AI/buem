@@ -258,6 +258,14 @@ class GeoJsonProcessor:
         # Attach results
         buem["thermal_load_profile"] = profile
 
+        # building_attributes was the request's own input (validated,
+        # already consumed by AttributeBuilder above) -- it isn't part of
+        # the documented response shape (model_metadata + thermal_load_profile,
+        # per response_schema.json's buem $def), and buem.weather.profile /
+        # inline buem.weather both leave a raw, non-JSON-serializable
+        # DataFrame under it that would otherwise crash jsonify() here.
+        buem.pop("building_attributes", None)
+
         logger.info(f"Successfully processed feature {building_id} in {elapsed:.2f}s")
 
         return feature

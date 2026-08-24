@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from buem.integration.scripts.attribute_builder import AttributeBuilder
+from buem.integration.scripts.geojson_processor import GeoJsonProcessor
 from buem.integration.scripts.geojson_validator import GeoJsonValidator, validate_geojson_request
 
 project_root = Path(__file__).resolve().parent.parent
@@ -100,3 +101,22 @@ def test_inline_weather_bypasses_fallback_gate_even_when_disabled(monkeypatch):
     attrs = _building_attributes(_payload_with_weather(_WEATHER_JSON))
     merged = AttributeBuilder(payload_attrs=attrs).build()
     assert "elecLoad" in merged
+
+
+def test_geojson_processor_strips_building_attributes_from_response(monkeypatch):
+    """Regression test: the response used to embed the raw, pre-
+    AttributeBuilder building_attributes dict unchanged in the output
+    feature -- including the weather DataFrame this module's parsing now
+    sets, which crashes Flask's jsonify() (found via a real end-to-end
+    request through buem-gateway, not by code reading). building_attributes
+    was never part of the documented response shape (model_metadata +
+    thermal_load_profile) to begin with. See
+    _process_single_feature's building_attributes.pop() and
+    enerplanet/buem#10."""
+    monkeypatch.setenv("BUEM_WEATHER_FALLBACK", "false")
+    payload = _payload_with_weather(_WEATHER_JSON)
+    result = GeoJsonProcessor(payload=payload, include_timeseries=False).process()
+
+    buem_out = result["features"][0]["properties"]["buem"]
+    assert buem_out["thermal_load_profile"]["summary"]["heating"]["total"]["value"] > 0
+    assert "building_attributes" not in buem_out
