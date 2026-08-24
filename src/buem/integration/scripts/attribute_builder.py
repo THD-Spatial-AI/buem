@@ -20,7 +20,18 @@ except ImportError:
 
 
 def _reindex_to_weather(series: pd.Series, weather_df: pd.DataFrame) -> pd.Series:
-    """Align a timeseries onto the weather index with nearest-neighbor fill."""
+    """Align a timeseries onto the weather index with nearest-neighbor fill.
+
+    series and weather_df.index can disagree on tz-awareness -- e.g. a
+    caller-supplied weather block (geojson_processor._weather_from_payload)
+    parses "Z"-suffixed timestamps as UTC-aware, while an occupancy-package-
+    generated series is tz-naive. pandas raises TypeError comparing the two
+    directly, so normalize onto weather_df's tz before reindexing.
+    """
+    series_tz = series.index.tz if isinstance(series.index, pd.DatetimeIndex) else None
+    weather_tz = weather_df.index.tz if isinstance(weather_df.index, pd.DatetimeIndex) else None
+    if series_tz != weather_tz:
+        series = series.tz_localize(weather_tz) if series_tz is None else series.tz_convert(weather_tz)
     if series.index.equals(weather_df.index):
         return series
     return series.reindex(weather_df.index, method="nearest", fill_value=0.0)

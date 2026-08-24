@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is unaffected; this only removes the per-request, location-specific
   lookup the payload path now replaces. See #10.
 
+### Fixed
+
+- `attribute_builder.py::_reindex_to_weather` raised `TypeError` when
+  reindexing an occupancy-generated series (tz-naive) onto a
+  caller-supplied weather block (tz-aware, from
+  `geojson_processor._weather_from_payload`'s `"Z"`-suffixed
+  timestamps). Normalize onto the weather index's tz before reindexing.
+
 ## [2.0.0] - 2026-07-31
 
 ### Added
