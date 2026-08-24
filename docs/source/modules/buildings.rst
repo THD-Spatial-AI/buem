@@ -23,18 +23,111 @@ mapping
 ^^^^^^^
 Orchestration of the LOD2 + TABULA pipeline:
 
-- ``lod2_mapper.LOD2Mapper`` — main pipeline entry point
-- ``wall_classifier.SharedWallDetector`` — party wall detection
-- ``element_factory`` — window, door, ventilation element creation
-- ``tabula_helpers`` — TABULA variant selection, window ratios, safe numerics
+- ``lod2_mapper.LOD2Mapper`` — main pipeline entry point (offline
+  Excel/PostgreSQL batch pipeline)
+- ``wall_classifier.SharedWallDetector`` — party wall detection (offline
+  pipeline only — needs a full cross-building surface table)
+- ``element_factory`` — ``WallInfo``, front/back wall identification, and
+  window/door/ventilation element creation — shared by both the offline
+  pipeline and the live request-handling path below
+- ``tabula_helpers`` — TABULA variant selection, window ratios, safe
+  numerics, and archetype lookup-by-match (for the live path)
+- ``live_synthesis`` — internal LOD2 → LOD3 synthesis for the live
+  request-handling path (no attached LOD2 surface table); see
+  :ref:`buildings-live-path` below
 
 datasources
 ^^^^^^^^^^^
-Data ingestion from PostgreSQL (``pg_source``) or Excel (``excel_source``).
+Data ingestion from PostgreSQL (``pg_source``), Excel (``excel_source``),
+or a plain CSV export in the same schema (``csv_source`` — built for a
+one-off regional drop that isn't an Excel workbook or a live Postgres
+connection). ``cityjson_extractor``/``nl_archetype_mapper``/
+``rivm_energy_labels`` are a related but distinct set of tools: they
+*produce* a ``csv_source``-compatible CSV pair directly from a CityJSON
+(3D BAG) source plus real Dutch archetype/energy-label data, rather than
+reading an existing export — see :doc:`netherlands`.
 
 generator
 ^^^^^^^^^
 v3 GeoJSON file writer (``json_generator``).
+
+
+.. _buildings-live-path:
+
+LOD2 → LOD3 in the live request-handling path
+-----------------------------------------------
+
+Everything documented on this page was originally written for the *offline*
+Excel/PostgreSQL batch pipeline (``LOD2Mapper`` above, run via
+``python -m buem.buildings.pipeline``). EnerPlanET's API contract
+deliberately does **not** require window/door/ventilation ("LOD3") detail
+from a client — their UI avoids asking general users to fill it in — so
+buem must compute it internally whenever a caller (a live API request,
+buem's own module-level config default, or a direct ``CfgBuilding``/
+``AttributeBuilder`` call) supplies wall/roof/floor ("LOD2") geometry
+without it.
+
+``buem.buildings.mapping.live_synthesis.synthesize_missing_openings()``
+applies the *same* documented rules on this page (front/back wall
+identification, proportional window/door ratios, ventilation opening
+sizing) to that geometry, reusing
+:func:`~buem.buildings.mapping.element_factory.synthesize_openings` — the
+one function both this offline pipeline and the live path call. It is
+wired into ``CfgBuilding.to_cfg_dict()``, the single point both the live
+API path (``AttributeBuilder`` → ``CfgBuilding``) and the config-only path
+converge on, so both are covered uniformly. Three differences from the
+offline pipeline, each a consequence of not having a full per-building
+LOD2 surface table available for a single-building request:
+
+- **Party (shared) wall detection** uses each wall's own
+  ``b_transmission == 0`` instead of cross-building ``surface_feature_id``
+  matching — see "Party (Shared) Walls" below; the resulting rule (no
+  windows/doors/ventilation on shared walls) is identical.
+- **The TABULA archetype is *matched*, not looked up by a per-building
+  foreign key**: from ``building_type`` + ``construction_period`` +
+  ``country`` (already forwarded end-to-end from a real v3 API request —
+  see ``CLAUDE.md`` "v2 vs v3/v4 request formats"), or an explicit
+  ``bldg_tabula_id`` override, via
+  :func:`~buem.buildings.mapping.tabula_helpers.lookup_tabula_archetype`
+  against the same bundled TABULA reference sheet
+  (``tabula_building_child_features.xlsx``, currently ``Code_Country ==
+  "DE"`` only).
+- **No match falls back to documented safe-default ratios** (below)
+  instead of failing — windows measurably affect heat loss/gain even at a
+  modest share of envelope area, so buem always synthesizes something
+  physically plausible rather than leaving a building with zero glazing.
+  A ``logging.warning`` names exactly which component(s) were filled this
+  way, so it is visible, not silent.
+
+An explicitly-supplied, non-empty ``Windows``/``Doors``/``Ventilation``
+component is never overridden — EnerPlanET "can provide [LOD3 detail]...
+but does not have to".
+
+**Window/door azimuth and tilt always match their parent surface**
+(``buem.buildings.mapping.live_synthesis.normalize_opening_azimuths()``,
+added 2026-08-14): a window or door is physically embedded in its host
+wall (or roof, for a skylight) and cannot face a different direction or
+slope than that surface. Whenever a Window/Door element declares a
+``surface``/``parent_id`` reference to a known Wall or Roof element, its
+``azimuth``/``tilt`` are forced to match that surface's own values —
+correcting a caller-supplied mismatch (logged as a warning) rather than
+rejecting the request over a redundant, derivable field. Applied after
+opening synthesis, so it is a no-op for internally-synthesized openings
+(already consistent by construction) and only has an effect on explicit
+caller-supplied LOD3 detail. Ventilation is excluded — the ISO 13790
+model uses only air change rates, not physical opening azimuth/tilt (see
+"Ventilation" below), and internally-synthesized ventilation elements
+don't carry those fields at all. Elements with no resolvable parent are
+left as-is.
+
+**Which walls receive openings stays purely a synthesis-time decision**:
+the front/back/side wall eligibility rules below (which wall gets a door,
+which get windows, party walls get none) only ever apply when buem itself
+is choosing where to place *missing* openings. They are never used to
+validate or reject explicitly caller-supplied Windows/Doors/Ventilation
+placement — a real building may legitimately have openings that don't
+follow this simplified heuristic (e.g. a door on a side wall), and
+EnerPlanET's own data is authoritative when supplied.
 
 
 .. _buildings-assumptions:
@@ -73,13 +166,39 @@ Geometry & Surface Classification
    * - Floor tilt is always 0°; azimuth always 0°
      - Ground slabs are horizontal; azimuth is irrelevant for floors.
 
-   * - Roof azimuth is always 0° (placeholder)
-     - Roof azimuth has no role in the ISO 13790 5R1C model; the solar irradiance
-       on roofs (horizontal windows) uses tilt only.
+   * - Roof azimuth: real value when the source DB has one; negative or
+       NaN → 0° (North) — same convention as walls
+     - **Corrected 2026-08-18** — previously hardcoded to 0° unconditionally
+       on the claim that "roof azimuth has no role in the model." Checked
+       against the actual ``model_buem._calcRadiation()`` implementation:
+       every element's own azimuth *and* tilt are passed to
+       ``pvlib.irradiance.get_total_irradiance()``, so roof solar gain is
+       genuinely azimuth-dependent (a west-facing roof plane gets
+       different plane-of-array irradiance than an east-facing one at the
+       same tilt). The real German LOD2 database has a usable azimuth for
+       10,732/16,558 (64.8%) of roof surfaces — was being discarded.
+       Netherlands (:doc:`netherlands`) was unaffected — that path always
+       computed a real per-plane azimuth from CityJSON geometry directly.
 
    * - Wall azimuth: negative or NaN → 0° (North)
      - Some LOD2 databases store −1 for unknown azimuth.  North is chosen as
        a conservative fallback (lowest solar gains in the Northern Hemisphere).
+
+
+.. _buildings-cityjson-geometry:
+
+Netherlands (Loenen) data pipeline
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Everything above this point describes ``LOD2Mapper``'s own assumptions
+about its *input* — a source table where ``surface_area``/``tilt``/
+``azimuth``/``tabula_variant_code_id`` already exist as columns. For
+Germany that table comes from the Excel/PostgreSQL ``city2tabula``
+pipeline. The Netherlands (Loenen) pipeline generates that same input
+shape from scratch instead (geometry directly from CityJSON, archetype
+matching independent of city2tabula) — given how much is specific to it,
+it has its own dedicated page rather than living here alongside the
+German-pipeline assumption tables above: :doc:`netherlands`.
 
 
 Party (Shared) Walls
@@ -268,13 +387,38 @@ Thermal Properties
        ``n_air_use`` = 0.5 1/h, ``c_m`` = 165 kJ/(m²K), ``h_room`` = 2.5 m
      - ISO 13790 / TABULA typical values for existing residential buildings.
 
+   * - **Live request-handling path only** (see
+       :ref:`buildings-live-path`): when no TABULA archetype can be matched
+       for a caller-supplied ``building_type``/``construction_period``/
+       ``country``, window/door/ventilation sizing falls back to a flat
+       15 % window-to-wall ratio per cardinal direction, a 5 % door-to-wall
+       ratio, ``U_Window`` = 2.8 W/(m²K), ``g_gl`` = 0.5, ``U_Door`` =
+       3.0 W/(m²K), ``n_air_use`` = 0.5 1/h
+     - Not TABULA-derived — a first-pass heuristic, logged as a warning
+       naming the affected component(s) rather than applied silently. 15 %
+       sits mid-range for existing European residential stock (the bundled
+       TABULA archetypes here run roughly 8–25 % depending on era/type);
+       the door ratio gives a ~2 m² door on a typical ~40 m² front wall.
+       See ``buem.buildings.mapping.live_synthesis``.
+
    * - ``phi_int`` — specific internal heat gains [W/m²] from TABULA
      - Per-typology internal gains (occupants + appliances).  ``None`` when not
        available → model uses its own scheduling-based internal gains profile.
 
    * - ``q_w_nd`` — specific hot-water demand [kWh/(m²·a)] from TABULA
-     - Annual energy for domestic hot water normalised by reference floor area.
-       Ranges from 10 to 15 kWh/(m²·a) in the German TABULA dataset.
+     - Annual energy for domestic hot water normalised by reference floor
+       area. Ranges from 10 to 15 kWh/(m²·a) in the German TABULA dataset.
+       Still not read anywhere -- superseded in practice by a richer,
+       wired-in path (2026-08-18): ``AttributeBuilder`` calls
+       ``occupancy.generate_dhw_draws()`` for every residential building
+       (not service buildings -- no DHW model there yet), and
+       ``ModelBUEM._addDhwCooking()`` converts the resulting hourly liters
+       into an additive ``dhw_kWh`` series (``buem.thermal.dhw_cooking``,
+       V·ρ·c·ΔT, ΔT=30.8 K -- real EN 12831-3 operating-condition
+       temperatures) plus a CBS-ratio-derived ``cooking_gas_kWh`` --
+       both post-processed *after* the 5R1C solve, never part of it. See
+       ``.claude/dhw_cooking_heat_handoff.md`` for the full method and
+       sourcing.
 
    * - ``design_T_min`` — outdoor design temperature [°C] from TABULA ``Theta_e``
      - Used for peak heating load sizing.  Default −12 °C (German DIN 4710).
@@ -282,6 +426,19 @@ Thermal Properties
    * - ``F_red_htr`` — heating reduction factor (0–1) from TABULA ``F_red_htr1``
      - Reduces transmission losses for unheated adjacent spaces (stairwells,
        corridors).  Default 1.0 (no reduction).  German data: 0.85–0.95.
+
+   * - ``comfortT_lb`` / ``comfortT_ub`` — indoor comfort dead-band [°C]
+     - Not taken from the matched archetype. buem applies its own default
+       band of 18–21 °C (``building_registry.DEFAULT_COMFORT_T_LB`` /
+       ``DEFAULT_COMFORT_T_UB``), representing *observed occupant
+       behavior* rather than a standardized calculation setpoint: real
+       households heat to a lower average indoor temperature than
+       reference calculations assume, a documented cause of calculated
+       demand exceeding metered consumption. TABULA's ``theta_i`` is that
+       standardized setpoint — and is a constant 20 °C across every Dutch
+       archetype, so it carries no per-building information. Pass explicit
+       ``comfortT_lb``/``comfortT_ub`` (scalars, or per-timestep Series
+       for a real night/weekend setback schedule) to override.
 
 
 TABULA Column Mapping
@@ -355,6 +512,11 @@ TABULA Column Mapping
      - ``F_red_htr1``
      - —
      - 1.0
+
+   * - ``comfortT_lb``
+     - — (not TABULA-derived; see above)
+     - °C
+     - 18.0
 
    * - per-element ``U``
      - ``U_Wall_1/2/3``, ``U_Roof_1/2``, ``U_Floor_1/2``, ``U_Window_1``, ``U_Door_1``

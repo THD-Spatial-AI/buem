@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import json
 import logging
@@ -6,6 +8,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from buem.buildings.mapping.live_synthesis import (
+    normalize_opening_azimuths,
+    synthesize_missing_openings,
+)
 from buem.config.attribute_types import AttributeCategory, AttributeSpec, AttrType
 from buem.config.cfg_attribute import ATTRIBUTE_SPECS
 from buem.config.cfg_attribute import cfg as DEFAULT_CFG
@@ -307,6 +313,12 @@ class CfgBuilding:
         Returns a deep copy of the internal cfg where:
          - 'weather' is a pandas.DataFrame
          - 'components' is the structured tree (dict)
+         - Windows/Doors/Ventilation are internally synthesized from Walls
+           geometry when the caller didn't supply them (see
+           buem.buildings.mapping.live_synthesis -- this is the single
+           choke point both the live API path (AttributeBuilder ->
+           CfgBuilding) and the config-only/demo path (CfgBuilding called
+           directly) converge on, so both benefit uniformly)
          - if 'A_ref' is not present but components are present, A_ref is derived
         """
         self._build_internal_cfg()
@@ -318,6 +330,27 @@ class CfgBuilding:
             # structured components are required for the cleaned codebase
             # return cfg as-is; downstream code (validate_cfg) will enforce presence
             return cfg
+
+        # LOD2 -> LOD3: synthesize any missing Windows/Doors/Ventilation from
+        # Walls geometry + a resolved TABULA archetype (or documented safe
+        # defaults) before anything downstream sees an incomplete envelope.
+        # No-op when the caller already supplied all three explicitly.
+        comps = synthesize_missing_openings(
+            comps,
+            building_type=cfg.get("building_type"),
+            construction_period=cfg.get("construction_period"),
+            country=cfg.get("country"),
+            bldg_tabula_id=cfg.get("bldg_tabula_id"),
+            window_to_wall_ratio=cfg.get("window_to_wall_ratio"),
+        )
+        # A window/door cannot face a different direction than the wall (or
+        # roof, for a skylight) it's embedded in -- force azimuth/tilt to
+        # match whenever a `surface` (parent_id) reference resolves, whether
+        # the opening was just synthesized above (already consistent, a
+        # no-op) or explicitly supplied by the caller (corrected here, not
+        # rejected). See live_synthesis.normalize_opening_azimuths.
+        comps = normalize_opening_azimuths(comps)
+        cfg["components"] = comps
 
         # compute aggregated A_ref if absent
         if "A_ref" not in cfg:

@@ -57,9 +57,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from buem.parallelization.parallel_run import demo_parallel_processing
-from buem.parallelization.performance_comparison import PerformanceComparator, demo_performance_comparison
-from buem.parallelization.sequence_run import demo_sequential_processing
+from buem.parallelization.parallel_run import demo_parallel_processing  # noqa: E402
+from buem.parallelization.performance_comparison import PerformanceComparator, demo_performance_comparison  # noqa: E402
+from buem.parallelization.sequence_run import demo_sequential_processing  # noqa: E402
 
 
 def print_banner():

@@ -48,8 +48,15 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
 
         if u is not None:
             try:
-                if float(u) <= 0:
-                    issues.append(f"components.{comp}.U must be positive number")
+                # U < 0 is physically impossible and always an error. U == 0
+                # is *not* an error: it's buildings.rst's own documented
+                # convention for a shared/party wall (b_transmission == 0,
+                # no heat transfer to an adjacent heated space -- see
+                # buildings/mapping/wall_classifier.py's SharedWallDetector
+                # docstring). Rejecting U == 0 here used to make any
+                # building with a party wall fail validation outright.
+                if float(u) < 0:
+                    issues.append(f"components.{comp}.U must not be negative")
             except (TypeError, ValueError):
                 issues.append(f"components.{comp}.U invalid: {u}")
 
@@ -81,8 +88,10 @@ def validate_cfg(cfg: dict[str, Any]) -> list[str]:
                         issues.append(f"components.{comp}.elements[{idx}].U missing")
                     else:
                         try:
-                            if float(u_e) <= 0:
-                                issues.append(f"components.{comp}.elements[{idx}].U must be positive number")
+                            # Same U == 0 exception as the component-level
+                            # check above (party-wall convention).
+                            if float(u_e) < 0:
+                                issues.append(f"components.{comp}.elements[{idx}].U must not be negative")
                         except (TypeError, ValueError):
                             issues.append(f"components.{comp}.elements[{idx}].U invalid: {u_e}")
 

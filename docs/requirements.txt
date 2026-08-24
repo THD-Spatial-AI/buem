@@ -1,5 +1,13 @@
-# Documentation dependencies
-# These are used only if building docs outside of `pip install .[docs]`.
-# ReadTheDocs uses the [docs] extra from pyproject.toml instead.
+# Documentation build dependencies.
+#
+# This is what ReadTheDocs installs (see .readthedocs.yaml) -- buem itself is
+# deliberately not installed there, because the docs are hand-written prose
+# with no autodoc directives and importing buem would require the real
+# weather archives it fetches at import time.
+#
+# setuptools-scm lets conf.py resolve the real version from git tags when the
+# package is absent; the project version is dynamic, so there is no static
+# string in pyproject.toml to fall back to.
 sphinx>=9.0.0
 sphinx-rtd-theme>=3.0.0
+setuptools-scm>=8

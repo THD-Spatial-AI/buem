@@ -5,11 +5,21 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 # -- Version setup -----------------------------------------------------------
-# Delegates to buem/__init__.py which handles all fallbacks.
+# Prefer the installed package (buem/__init__.py handles its own fallbacks).
+# Documentation builders deliberately do not install buem -- see
+# .readthedocs.yaml -- so fall back to reading pyproject.toml directly
+# rather than to a hardcoded string that silently goes stale.
 try:
     from buem import __version__ as project_version
 except Exception:
-    project_version = '0.1.2'  # last-resort fallback
+    try:
+        # The project version is dynamic (setuptools-scm, from git tags),
+        # so there is no static string in pyproject.toml to read instead.
+        from setuptools_scm import get_version
+
+        project_version = get_version(root='../..', relative_to=__file__)
+    except Exception:
+        project_version = '0.0.0'  # last-resort fallback
 
 import sphinx_rtd_theme
 

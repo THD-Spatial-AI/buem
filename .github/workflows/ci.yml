@@ -12,6 +12,14 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # cfg_attribute.py fetches real weather at module-import time, so nearly
+      # every test needs a processed archive on disk -- CI has no access to
+      # the real (1-2GB/provider/year) archives, so this points at a small,
+      # real (spatially cropped, not synthetic) MERRA-2 2018 fixture fetched
+      # from the weather repo below, covering buem's own test locations.
+      # See https://github.com/UU-BUEM/weather/tree/main/fixtures/ci.
+      WEATHER_DATA_DIR: /tmp/weather-ci-fixture/fixtures/ci
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -30,6 +38,11 @@ jobs:
       - name: Install package
         shell: bash -l {0}
         run: pip install -e . --no-deps
+
+      - name: Fetch weather CI fixture
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/UU-BUEM/weather.git /tmp/weather-ci-fixture
+          git -C /tmp/weather-ci-fixture sparse-checkout set fixtures/ci
 
       - name: Lint
         shell: bash -l {0}

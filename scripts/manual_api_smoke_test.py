@@ -1,10 +1,20 @@
+"""Manual smoke test against a locally running BUEM API server.
+
+Posts one hand-built building payload to a `buem run --api`-style server
+on localhost and saves the raw response for inspection.
+
+Usage::
+
+    python scripts/manual_api_smoke_test.py
+"""
 import json
 from pathlib import Path
 
 import requests
 
 API_URL = "http://127.0.0.1:5000/api/process"
-RESPONSE_FILE = Path(r"c:\\test\\buem\\src\\buem\\integration\\api_response_received_v1.geojson")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+RESPONSE_FILE = _REPO_ROOT / "src" / "buem" / "integration" / "api_response_received_v1.geojson"
 
 def main():
     # Example structured payload: includes `components` object (no legacy keys)

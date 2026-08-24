@@ -35,6 +35,15 @@ def test_cache_hit_is_faster():
     with open(BUILDING_FILE) as f:
         payload = json.load(f)
 
+    # Real per-location weather fetch (weather is a compulsory dependency).
+    # This test exercises result caching, not weather accuracy, so pin the
+    # simulation year to one with a processed archive available wherever
+    # this test runs, overriding the fixture's own start_time/end_time
+    # (2024/2025) which BUEM_WEATHER_DATA_DIR may not have archives for.
+    props = payload["features"][0]["properties"]
+    props["start_time"] = "2018-01-01T00:00:00Z"
+    props["end_time"] = "2019-01-01T00:00:00Z"
+
     t0 = time.time()
     proc = GeoJsonProcessor(payload=payload, include_timeseries=False)
     resp = proc.process()

@@ -30,6 +30,7 @@ classifiers = [
 ]
 dependencies = [
     "cvxpy",
+    "dask[array]",  # required at runtime by weather's xr.open_mfdataset point-query path; not declared by weather[pointquery] itself
     "flask",
     "flask-swagger-ui",
     "joblib",
@@ -47,30 +48,26 @@ dependencies = [
     "pvlib",
     "pyarrow",
     "python-dotenv",
+    "requests",  # weather_cache.py's optional remote (WEATHER_API_URL) fetch backend
     "scipy",
-    "xarray",
-    "netCDF4",
+    # weather: https://github.com/UU-BUEM/weather -- compulsory (2026-08-03): all
+    # solar/T/GHI/DHI/DNI attributes come from this package's real per-location
+    # fetch, no bundled/local-file fallback. Not on PyPI/conda yet, so a direct
+    # git reference (PEP 508), tracked at @main -- see infrastructure/env/
+    # buem_env.yml's header comment for the reproducibility trade-off.
+    "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main",
+    # occupancy: https://github.com/UU-BUEM/occupancy -- compulsory (2026-08-07):
+    # all Q_ig/elecLoad/occ_nothome/occ_sleeping attributes come from this
+    # package's real HouseholdProfile/ServiceBuildingProfile generation, no
+    # synthetic fallback. Not on PyPI/conda yet, so a direct git reference
+    # (PEP 508), tracked at @main -- see infrastructure/env/buem_env.yml's
+    # header comment for the reproducibility trade-off.
+    #
+    # Tracks upstream directly; the enerplanet/occupancy fork pin is retired.
+    "occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main",
 ]
 
 [project.optional-dependencies]
-# Optional sub-packages now in independent repos within the UU-BUEM organisation.
-# Neither is published to PyPI or a conda channel yet, so these are direct
-# git references (PEP 508). Tracked at @main (latest) rather than a pinned
-# tag -- see infrastructure/env/buem_env.yml's header comment for the
-# reproducibility trade-off and how to pin instead.
-# occupancy: https://github.com/UU-BUEM/occupancy
-# weather:   https://github.com/UU-BUEM/weather
-#
-# occupancy is pinned to enerplanet's own fork branch, not UU-BUEM/occupancy@main:
-# fix/config-path-resolution has not been merged upstream (confirmed absent from
-# UU-BUEM/occupancy's commit history as of this sync) -- switching to @main would
-# silently drop that fix. Revisit once it lands upstream.
-occupancy = [
-    "occupancy @ git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution",
-]
-weather = [
-    "weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main",
-]
 server = [
     "gunicorn",
 ]
@@ -108,7 +105,12 @@ line-length = 120
 target-version = "py314"
 
 [tool.ruff.lint]
-extend-ignore = ["E203", "E501"]
+extend-ignore = [
+    "E203", "E501",
+    "RUF100",  # some `# noqa: E402` comments target flake8 (this repo's IDE linter),
+               # not ruff -- ruff doesn't select E402 itself, so it would otherwise
+               # flag those as "unused noqa" and fail on a rule flake8 still enforces.
+]
 
 [tool.mypy]
 ignore_missing_imports = true
@@ -116,3 +118,13 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "slow: takes seconds rather than milliseconds -- a real weather fetch, a full model solve, or a timing comparison that needs a cold/warm cache pair. Deselect with `-m 'not slow'`.",
+]
+# A numpy RuntimeWarning inside a solve ("invalid value encountered in ...")
+# means a NaN or +/-inf reached an aggregation -- physically meaningless output
+# that still produces a number, so it must fail loudly rather than scroll past
+# in the warnings summary. The suite is clean under this today; if a third-party
+# warning ever needs exempting, add a narrow `default::RuntimeWarning:<module>`
+# entry rather than dropping the rule.
+filterwarnings = ["error::RuntimeWarning"]

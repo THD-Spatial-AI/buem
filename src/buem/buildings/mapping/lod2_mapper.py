@@ -7,9 +7,18 @@ produces a list of canonical ``Building`` objects ready for v3 JSON generation.
 This module orchestrates the mapping pipeline.  Domain-specific logic is
 delegated to focused helper modules:
 
+- **archetype_spec** — the per-archetype thermal description, resolved from
+  either a TABULA row (residential) or the service-building reference
+  table (non-residential)
 - **element_factory** — window, door, ventilation element creation
 - **tabula_helpers** — TABULA variant selection, window ratios, safe numerics
 - **wall_classifier** — shared (party) wall detection
+
+Both archetype sources produce the same ``ArchetypeSpec``, so everything
+downstream of resolution — geometry, opening synthesis, element assembly —
+is identical regardless of which one described the building. TABULA is a
+residential typology, so without the second source every non-residential
+building was skipped outright.
 
 Table linkages
 --------------
@@ -36,38 +45,40 @@ Front / back wall identification
 After filtering out party walls, the **front wall** is the exposed wall with the
 largest area.  The **back wall** is the exposed wall whose azimuth is closest
 to 180° opposite the front wall's azimuth (within a 90° tolerance; if no
-candidate is close enough, there is no back wall).
+candidate is close enough, there is no back wall).  See
+:func:`~buem.buildings.mapping.element_factory.identify_front_back`.
 
 Window / door / ventilation sizing
 -----------------------------------
 Window and door areas are **proportional** to actual LOD2 wall areas via TABULA
 ratios.  Ventilation openings (1.0 m² front, 0.5 m² back) are capped at 10 %
 of wall area and subtracted from the wall's opaque area.  See
-:mod:`~buem.buildings.mapping.element_factory` for details.
+:func:`~buem.buildings.mapping.element_factory.synthesize_openings` — this
+same function (and the same documented rules) also drives the live
+request-handling path when a caller doesn't supply its own window/door/
+ventilation detail; see :mod:`buem.buildings.mapping.live_synthesis`.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import pandas as pd
 
 from buem.buildings.building import Building, BuildingIdentity, ThermalProperties
 from buem.buildings.components.base import EnvelopeElement
-from buem.buildings.mapping.element_factory import (
-    assign_vent_areas,
-    create_door,
-    create_ventilation,
-    create_windows,
+from buem.buildings.mapping import geometry_utils
+from buem.buildings.mapping.archetype_spec import (
+    ArchetypeSpec,
+    spec_from_service_reference,
+    spec_from_tabula,
 )
-from buem.buildings.mapping.tabula_helpers import (
-    azimuth_diff,
-    azimuth_to_direction,
-    compute_window_ratios,
-    safe_series_float,
-    select_primary_variant,
+from buem.buildings.mapping.element_factory import (
+    WallInfo,
+    identify_front_back,
+    synthesize_openings,
+    uniform_window_ratios,
 )
 from buem.buildings.mapping.wall_classifier import SharedWallDetector
 
@@ -78,11 +89,6 @@ logger = logging.getLogger(__name__)
 OBJECTCLASS_WALL = 709
 OBJECTCLASS_GROUND = 710
 OBJECTCLASS_ROOF = 712
-
-# Maximum acceptable angular deviation (°) between a candidate back wall and
-# the ideal opposite azimuth.  Beyond this threshold no true back wall exists
-# (all exposed surfaces face roughly the same way → no cross-ventilation).
-_BACK_WALL_ANGLE_LIMIT = 90.0
 
 
 class BuildingSource(Protocol):
@@ -102,26 +108,6 @@ class BuildingSource(Protocol):
     def get_tabula_row(self, tabula_id: float) -> pd.Series | None: ...
 
 
-@dataclass
-class _WallInfo:
-    """Internal record for a classified wall surface."""
-
-    wall_id: str
-    surface_feature_id: int
-    area: float
-    azimuth: float
-    is_shared: bool
-    direction: str = ""       # cardinal direction (north/east/south/west)
-    window_area: float = 0.0  # proportional window area placed on this wall
-    door_area: float = 0.0    # proportional door area placed on this wall
-    vent_area: float = 0.0    # ventilation opening area on this wall
-
-    @property
-    def net_area(self) -> float:
-        """Opaque wall area after subtracting windows, doors, and vent openings."""
-        return max(0.0, self.area - self.window_area - self.door_area - self.vent_area)
-
-
 class LOD2Mapper:
     """Map LOD2 geometry + TABULA typology into canonical Building objects.
 
@@ -129,14 +115,40 @@ class LOD2Mapper:
     ----------
     source : BuildingSource
         Any object implementing the ``BuildingSource`` protocol
-        (``ExcelBuildingSource`` or ``PostgresBuildingSource``).
+        (``ExcelBuildingSource``, ``PostgresBuildingSource``, or
+        ``CsvBuildingSource``).
     country : str
         ISO country code for all buildings (default ``"DE"``).
+    u_value_overrides : pd.DataFrame or None
+        Optional editable U-value table (2026-08-17, e.g.
+        ``src/buem/data/buildings/netherlands/Loenen/u_value_reference.csv`` --
+        see that file and ``nl_archetype_mapper``'s module docstring for
+        why this exists: TABULA's own per-row U-values are trustworthy,
+        but the user asked for "a clean table... providing U values that
+        users can easily change if needed" -- a plain, small,
+        human-editable CSV rather than a 200-column TABULA row). Must
+        have columns ``construction_year_class``, ``building_type``,
+        ``U_Wall``, ``U_Roof``, ``U_Floor``, ``U_Window``, ``U_Door``.
+        When a building's resolved TABULA row's own
+        ``Code_ConstructionYearClass``/``Code_BuildingSizeClass`` matches
+        a row here, these values are used *instead of* that TABULA row's
+        own ``U_Wall_1``/etc. (transmission factors and every other
+        thermal parameter still come from the real TABULA row
+        unchanged). ``None`` (default) preserves the original behavior
+        exactly -- no effect on the German path.
     """
 
-    def __init__(self, source: BuildingSource, country: str = "DE"):
+    def __init__(
+        self, source: BuildingSource, country: str = "DE",
+        u_value_overrides: pd.DataFrame | None = None,
+        service_building_reference: pd.DataFrame | None = None,
+        refurbishment_measure_overrides: pd.DataFrame | None = None,
+    ):
         self.source = source
         self.country = country
+        self.u_value_overrides = u_value_overrides
+        self.service_building_reference = service_building_reference
+        self.refurbishment_measure_overrides = refurbishment_measure_overrides
         # Pre-compute shared wall set once across the full surface table
         self._shared_detector = SharedWallDetector(source.surfaces)
 
@@ -159,14 +171,13 @@ class LOD2Mapper:
             return None
         bldg_row = bldg_rows.iloc[0]
 
-        # 2. Look up TABULA row
-        tabula_id = bldg_row.get("tabula_variant_code_id")
-        tabula_row = self.source.get_tabula_row(tabula_id)
-        if tabula_row is None:
-            logger.warning(
-                "Building %d: no TABULA match for tabula_variant_code_id=%s",
-                building_feature_id, tabula_id,
-            )
+        # 2. Resolve the archetype description. Residential buildings use
+        #    their matched TABULA row; non-residential ones have no TABULA
+        #    archetype (it is a residential typology) and fall back to the
+        #    service-building reference table, so they can be simulated
+        #    rather than skipped.
+        spec = self._resolve_archetype(bldg_row, building_feature_id)
+        if spec is None:
             return None
 
         # 3. Get child surfaces
@@ -182,13 +193,14 @@ class LOD2Mapper:
         roofs_df = valid[valid["objectclass_id"] == OBJECTCLASS_ROOF]
         floors_df = valid[valid["objectclass_id"] == OBJECTCLASS_GROUND]
 
-        # 5. Select primary TABULA variants for each component type
-        wall_U, wall_b = select_primary_variant(tabula_row, "Wall", n_variants=3)
-        roof_U, roof_b = select_primary_variant(tabula_row, "Roof", n_variants=2)
-        floor_U, floor_b = select_primary_variant(tabula_row, "Floor", n_variants=2)
-        window_U = safe_series_float(tabula_row, "U_Window_1", 2.8)
-        window_g_gl = safe_series_float(tabula_row, "g_gl_n_Window_1", 0.5)
-        door_U = safe_series_float(tabula_row, "U_Door_1", 3.0)
+        # 5. Component U-values and transmission factors come from the
+        #    resolved archetype (see archetype_spec), which has already
+        #    applied the editable override table and any refurbishment
+        #    measures.
+        wall_U, wall_b = spec.wall_U, spec.wall_b
+        roof_U, roof_b = spec.roof_U, spec.roof_b
+        floor_U, floor_b = spec.floor_U, spec.floor_b
+        window_U, window_g_gl, door_U = spec.window_U, spec.window_g_gl, spec.door_U
 
         # 6. Classify walls into shared (party) vs exposed
         wall_infos = self._classify_walls(walls_df)
@@ -201,24 +213,31 @@ class LOD2Mapper:
         )
 
         # 7. Identify front wall (largest exposed) and back wall (opposite)
-        front_wall, back_wall = self._identify_front_back(exposed_walls)
+        front_wall, back_wall = identify_front_back(exposed_walls)
 
-        # 8. Compute proportional window/door areas on each exposed wall
-        a_wall_1 = safe_series_float(tabula_row, "A_Wall_1", 0.0)
-        win_ratios = compute_window_ratios(tabula_row, a_wall_1)
-        door_ratio = (
-            safe_series_float(tabula_row, "A_Door_1", 0.0) / a_wall_1
-            if a_wall_1 > 0 else 0.0
+        # 8. Compute proportional window/door ratios from TABULA, then
+        #    synthesize window/door/ventilation elements (shared with the
+        #    live request-handling path — see element_factory.synthesize_openings).
+        # Windows are sized from each wall's own area, not from TABULA's
+        # per-direction window columns -- see
+        # element_factory.uniform_window_ratios(). Doors still use the
+        # archetype's own door-to-wall ratio, which carries no orientation
+        # assumption.
+        win_ratios = uniform_window_ratios()
+        door_ratio = spec.door_ratio
+        horizontal = spec.horizontal_window_area
+        n_air_use = spec.n_air_use
+
+        opening_elements = synthesize_openings(
+            exposed_walls, front_wall, back_wall,
+            window_ratios=win_ratios,
+            door_ratio=door_ratio,
+            window_U=window_U,
+            window_g_gl=window_g_gl,
+            door_U=door_U,
+            n_air_use=n_air_use,
+            horizontal_window_area=horizontal,
         )
-
-        for w in exposed_walls:
-            w.direction = azimuth_to_direction(w.azimuth)
-            w.window_area = win_ratios.get(w.direction, 0.0) * w.area
-        if front_wall is not None:
-            front_wall.door_area = door_ratio * front_wall.area
-
-        # Assign ventilation opening areas to front/back walls
-        assign_vent_areas(front_wall, back_wall)
 
         # 9. Build envelope elements
         #    (steps 10-12 follow below: identity, thermal, A_ref)
@@ -250,11 +269,21 @@ class LOD2Mapper:
         # --- roofs ---
         for roof_counter, (_, row) in enumerate(roofs_df.iterrows(), start=1):
             tilt = self._convert_roof_tilt(row["tilt"])
+            # Real azimuth, not a placeholder (fixed 2026-08-18): model_buem
+            # ._calcRadiation() passes every element's own tilt AND azimuth
+            # through pvlib.irradiance.get_total_irradiance() -- roof solar
+            # gain is NOT azimuth-independent in the actual model, so a
+            # hardcoded 0.0 here silently modeled every non-flat German
+            # roof as due-north-facing. The source DB has real azimuth for
+            # 10,732/16,558 (64.8%) of German roof surfaces (checked
+            # directly, not assumed) -- the same negative/NaN "unknown"
+            # sentinel walls already handle is normalised here too.
+            roof_azimuth = self._normalise_azimuth(row["azimuth"])
             elements.append(EnvelopeElement(
                 id=f"roof_{roof_counter}",
                 element_type="roof",
                 area=float(row["surface_area"]),
-                azimuth=0.0,  # placeholder — no role in solar calcs for roofs
+                azimuth=roof_azimuth,
                 tilt=tilt,
                 U=roof_U,
                 b_transmission=roof_b,
@@ -272,61 +301,60 @@ class LOD2Mapper:
                 b_transmission=floor_b,
             ))
 
-        # --- windows (proportional, only on exposed walls) ---
-        elements.extend(create_windows(exposed_walls, window_U, window_g_gl))
-
-        # Horizontal / skylight windows from TABULA (independent of walls)
-        horizontal = safe_series_float(tabula_row, "A_Window_Horizontal", 0.0)
-        if horizontal > 0:
-            elements.append(EnvelopeElement(
-                id="win_horizontal",
-                element_type="window",
-                area=horizontal,
-                azimuth=0.0,
-                tilt=0.0,
-                U=window_U,
-                g_gl=window_g_gl,
-            ))
-
-        # --- door (proportional, on front wall) ---
-        door_elem = create_door(front_wall, door_U)
-        if door_elem is not None:
-            elements.append(door_elem)
-
-        # --- ventilation (front wall + back wall) ---
-        n_air_use = safe_series_float(tabula_row, "n_air_use", 0.5)
-        elements.extend(create_ventilation(front_wall, back_wall, n_air_use))
+        # --- windows, door, ventilation (computed together in step 8 above) ---
+        elements.extend(opening_elements)
 
         # 10. Build identity
-        building_type = self._extract_building_type(tabula_row)
-        construction_period = self._extract_construction_period(tabula_row)
-        neighbour_status = str(tabula_row.get("Code_AttachedNeighbours", "B_Alone"))
+        building_type = spec.building_type
+        construction_period = spec.construction_period
+        neighbour_status = spec.neighbour_status
         n_storeys = int(bldg_row.get("number_of_storeys", 1) or 1)
 
-        identity = BuildingIdentity(
-            building_feature_id=str(building_feature_id),
-            country=self.country,
-            building_type=building_type,
-            construction_period=construction_period,
-            tabula_variant_code=str(bldg_row.get("tabula_variant_code", "")),
-            n_storeys=n_storeys,
-            neighbour_status=neighbour_status,
-        )
+        identity_kwargs: dict[str, Any] = {
+            "building_feature_id": str(building_feature_id),
+            "country": self.country,
+            "building_type": building_type,
+            "construction_period": construction_period,
+            "tabula_variant_code": str(bldg_row.get("tabula_variant_code", "")),
+            "n_storeys": n_storeys,
+            "neighbour_status": neighbour_status,
+        }
+        # Real (latitude, longitude) from the source row's own geometry,
+        # when available -- previously never wired in here (see
+        # .claude/residential/open.md, found 2026-08-16 via a building
+        # that got weather fetched at the wrong country entirely because
+        # of this exact gap), so every LOD2Mapper-mapped building silently
+        # kept BuildingIdentity's class default (52.0, 5.0) regardless of
+        # its real location. Harmless while it was combined with "no NL
+        # building could be mapped at all" (no TABULA match); closing it
+        # now that TABULA matching makes that combination possible.
+        latlon = geometry_utils.building_lat_lon(bldg_row)
+        if latlon is not None:
+            identity_kwargs["latitude"], identity_kwargs["longitude"] = latlon
+
+        identity = BuildingIdentity(**identity_kwargs)
 
         # 11. Build thermal properties
         thermal = ThermalProperties(
-            n_air_infiltration=safe_series_float(tabula_row, "n_air_infiltration", 0.5),
+            n_air_infiltration=spec.n_air_infiltration,
             n_air_use=n_air_use,
-            c_m=safe_series_float(tabula_row, "c_m", 165.0),
-            h_room=safe_series_float(tabula_row, "h_room", 2.5),
-            F_sh_hor=safe_series_float(tabula_row, "F_sh_hor", 0.8),
-            F_sh_vert=safe_series_float(tabula_row, "F_sh_vert", 0.75),
-            F_f=safe_series_float(tabula_row, "F_f", 0.2),
-            F_w=safe_series_float(tabula_row, "F_w", 1.0),
-            phi_int=safe_series_float(tabula_row, "phi_int", None),
-            q_w_nd=safe_series_float(tabula_row, "q_w_nd", None),
-            design_T_min=safe_series_float(tabula_row, "Theta_e", -12.0),
-            F_red_htr=safe_series_float(tabula_row, "F_red_htr1", 1.0),
+            c_m=spec.c_m,
+            h_room=spec.h_room,
+            F_sh_hor=spec.F_sh_hor,
+            F_sh_vert=spec.F_sh_vert,
+            F_f=spec.F_f,
+            F_w=spec.F_w,
+            phi_int=spec.phi_int,
+            q_w_nd=spec.q_w_nd,
+            design_T_min=spec.design_T_min,
+            F_red_htr=spec.F_red_htr,
+            # Comfort setpoints are deliberately left at buem's own
+            # defaults rather than taken from the matched archetype's
+            # `theta_i`. TABULA's theta_i is the setpoint its *reference
+            # calculation* assumes (a constant 20 degC across every Dutch
+            # archetype, so it carries no per-building information here),
+            # whereas buem's default represents observed occupant
+            # behavior -- see building_registry.DEFAULT_COMFORT_T_LB.
         )
 
         # 12. Compute reference floor area from LOD2 floor areas
@@ -340,6 +368,86 @@ class LOD2Mapper:
             thermal=thermal,
             A_ref=a_ref * max(n_storeys, 1),
         )
+
+    # ── archetype resolution ─────────────────────────────────────────────────
+
+    def _resolve_archetype(
+        self, bldg_row: pd.Series, building_feature_id: int,
+    ) -> ArchetypeSpec | None:
+        """Describe this building's archetype, or ``None`` if nothing can.
+
+        A residential building resolves through its matched TABULA row. A
+        non-residential one has no TABULA archetype -- TABULA is a
+        residential typology -- so it resolves through the
+        service-building reference table instead, keyed on the
+        ``service_building_type`` Stage 3 assigned and its construction
+        year class. Without that table, or for a flagged building too
+        small to have been given a service type at all, the building is
+        still skipped.
+        """
+        tabula_id = bldg_row.get("tabula_variant_code_id")
+        tabula_row = self.source.get_tabula_row(tabula_id)
+        if tabula_row is not None:
+            override_row = (
+                self._lookup_u_value_override(tabula_row)
+                if self.u_value_overrides is not None else None
+            )
+            return spec_from_tabula(
+                tabula_row,
+                u_value_overrides=override_row,
+                measure_overrides=self.refurbishment_measure_overrides,
+            )
+
+        service_type = bldg_row.get("service_building_type")
+        if service_type is None or pd.isna(service_type):
+            logger.warning(
+                "Building %d: no TABULA match for tabula_variant_code_id=%s "
+                "and no service_building_type to fall back on",
+                building_feature_id, tabula_id,
+            )
+            return None
+
+        reference_row = self._lookup_service_reference(bldg_row, str(service_type))
+        if reference_row is None:
+            logger.warning(
+                "Building %d: service_building_type=%r has no row in the "
+                "service-building reference table (construction_year_class=%r)",
+                building_feature_id, service_type,
+                bldg_row.get("construction_year_class"),
+            )
+            return None
+
+        logger.debug(
+            "Building %d: mapped as service building %r (%s)",
+            building_feature_id, service_type,
+            reference_row.get("construction_year_class"),
+        )
+        return spec_from_service_reference(reference_row)
+
+    def _lookup_service_reference(
+        self, bldg_row: pd.Series, service_type: str,
+    ) -> pd.Series | None:
+        """Find this service building's row, matched on type and era.
+
+        Falls back to the oldest era present for the type when the
+        building's own ``construction_year_class`` is missing -- an
+        unknown-age non-residential building is far more likely to be an
+        old one than a new one, and modelling it as new would understate
+        its demand.
+        """
+        if self.service_building_reference is None:
+            return None
+        table = self.service_building_reference
+        by_type = table[table["service_building_type"] == service_type]
+        if by_type.empty:
+            return None
+
+        year_class = bldg_row.get("construction_year_class")
+        if year_class is not None and not pd.isna(year_class):
+            exact = by_type[by_type["construction_year_class"] == str(year_class)]
+            if not exact.empty:
+                return exact.iloc[0]
+        return by_type.sort_values("construction_year_class").iloc[0]
 
     def map_all(
         self,
@@ -382,22 +490,28 @@ class LOD2Mapper:
 
     # ── wall classification ──────────────────────────────────────────────────
 
-    def _classify_walls(self, walls_df: pd.DataFrame) -> list[_WallInfo]:
+    def _classify_walls(self, walls_df: pd.DataFrame) -> list[WallInfo]:
         """Classify each wall as shared (party) or exposed using surface_feature_id.
 
-        Returns a list of ``_WallInfo`` in the same iteration order as the
+        Returns a list of ``WallInfo`` in the same iteration order as the
         input DataFrame, with sequential IDs ``wall_1``, ``wall_2``, etc.
         Logs a warning when an exposed wall has a negative (unknown) azimuth.
         """
-        result: list[_WallInfo] = []
+        result: list[WallInfo] = []
         for idx, (_, row) in enumerate(walls_df.iterrows(), start=1):
             sfid = int(row["surface_feature_id"])
             raw_az = row["azimuth"]
             azimuth = self._normalise_azimuth(raw_az)
             is_shared = self._shared_detector.is_shared(sfid)
+            azimuth_unknown = pd.notna(raw_az) and float(raw_az) < 0
 
-            # Log negative azimuth conversion for traceability
-            if pd.notna(raw_az) and float(raw_az) < 0:
+            # Log negative azimuth conversion for traceability. The
+            # fallback value itself (0°/north) is no longer trusted for
+            # window/door placement on an exposed wall -- see WallInfo
+            # .azimuth_known and synthesize_openings() -- this wall still
+            # counts fully toward opaque envelope area/conductance either
+            # way, just not toward where openings go.
+            if azimuth_unknown:
                 if is_shared:
                     logger.debug(
                         "wall_%d (sfid=%d): shared wall azimuth %.1f → 0°",
@@ -405,64 +519,45 @@ class LOD2Mapper:
                     )
                 else:
                     logger.warning(
-                        "wall_%d (sfid=%d): EXPOSED wall azimuth %.1f → 0° "
-                        "(unknown orientation — window/door placement may be inaccurate)",
+                        "wall_%d (sfid=%d): EXPOSED wall azimuth %.1f unknown "
+                        "-- excluded from window/door placement (still counted "
+                        "as opaque envelope area).",
                         idx, sfid, float(raw_az),
                     )
 
-            result.append(_WallInfo(
+            result.append(WallInfo(
                 wall_id=f"wall_{idx}",
                 surface_feature_id=sfid,
                 area=float(row["surface_area"]),
                 azimuth=azimuth,
                 is_shared=is_shared,
+                # Shared walls never reach window/door placement anyway
+                # (filtered to exposed-only before synthesize_openings()
+                # runs), so this only matters for exposed walls -- kept
+                # unconditional rather than re-deriving that filter here.
+                azimuth_known=not azimuth_unknown,
             ))
         return result
 
-    # ── front / back wall identification ─────────────────────────────────────
-
-    @staticmethod
-    def _identify_front_back(
-        exposed_walls: list[_WallInfo],
-    ) -> tuple[_WallInfo | None, _WallInfo | None]:
-        """Identify the front wall (largest exposed) and the back wall (opposite).
-
-        The front wall is the exposed wall with the largest area.
-        The back wall is the exposed wall whose azimuth is closest to 180°
-        from the front wall's azimuth (i.e. facing the opposite direction).
-        If only one exposed wall exists, it serves as both front and back.
-
-        Returns
-        -------
-        (front_wall, back_wall) — either may be ``None`` if no exposed walls.
+    def _lookup_u_value_override(self, tabula_row: pd.Series) -> pd.Series | None:
+        """Find this building's row in ``self.u_value_overrides``, matched
+        on the resolved TABULA row's own ``Code_ConstructionYearClass``/
+        ``Code_BuildingSizeClass`` -- or ``None`` if no override table was
+        given, or none of its rows match. See ``__init__``'s
+        ``u_value_overrides`` docstring.
         """
-        if not exposed_walls:
-            return None, None
-
-        # Front wall = largest area among exposed walls
-        front = max(exposed_walls, key=lambda w: w.area)
-
-        if len(exposed_walls) == 1:
-            return front, front
-
-        # Back wall = closest to 180° opposite front azimuth, within threshold
-        opposite_az = (front.azimuth + 180.0) % 360.0
-        best_back: _WallInfo | None = None
-        best_delta = float("inf")
-        for w in exposed_walls:
-            if w.wall_id == front.wall_id:
-                continue
-            delta = abs(azimuth_diff(w.azimuth, opposite_az))
-            if delta < best_delta:
-                best_delta = delta
-                best_back = w
-
-        # Only accept the candidate if it is within the angular limit;
-        # otherwise there is no true opposite wall for cross-ventilation.
-        if best_delta > _BACK_WALL_ANGLE_LIMIT:
-            best_back = None
-
-        return front, best_back
+        assert self.u_value_overrides is not None  # only called when set
+        year_class = tabula_row.get("Code_ConstructionYearClass")
+        building_type = tabula_row.get("Code_BuildingSizeClass")
+        if pd.isna(year_class) or pd.isna(building_type):
+            return None
+        matches = self.u_value_overrides[
+            (self.u_value_overrides["construction_year_class"] == year_class)
+            & (self.u_value_overrides["building_type"] == building_type)
+        ]
+        if matches.empty:
+            return None
+        return matches.iloc[0]
 
     # ── generic helpers ──────────────────────────────────────────────────────
 

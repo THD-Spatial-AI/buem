@@ -1,25 +1,38 @@
 """
 PostgreSQL-based building data source.
 
-Connects to the ``city2tabula_germany`` database and loads the same three tables
-available in the Excel workbook:
+Connects to a city2tabula-schema database and loads the same three tables
+available in the Excel/CSV sources:
 
   - ``city2tabula.lod2_building_feature``
   - ``city2tabula.lod2_child_feature_surface``
   - ``tabula.tabula``
 
-The resulting DataFrames are column-compatible with ``ExcelBuildingSource`` so
-all downstream mapping code works identically regardless of data origin.
+The resulting DataFrames are column-compatible with ``ExcelBuildingSource``/
+``CsvBuildingSource`` so all downstream mapping code works identically
+regardless of data origin.
 
 Requirements
 ------------
 - ``psycopg2`` (or ``psycopg2-binary``) must be installed.
-- A running PostgreSQL instance with the ``city2tabula_germany`` database.
+- A running PostgreSQL instance with a city2tabula-schema database.
+
+Connection config
+------------------
+``__init__``'s parameters each fall back to an environment variable (read
+via ``python-dotenv``'s already-loaded ``.env``, same convention as the
+rest of buem's env-var config -- see ``.env.example``) when left as
+``None``, so a real connection never needs credentials hardcoded in
+calling code: ``BUEM_PG_HOST``, ``BUEM_PG_PORT``, ``BUEM_PG_DATABASE``,
+``BUEM_PG_USER``, ``BUEM_PG_PASSWORD``. Fill in the real values in your
+own ``.env`` (gitignored, never commit it) -- this module never prompts
+for or logs credentials itself.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
 import pandas as pd
 
@@ -64,23 +77,35 @@ class PostgresBuildingSource:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 5432,
-        database: str = "city2tabula_germany",
-        user: str = "postgres",
-        password: str = "postgres",
+        host: str | None = None,
+        port: int | None = None,
+        database: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
     ):
         if psycopg2 is None:
             raise ImportError(
                 "psycopg2 is required for PostgresBuildingSource. "
                 "Install with: conda install psycopg2-binary"
             )
+        resolved_host = host if host is not None else os.environ.get("BUEM_PG_HOST", "localhost")
+        resolved_port = port if port is not None else int(os.environ.get("BUEM_PG_PORT", "5432"))
+        resolved_database = database if database is not None else os.environ.get("BUEM_PG_DATABASE")
+        resolved_user = user if user is not None else os.environ.get("BUEM_PG_USER")
+        resolved_password = password if password is not None else os.environ.get("BUEM_PG_PASSWORD")
+        if resolved_database is None or resolved_user is None or resolved_password is None:
+            raise ValueError(
+                "PostgresBuildingSource: no database/user/password given and "
+                "BUEM_PG_DATABASE/BUEM_PG_USER/BUEM_PG_PASSWORD are not set. "
+                "Pass them explicitly, or fill in .env (see .env.example) -- "
+                "never hardcode real credentials in calling code."
+            )
         self._conn_params = {
-            "host": host,
-            "port": port,
-            "database": database,
-            "user": user,
-            "password": password,
+            "host": resolved_host,
+            "port": resolved_port,
+            "database": resolved_database,
+            "user": resolved_user,
+            "password": resolved_password,
         }
         self._cache: dict[str, pd.DataFrame] = {}
 

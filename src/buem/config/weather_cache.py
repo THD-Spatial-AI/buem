@@ -1,4 +1,4 @@
-"""Location-keyed on-disk cache wrapping the optional weather package.
+"""Location-keyed on-disk cache wrapping the (compulsory) weather package.
 
 Before weather became per-location, buem loaded exactly one bundled CSV at
 module-import time and cached its (expensive, ~2-3s pvlib DISC) processed
@@ -6,10 +6,19 @@ form in a single global feather file (see cfg_attribute.py). A dynamic,
 per-building weather fetch needs a cache keyed by (provider, lat, lon,
 year) instead of one global key, so repeated buildings at the same site
 (or across a parallel batch) still avoid repeat fetch/reconstruction cost.
+
+Two fetch backends (2026-08-04, scaffold -- see weather repo's
+src/weather/api/README.md for the counterpart): local direct-archive access
+(the original, default path -- calls weather.get_point_weather() against a
+data_dir on this machine's filesystem) and a remote HTTP backend, for
+deployments (e.g. buem's production container) that cannot reach the
+archives' filesystem directly. Selected by whether WEATHER_API_URL is set;
+unset, behavior is completely unchanged from before this backend existed.
 """
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 from collections.abc import Iterable
@@ -17,20 +26,10 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import requests
+from weather import get_point_weather  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
-
-try:
-    from weather import get_point_weather  # type: ignore[import]
-    _WEATHER_AVAILABLE = True
-except ImportError:
-    _WEATHER_AVAILABLE = False
-    get_point_weather = None  # type: ignore[assignment,misc]
-
-
-def weather_available() -> bool:
-    """Whether the optional `weather` package is importable."""
-    return _WEATHER_AVAILABLE
 
 
 def _cache_dir() -> Path:
@@ -48,25 +47,66 @@ def _cache_path(provider: str, latitude: float, longitude: float, year: int) -> 
     return _cache_dir() / f"{key}.feather"
 
 
+def _fetch_remote(latitude: float, longitude: float, year: int, provider: str) -> pd.DataFrame:
+    """Fetch via the weather repo's point-query HTTP API instead of local
+    filesystem access -- see weather repo's src/weather/api/README.md.
+
+    Raises
+    ------
+    requests.HTTPError
+        Non-2xx response (404 -- no archive for this provider/year; 401/403
+        -- bad WEATHER_API_KEY; 429 -- rate limited; see the API's own
+        error body for detail).
+    """
+    api_url = os.environ["WEATHER_API_URL"].rstrip("/")
+    api_key = os.environ.get("WEATHER_API_KEY", "")
+    params: dict[str, str | int | float] = {
+        "provider": provider, "lat": latitude, "lon": longitude, "year": year,
+    }
+    resp = requests.get(
+        f"{api_url}/v1/weather/point",
+        params=params,
+        headers={"X-API-Key": api_key},
+        timeout=30,
+    )
+    if not resp.ok:
+        # raise_for_status() alone only gives "404 Client Error: NOT FOUND
+        # for url: ..." -- the API's own error body (e.g. "No processed
+        # merra-2 files matching...") is far more actionable and otherwise
+        # goes unused.
+        try:
+            detail = resp.json().get("error", resp.text)
+        except ValueError:
+            detail = resp.text
+        raise requests.HTTPError(
+            f"{resp.status_code} {resp.reason} for {resp.url}: {detail}",
+            response=resp,
+        )
+    df = pd.read_parquet(io.BytesIO(resp.content))
+    df.set_index(df.columns[0], inplace=True)
+    df.index = pd.to_datetime(df.index)
+    return df
+
+
 def get_or_fetch_weather(
     latitude: float, longitude: float, year: int, provider: str
 ) -> pd.DataFrame:
     """Return a cached (or freshly fetched) weather DataFrame.
 
+    Fetch backend is local direct-archive access by default, or the remote
+    HTTP API (see _fetch_remote) when WEATHER_API_URL is set -- e.g. for a
+    deployment that cannot reach the archives' filesystem directly. Either
+    way, results are cached identically below.
+
     Raises
     ------
-    ImportError
-        If the optional `weather` package is not installed.
     FileNotFoundError
-        If `weather` is installed but has no processed archive for
-        (provider, year) at the requested location.
+        Local backend: `weather` has no processed archive for (provider,
+        year) at the requested location (set ``BUEM_WEATHER_DATA_DIR`` to
+        point at one).
+    requests.HTTPError
+        Remote backend: see _fetch_remote.
     """
-    if not _WEATHER_AVAILABLE:
-        raise ImportError(
-            "weather package is required for dynamic weather fetching. "
-            "Install it with: pip install buem[weather]"
-        )
-
     path = _cache_path(provider, latitude, longitude, year)
     if path.exists():
         df = pd.read_feather(path)
@@ -74,10 +114,13 @@ def get_or_fetch_weather(
         df.index = pd.to_datetime(df.index)
         return df
 
-    data_dir = os.environ.get("BUEM_WEATHER_DATA_DIR")
-    df = get_point_weather(
-        latitude, longitude, year, provider=provider, data_dir=data_dir
-    )
+    if os.environ.get("WEATHER_API_URL"):
+        df = _fetch_remote(latitude, longitude, year, provider)
+    else:
+        data_dir = os.environ.get("BUEM_WEATHER_DATA_DIR")
+        df = get_point_weather(
+            latitude, longitude, year, provider=provider, data_dir=data_dir
+        )
     try:
         df.reset_index().to_feather(path)
     except (OSError, ValueError) as exc:

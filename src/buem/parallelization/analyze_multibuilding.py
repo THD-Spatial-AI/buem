@@ -30,8 +30,8 @@ os.environ['OMP_NUM_THREADS'] = '4'
 os.environ['MKL_NUM_THREADS'] = '4'
 
 
-from buem.integration.scripts.geojson_processor import GeoJsonProcessor
-from buem.main import cfg, run_model
+from buem.integration.scripts.geojson_processor import GeoJsonProcessor  # noqa: E402
+from buem.main import cfg, run_model  # noqa: E402
 
 
 class PerformanceMonitor:

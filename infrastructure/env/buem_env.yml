@@ -66,6 +66,7 @@ dependencies:
   - python>=3.14
   - coincbc
   - cvxpy
+  - dask  # required at runtime by weather's xr.open_mfdataset point-query path; not declared by weather[pointquery] itself
   - flask
   - flask-swagger-ui
   - joblib
@@ -81,6 +82,7 @@ dependencies:
   - pulp
   - pvlib
   - pyarrow
+  - pyproj
   - python-dotenv
   - requests
   - scipy
@@ -96,21 +98,20 @@ dependencies:
   - pip:
     - marshmallow>=4.0.0
     - marshmallow-dataclass>=8.0.0
-    # Optional sub-packages (https://github.com/UU-BUEM/occupancy,
-    # https://github.com/UU-BUEM/weather). Neither is published to PyPI or
-    # a conda channel yet, so installed via a direct git reference (see
-    # the @main note above). All of their own dependencies are already
+    # occupancy (https://github.com/UU-BUEM/occupancy) and weather
+    # (https://github.com/UU-BUEM/weather). Neither is published to PyPI or
+    # a conda channel yet, so installed via a direct git reference (see the
+    # @main note above). All of their own dependencies are already
     # conda-installed above, so these two lines only add the package code
-    # itself. Remove them if you don't need real occupancy-driven loads or
-    # dynamic per-location weather -- buem falls back to synthetic/bundled
-    # defaults without them.
+    # itself.
+    # occupancy is COMPULSORY (2026-08-07): every Q_ig/elecLoad/
+    # occ_nothome/occ_sleeping attribute comes from its real
+    # HouseholdProfile/ServiceBuildingProfile generation, no synthetic
+    # fallback -- buem will not import without it.
+    # weather is COMPULSORY (2026-08-03): every T/GHI/DHI/DNI attribute
+    # comes from its real per-location get_point_weather() fetch, no
+    # bundled/local-file fallback -- buem will not import without it.
     #
-    # occupancy pinned to enerplanet's fork/branch (not UU-BUEM/occupancy@main):
-    # upstream main's package layout (households/, services_buildings/, core/,
-    # config/) has no internal_gains/electricity modules, so attribute_builder.py's
-    # `from occupancy.internal_gains.occupancy_profile import OccupancyProfile`
-    # ModuleNotFoundErrors and every request needing an electricity profile 500s.
-    # fix/config-path-resolution also fixes config data path resolution for a
-    # real (non-editable) pip install, which @main gets wrong too.
-    - occupancy @ git+https://github.com/enerplanet/occupancy.git@fix/config-path-resolution
+    # Tracks upstream directly; the enerplanet/occupancy fork pin is retired.
+    - occupancy @ git+https://github.com/UU-BUEM/occupancy.git@main
     - weather[pointquery,solar] @ git+https://github.com/UU-BUEM/weather.git@main

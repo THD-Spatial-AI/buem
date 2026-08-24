@@ -14,11 +14,14 @@ build:
 sphinx:
   configuration: docs/source/conf.py
 
-# Install the package so setuptools-scm resolves the version and
-# the [docs] extra pulls in Sphinx + theme.
+# Sphinx + theme only -- buem itself is deliberately NOT installed.
+#
+# The documentation is hand-written prose with no autodoc directives, so
+# nothing here imports buem. Installing it would break the build twice
+# over: pip would refuse on Python < 3.14 (`requires-python = ">=3.14"`),
+# and buem's compulsory `weather` dependency fetches real reanalysis
+# archives at import time, which no docs builder has. `conf.py` falls back
+# to reading the version out of pyproject.toml when buem is absent.
 python:
   install:
-  - method: pip
-    path: .
-    extra_requirements:
-      - docs
+  - requirements: docs/requirements.txt

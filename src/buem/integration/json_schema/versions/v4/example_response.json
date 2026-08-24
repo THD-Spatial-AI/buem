@@ -24,6 +24,7 @@
         "resolution_unit": "minutes",
         "buem": {
           "building": {
+            "name":                "Building 001 · Single-family House",
             "building_type":       "SFH",
             "construction_period": "1965-1974",
             "country":             "NL",
@@ -58,8 +59,15 @@
           },
           "solver": {
             "use_milp":               false,
+            "compute_cooling":        true,
             "parallel_thermal":       true,
             "use_chunked_processing": true
+          },
+          "inputs": {
+            "electricity_load_profile": {
+              "path": "/data/profiles/electricity_52.0_5.0_2018.csv",
+              "unit": "kWh"
+            }
           },
           "thermal_load_profile": {
             "start_time":      "2018-01-01T00:00:00Z",
@@ -102,6 +110,8 @@
             "solver_used":            "scipy-sparse",
             "processing_time":        { "value": 3.12, "unit": "s" },
             "weather_year":           2018,
+            "simulations_run":        ["heating", "cooling", "electricity"],
+            "electricity_source":     "client_provided",
             "parallel_thermal":       true,
             "use_chunked_processing": true,
             "validation_warnings":    []

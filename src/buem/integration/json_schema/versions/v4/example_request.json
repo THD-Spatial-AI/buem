@@ -19,10 +19,13 @@
         "resolution_unit": "minutes",
         "buem": {
           "building": {
+            "name": "Building 001 · Single-family House",
             "building_type": "SFH",
             "construction_period": "1965-1974",
             "country": "NL",
             "n_storeys": 2,
+            "num_persons": 4,
+            "archetype": "family_with_children",
             "A_ref": {
               "value": 100,
               "unit": "m2"
@@ -38,6 +41,7 @@
               "elements": [
                 {
                   "id": "Wall_1",
+                  "name": "North Wall",
                   "type": "wall",
                   "area": {
                     "value": 30,
@@ -327,22 +331,31 @@
               "F_red_htr": {
                 "value": 0.95,
                 "unit": "-"
+              },
+              "phi_int": {
+                "value": 3.0,
+                "unit": "W/m2"
+              },
+              "q_w_nd": {
+                "value": 12.5,
+                "unit": "kWh/(m2.a)"
               }
             }
           },
           "solver": {
             "use_milp": false,
+            "compute_cooling": true,
             "parallel_thermal": true,
             "use_chunked_processing": true
           },
-          "weather": {
-            "index": ["2018-01-01T00:30:00Z", "2018-01-01T01:30:00Z", "2018-01-01T02:30:00Z"],
-            "variables": {
-              "T": [0.89, 0.72, 0.61],
-              "GHI": [0.0, 0.0, 0.0],
-              "DNI": [0.0, 0.0, 0.0],
-              "DHI": [0.0, 0.0, 0.0]
+          "inputs": {
+            "electricity_load_profile": {
+              "path": "/data/profiles/electricity_52.0_5.0_2018.csv",
+              "unit": "kWh"
             }
+          },
+          "weather": {
+            "provider": "merra-2"
           }
         }
       }
@@ -507,13 +520,9 @@
             "use_chunked_processing": true
           },
           "weather": {
-            "index": ["2018-01-01T00:30:00Z", "2018-01-01T01:30:00Z", "2018-01-01T02:30:00Z"],
-            "variables": {
-              "T": [0.72, 0.58, 0.44],
-              "GHI": [0.0, 0.0, 0.0],
-              "DNI": [0.0, 0.0, 0.0],
-              "DHI": [0.0, 0.0, 0.0]
-            }
+            "provider": "merra-2",
+            "use_percentile": true,
+            "percentile": "P90"
           }
         }
       }

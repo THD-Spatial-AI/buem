@@ -17,10 +17,10 @@ Key Features:
 Usage:
     # Basic sequential processing
     from sequence_run import SequentialBuildingProcessor
-    
+
     processor = SequentialBuildingProcessor()
     results = processor.process_buildings(building_files)
-    
+
     # Advanced configuration
     processor = SequentialBuildingProcessor(
         timeout=300,
@@ -73,15 +73,15 @@ _PSUTIL_EXCEPTIONS = (psutil.Error,) if PSUTIL_AVAILABLE else ()
 def process_single_building_sequential(building_file: str | Path) -> dict[str, Any]:
     """
     Process a single building file sequentially and return results.
-    
+
     This function is designed for sequential processing and includes detailed
     error handling and logging for debugging purposes.
-    
+
     Parameters
     ----------
     building_file : Union[str, Path]
         Path to the building configuration JSON file
-        
+
     Returns
     -------
     Dict[str, Any]
@@ -96,7 +96,7 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
     """
     start_time = time.time()
     building_file = Path(building_file)
-    
+
     # Initialize detailed stats tracking
     stats: dict[str, float] = {
         'load_time': 0,
@@ -104,27 +104,27 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
         'processing_time': 0,
         'total_time': 0
     }
-    
+
     try:
         # Load building configuration
         load_start = time.time()
         with building_file.open('r') as f:
             building_data = json.load(f)
         stats['load_time'] = time.time() - load_start
-        
+
         # Extract building ID
         if building_data.get('features'):
             building_id = building_data['features'][0].get('id', building_file.stem)
         else:
             building_id = building_file.stem
-        
+
         logger.info(f"Processing building: {building_id} (sequential)")
-        
+
         # Validate the building configuration
         validation_start = time.time()
         validation_result = validate_request_file(building_file)
         stats['validation_time'] = time.time() - validation_start
-        
+
         if not validation_result:
             return {
                 'building_id': building_id,
@@ -134,21 +134,21 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
                 'file_path': str(building_file),
                 'detailed_stats': stats
             }
-        
+
         # Process with GeoJsonProcessor
         processing_start = time.time()
         processor = GeoJsonProcessor(
             payload=building_data,
             include_timeseries=False  # Set to True if you need detailed timeseries
         )
-        
+
         # Run the processing
         response = processor.process()
         stats['processing_time'] = time.time() - processing_start
-        
+
         total_time = time.time() - start_time
         stats['total_time'] = total_time
-        
+
         # Extract summary results
         summary_stats = {}
         if response.get('features'):
@@ -156,7 +156,7 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
             if 'properties' in feature and 'buem' in feature['properties']:
                 thermal_profile = feature['properties']['buem'].get('thermal_load_profile', {})
                 summary_stats = thermal_profile.get('summary', {})
-        
+
         return {
             'building_id': building_id,
             'success': True,
@@ -171,13 +171,13 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
                 'processing_mode': 'sequential'
             }
         }
-        
+
     except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         total_time = time.time() - start_time
         stats['total_time'] = total_time
         error_msg = f"Error processing {building_file}: {e!s}"
         logger.error(f"{error_msg}\\n{traceback.format_exc()}")
-        
+
         return {
             'building_id': building_file.stem,
             'success': False,
@@ -197,10 +197,10 @@ def process_single_building_sequential(building_file: str | Path) -> dict[str, A
 class SequentialBuildingProcessor:
     """
     Sequential processor for multiple building energy models.
-    
+
     This class provides sequential processing of building configurations
     as a baseline for comparison with parallel processing approaches.
-    
+
     Attributes
     ----------
     timeout : float
@@ -212,7 +212,7 @@ class SequentialBuildingProcessor:
     memory_monitoring : bool
         Enable memory usage monitoring
     """
-    
+
     def __init__(
         self,
         timeout: float = 300.0,
@@ -222,7 +222,7 @@ class SequentialBuildingProcessor:
     ):
         """
         Initialize the sequential processor.
-        
+
         Parameters
         ----------
         timeout : float
@@ -238,22 +238,22 @@ class SequentialBuildingProcessor:
         self.progress_callback = progress_callback
         self.detailed_logging = detailed_logging
         self.memory_monitoring = memory_monitoring and PSUTIL_AVAILABLE
-        
+
         logger.info("Initialized SequentialBuildingProcessor")
-        
+
         if self.memory_monitoring:
             memory_info = psutil.virtual_memory()
             logger.info(f"System memory: {memory_info.total / (1024**3):.1f} GB available")
-    
+
     def process_buildings(
-        self, 
+        self,
         building_files: list[str | Path],
         save_results: bool = True,
         results_file: str | None = None
     ) -> dict[str, Any]:
         """
         Process multiple buildings sequentially.
-        
+
         Parameters
         ----------
         building_files : List[Union[str, Path]]
@@ -262,7 +262,7 @@ class SequentialBuildingProcessor:
             Whether to save results to a file (default: True)
         results_file : Optional[str]
             Path to save results file (default: auto-generated)
-            
+
         Returns
         -------
         Dict[str, Any]
@@ -274,9 +274,9 @@ class SequentialBuildingProcessor:
         """
         start_time = time.time()
         total_buildings = len(building_files)
-        
+
         logger.info(f"Starting sequential processing of {total_buildings} buildings")
-        
+
         # Initialize results tracking
         completed_buildings = []
         failed_buildings = []
@@ -286,22 +286,22 @@ class SequentialBuildingProcessor:
             'total_buildings': total_buildings,
             'detailed_timing': []
         }
-        
+
         if self.memory_monitoring:
             process = psutil.Process()
             initial_memory = process.memory_info().rss / (1024 * 1024)  # MB
             performance_metrics['initial_memory_mb'] = initial_memory
             performance_metrics['memory_samples'] = []
-        
+
         try:
             # Process buildings one by one
             for idx, building_file in enumerate(building_files):
                 building_start_time = time.time()
-                
+
                 try:
                     # Apply timeout using a simple time check
                     result = process_single_building_sequential(building_file)
-                    
+
                     if result['processing_time'] > self.timeout:
                         result['success'] = False
                         result['error'] = f"Processing timeout ({self.timeout}s)"
@@ -311,11 +311,11 @@ class SequentialBuildingProcessor:
                         completed_buildings.append(result)
                         if self.detailed_logging:
                             logger.info(f"✅ Completed: {result['building_id']} "
-                                      f"({result['processing_time']:.2f}s)")
+                                        f"({result['processing_time']:.2f}s)")
                     else:
                         failed_buildings.append(result)
                         logger.error(f"❌ Failed: {result['building_id']} - {result['error']}")
-                    
+
                     # Record detailed timing
                     building_time = time.time() - building_start_time
                     performance_metrics['detailed_timing'].append({
@@ -323,11 +323,11 @@ class SequentialBuildingProcessor:
                         'processing_time': building_time,
                         'success': result['success']
                     })
-                    
+
                     # Progress callback
                     if self.progress_callback:
                         self.progress_callback(idx + 1, total_buildings)
-                    
+
                     # Memory monitoring
                     if self.memory_monitoring and (idx + 1) % 5 == 0:
                         current_memory = process.memory_info().rss / (1024 * 1024)  # MB
@@ -337,7 +337,7 @@ class SequentialBuildingProcessor:
                         })
                         if self.detailed_logging:
                             logger.info(f"Memory usage: {current_memory:.1f} MB")
-                    
+
                 except (KeyError, *_PSUTIL_EXCEPTIONS) as e:
                     error_result = {
                         'building_id': Path(building_file).stem,
@@ -351,20 +351,20 @@ class SequentialBuildingProcessor:
                     }
                     failed_buildings.append(error_result)
                     logger.error(f"💥 Error: {error_result['building_id']} - {e!s}")
-        
+
         except KeyboardInterrupt:
             logger.warning("Processing interrupted by user")
             raise
-        
+
         except Exception as e:
             logger.error(f"Critical error in sequential processing: {e!s}")
             raise
-        
+
         # Calculate performance metrics
         total_time = time.time() - start_time
         successful_count = len(completed_buildings)
         failed_count = len(failed_buildings)
-        
+
         performance_metrics.update({
             'total_time': total_time,
             'successful_buildings': successful_count,
@@ -373,7 +373,7 @@ class SequentialBuildingProcessor:
             'buildings_per_second': total_buildings / total_time if total_time > 0 else 0,
             'average_time_per_building': sum(r['processing_time'] for r in completed_buildings) / max(1, successful_count)
         })
-        
+
         if self.memory_monitoring:
             final_memory = process.memory_info().rss / (1024 * 1024)  # MB
             performance_metrics['final_memory_mb'] = final_memory
@@ -381,7 +381,7 @@ class SequentialBuildingProcessor:
             performance_metrics['peak_memory_mb'] = max(
                 [sample['memory_mb'] for sample in performance_metrics['memory_samples']] + [final_memory]
             ) if performance_metrics['memory_samples'] else final_memory
-        
+
         # Calculate detailed statistics
         if completed_buildings:
             all_stats = [b['detailed_stats'] for b in completed_buildings if 'detailed_stats' in b]
@@ -389,7 +389,7 @@ class SequentialBuildingProcessor:
                 performance_metrics['average_load_time'] = sum(s['load_time'] for s in all_stats) / len(all_stats)
                 performance_metrics['average_validation_time'] = sum(s['validation_time'] for s in all_stats) / len(all_stats)
                 performance_metrics['average_model_processing_time'] = sum(s['processing_time'] for s in all_stats) / len(all_stats)
-        
+
         # Compile comprehensive results
         results: dict[str, Any] = {
             'summary': {
@@ -407,7 +407,7 @@ class SequentialBuildingProcessor:
             },
             'performance': performance_metrics
         }
-        
+
         # Save results if requested
         if save_results:
             if not results_file:
@@ -418,7 +418,7 @@ class SequentialBuildingProcessor:
                 json.dump(results, f, indent=2, default=str)
             logger.info(f"Results saved to: {results_file}")
             results['results_file'] = results_file
-        
+
         # Log summary
         logger.info("🎯 Sequential Processing Summary:")
         logger.info(f"   Total buildings: {total_buildings}")
@@ -428,36 +428,36 @@ class SequentialBuildingProcessor:
         logger.info(f"   ⏱️ Total time: {total_time:.2f}s")
         logger.info(f"   🐌 Rate: {performance_metrics['buildings_per_second']:.2f} buildings/sec")
         logger.info(f"   ⚡ Avg time per building: {performance_metrics['average_time_per_building']:.2f}s")
-        
+
         if self.memory_monitoring:
             logger.info(f"   💾 Memory increase: {performance_metrics['memory_increase_mb']:.1f} MB")
             logger.info(f"   📈 Peak memory: {performance_metrics['peak_memory_mb']:.1f} MB")
-        
+
         return results
 
 
 def demo_sequential_processing():
     """
     Demonstrate sequential processing with the dummy building files.
-    
+
     This function shows how to use the SequentialBuildingProcessor with
     the previously created dummy building configurations.
     """
     # Find dummy building files
     dummy_dir = Path(__file__).parent.parent / "data/buildings/dummy"
     building_files = list(dummy_dir.glob("*.json"))
-    
+
     if not building_files:
         logger.error(f"No building files found in {dummy_dir}")
         return
-    
+
     logger.info(f"Found {len(building_files)} building files for sequential processing")
-    
+
     def progress_handler(completed: int, total: int):
         """Simple progress handler for demonstration."""
         progress = (completed / total) * 100
         logger.info(f"Sequential Progress: {completed}/{total} ({progress:.1f}%)")
-    
+
     # Create sequential processor
     processor = SequentialBuildingProcessor(
         timeout=120.0,
@@ -465,25 +465,25 @@ def demo_sequential_processing():
         detailed_logging=True,
         memory_monitoring=True
     )
-    
+
     # Process buildings
     print("\\n" + "="*60)
     print("STARTING SEQUENTIAL BUILDING PROCESSING DEMONSTRATION")
     print("="*60)
-    
+
     results = processor.process_buildings(
         building_files=building_files,
         save_results=True
     )
-    
+
     # Display detailed results
     print("\\n" + "="*60)
     print("SEQUENTIAL PROCESSING RESULTS SUMMARY")
     print("="*60)
-    
+
     summary = results['summary']
     performance = results['performance']
-    
+
     print(f"📊 Buildings processed: {summary['total_buildings']}")
     print(f"✅ Successful: {summary['successful']}")
     print(f"❌ Failed: {summary['failed']}")
@@ -491,36 +491,36 @@ def demo_sequential_processing():
     print(f"⏱️ Total time: {summary['total_processing_time']:.2f} seconds")
     print(f"🐌 Processing rate: {performance['buildings_per_second']:.2f} buildings/second")
     print(f"⚡ Avg time per building: {performance['average_time_per_building']:.2f} seconds")
-    
+
     if 'peak_memory_mb' in performance:
         print(f"💾 Peak memory usage: {performance['peak_memory_mb']:.1f} MB")
         print(f"📈 Memory increase: {performance['memory_increase_mb']:.1f} MB")
-    
+
     # Show detailed timing breakdown if available
     if 'average_load_time' in performance:
         print("\\n📋 Detailed timing breakdown (averages):")
         print(f"   📂 File loading: {performance['average_load_time']*1000:.1f} ms")
         print(f"   ✅ Validation: {performance['average_validation_time']*1000:.1f} ms")
         print(f"   🏗️ Model processing: {performance['average_model_processing_time']*1000:.1f} ms")
-    
+
     # Show individual building results
     print("\\n" + "-"*60)
     print("INDIVIDUAL BUILDING RESULTS")
     print("-"*60)
-    
+
     for building in results['buildings']['successful']:
         stats = building.get('summary_stats', {})
         heating = stats.get('heating', {})
         cooling = stats.get('cooling', {})
-        
+
         print(f"🏢 {building['building_id']}")
         print(f"   ⏱️ Processing time: {building['processing_time']:.2f}s")
         if heating:
-            print(f"   🔥 Heating total: {heating.get('total_kwh', 0):.1f} kWh")
+            print(f"   🔥 Heating total: {heating.get('total', {}).get('value', 0):.1f} kWh")
         if cooling:
-            print(f"   ❄️ Cooling total: {cooling.get('total_kwh', 0):.1f} kWh")
+            print(f"   ❄️ Cooling total: {cooling.get('total', {}).get('value', 0):.1f} kWh")
         print()
-    
+
     # Show failures if any
     if results['buildings']['failed']:
         print("\\n" + "-"*60)
@@ -528,7 +528,7 @@ def demo_sequential_processing():
         print("-"*60)
         for building in results['buildings']['failed']:
             print(f"❌ {building['building_id']}: {building['error']}")
-    
+
     return results
 
 

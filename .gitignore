@@ -18,9 +18,29 @@ dist/
 .coverage
 coverage.xml
 *.csv
-!src/buem/data/weather/COSMO_Year__ix_390_650.csv
+# Small, human-editable reference tables -- the *inputs* that change what
+# buem simulates, as opposed to the multi-MB extracted building tables the
+# blanket *.csv rule above is aimed at. These must ship.
+!src/buem/data/buildings/netherlands/Loenen/u_value_reference.csv
+!src/buem/data/buildings/netherlands/Loenen/service_building_reference.csv
+!src/buem/data/buildings/netherlands/Loenen/refurbishment_measure_reference.csv
+# Copied unchanged from Loenen/ -- country-level TABULA/Bouwbesluit data,
+# not region-specific -- so Heeten's batch runs get the same window-U-value
+# and service-building corrections rather than silently falling back to
+# uncorrected TABULA values (see CHANGELOG's Heeten entry).
+!src/buem/data/buildings/netherlands/Heeten/u_value_reference.csv
+!src/buem/data/buildings/netherlands/Heeten/service_building_reference.csv
+!src/buem/data/buildings/netherlands/Heeten/refurbishment_measure_reference.csv
+!src/buem/data/reference/dhw_cooking_constants.csv
 *.xlsx
 !src/buem/data/default_2016.xlsx
+# Demo_EN_12831-3_DHW_needs_2021-09-02.xlsx (src/buem/data/reference/) is
+# deliberately NOT allowlisted here -- its EPB Center redistribution
+# license hasn't been verified, same posture this repo already takes with
+# occupancy's CREST workbooks (CC BY-NC-ND, also not redistributed). Kept
+# locally for scripts/extract_dhw_reference_values.py to read from on a
+# machine that has it; the small, clearly-attributed CSV it produces
+# (allowlisted above) is what's actually committed.
 *.h5
 *.nc
 *.parquet
@@ -54,3 +74,16 @@ docs/source/_autosummary/
 
 # Local conda environment (use global instead)
 .conda/
+
+# Claude Code context (CLAUDE.md, .claude/) -- local-only, not pushed to
+# GitHub (2026-08-04): internal AI-agent working notes/incident log, not
+# meant for external partners (EnerPlanET) browsing this repo. Previously
+# tracked and already present in prior pushed commits/tags -- this only
+# stops future changes from being committed, it doesn't rewrite history.
+CLAUDE.md
+.claude/
+
+# LibreOffice/OpenOffice lock files -- created while a bundled CSV (e.g. the
+# editable u_value_reference.csv) is open in a spreadsheet, and left behind
+# on a crash. Never part of the dataset.
+.~lock.*#

@@ -253,6 +253,58 @@ def main() -> None:
         mb_main()
 
 
+def _check_weather_source() -> tuple[bool, list[str]]:
+    """Report whether real weather data is actually reachable.
+
+    Two backends are possible and only one needs to work: the point-query
+    HTTP API when ``WEATHER_API_URL`` is set, otherwise local processed
+    provider archives resolved from ``BUEM_WEATHER_DATA_DIR`` or the
+    ``weather`` package's own ``WEATHER_DATA_DIR``.
+
+    The local check goes as far as confirming the directory exists and
+    holds files for the default provider; it deliberately stops short of a
+    real fetch, which would make ``buem validate`` take minutes.
+    """
+    import os
+    from pathlib import Path
+
+    api_url = os.environ.get("WEATHER_API_URL")
+    if api_url:
+        key_note = "with API key" if os.environ.get("WEATHER_API_KEY") else "NO WEATHER_API_KEY set"
+        return True, [f"  [OK]  weather source: HTTP API {api_url} ({key_note})"]
+
+    data_dir = os.environ.get("BUEM_WEATHER_DATA_DIR") or os.environ.get("WEATHER_DATA_DIR")
+    if not data_dir:
+        return False, [
+            ("  [ERR] weather source: neither WEATHER_API_URL nor "
+             "WEATHER_DATA_DIR/BUEM_WEATHER_DATA_DIR is set."),
+            ("        Every T/GHI/DHI/DNI value comes from a real fetch "
+             "(no fallback), so buem cannot import without one."),
+        ]
+
+    root = Path(data_dir)
+    if not root.is_dir():
+        return False, [f"  [ERR] weather archives: {data_dir}  [MISSING]"]
+
+    from buem.config.building_registry import DEFAULT_WEATHER_PROVIDER
+
+    # Providers land in a directory named after themselves, with the hyphen
+    # of the CLI name spelled either way on disk (e.g. "merra-2" -> "merra2").
+    candidates = {DEFAULT_WEATHER_PROVIDER, DEFAULT_WEATHER_PROVIDER.replace("-", "_"),
+                  DEFAULT_WEATHER_PROVIDER.replace("-", "")}
+    found = [p for p in root.iterdir() if p.is_dir() and p.name.lower() in candidates]
+    if not found:
+        # Reported, but not a failure: on-disk archive layouts vary between
+        # providers and weather versions, so an unrecognised one is a hint
+        # worth printing rather than proof the environment is broken.
+        present = sorted(p.name for p in root.iterdir() if p.is_dir())
+        return True, [
+            f"  [WARN] weather archives: {root}  [no obvious '{DEFAULT_WEATHER_PROVIDER}' directory]",
+            f"         Present instead: {present or '(none)'}",
+        ]
+    return True, [f"  [OK]  weather archives: {root}  ['{DEFAULT_WEATHER_PROVIDER}' present]"]
+
+
 def _run_validate() -> None:
     """Quick environment health-check printed to stdout."""
     import os
@@ -304,6 +356,14 @@ def _run_validate() -> None:
                 ok = False
         else:
             lines.append(f"  [ENV] {var} = (not set; default: {default_note})")
+
+    # Weather source. Checked because every T/GHI/DHI/DNI value comes from a
+    # real fetch with no fallback, so an unreachable source is a hard failure
+    # at import time -- reporting PASS without checking it would sign off on
+    # an environment that cannot run a single building.
+    weather_ok, weather_lines = _check_weather_source()
+    lines.extend(weather_lines)
+    ok = ok and weather_ok
 
     print("BUEM Environment Validation")
     print("=" * 40)

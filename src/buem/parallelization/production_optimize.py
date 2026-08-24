@@ -35,10 +35,10 @@ os.environ['OMP_NUM_THREADS'] = '4'
 os.environ['MKL_NUM_THREADS'] = '4'
 os.environ['NUMEXPR_MAX_THREADS'] = '8'
 
-import numpy as np
+import numpy as np  # noqa: E402
 
-from buem.integration.scripts.geojson_processor import GeoJsonProcessor
-from buem.main import cfg, run_model
+from buem.integration.scripts.geojson_processor import GeoJsonProcessor  # noqa: E402
+from buem.main import cfg, run_model  # noqa: E402
 
 
 class OptimizedPerformanceAnalyzer:
