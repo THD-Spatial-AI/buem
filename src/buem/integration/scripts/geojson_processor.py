@@ -124,6 +124,13 @@ class GeoJsonProcessor:
 
                 # Include error in feature response
                 feat.setdefault("properties", {}).setdefault("buem", {})
+                # Same reason as the success path's pop() below: a raise
+                # partway through _process_single_feature can leave a
+                # non-JSON-serializable DataFrame under building_attributes
+                # (mutated in place before the exception), which would
+                # otherwise crash jsonify() here and bury this error
+                # response behind an unrelated TypeError.
+                feat["properties"]["buem"].pop("building_attributes", None)
                 feat["properties"]["buem"]["error"] = {
                     "type": "processing_error",
                     "message": str(exc),
