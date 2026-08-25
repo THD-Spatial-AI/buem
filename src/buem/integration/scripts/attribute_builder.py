@@ -50,6 +50,16 @@ def _reindex_or_raise(series: pd.Series, target_index: pd.DatetimeIndex, name: s
     if series_tz != target_tz:
         series = series.tz_localize(target_tz) if series_tz is None else series.tz_convert(target_tz)
     aligned = series.reindex(target_index, method="nearest", tolerance=pd.Timedelta(minutes=30))
+    missing = aligned.index[aligned.isna()]
+    # weather-serve's /v1/weather/point exports N+1 boundary timestamps for
+    # a year -- index[0] is the year's first hour, index[-1] is the first
+    # instant of the *next* year, closing the final bin (see weather's
+    # point.py). An occupancy-derived series only ever covers real hours
+    # (N points), so that trailing boundary point is expected to miss --
+    # it marks the end of the data, not a genuinely missing hour. Carry
+    # the last real value forward for it rather than raising.
+    if len(missing) == 1 and missing[0] == target_index[-1]:
+        aligned.iloc[-1] = aligned.iloc[-2]
     if aligned.isna().any():
         n_missing = int(aligned.isna().sum())
         raise ValueError(
