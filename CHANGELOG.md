@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   falling through to buem's own per-location fetch instead.
   `GeoJsonValidator._weather_from_payload` restores the parsing;
   `use_provided_weather` is set the same way the file-path branch already did.
+- `BUEM_WEATHER_FALLBACK=false` now also skips the module-import weather
+  fetch in `cfg_attribute.py`, not just `generate_weather_profile()`'s
+  per-request fetch. The import fetch was unconditional, so a deployment
+  with no local archive and no `WEATHER_API_URL` could not import buem at
+  all (gunicorn workers failed to boot) even though every request carried
+  its own weather. With the flag off, the module-level default weather is
+  `None` and the occupancy profiles use a plain 8760-hour range for their
+  index. `BUEM_DEFAULT_WEATHER_PROVIDER` overrides the provider for this
+  one fetch when the flag is on.
+- `weather_cache._fetch_remote` sends `variables=T,GHI,DHI,DNI`. weather
+  >= 2.0.0's `/v1/weather/point` rejects a request naming neither
+  `variables` nor `use_case`, so the remote backend returned 400 for
+  every call.
 
 ### Added
 

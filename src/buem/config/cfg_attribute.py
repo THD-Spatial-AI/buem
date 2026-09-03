@@ -64,25 +64,39 @@ load_env()  # ensure BUEM_WEATHER_DATA_DIR/WEATHER_DATA_DIR are set before the f
 # unconditionally like pandas/pvlib.
 from occupancy import ElectricityConsumptionProfile, HouseholdProfile, to_buem_profiles  # type: ignore[import]
 
-# Real weather-module fetch for the module-level default location above (used
-# by ATTRIBUTE_SPECS["weather"].default below, and by anything that imports
-# this module without going through AttributeBuilder's per-building fetch --
-# e.g. `buem run`'s demo path, cfg_building.WeatherConfig(None)). Cached to a
-# local feather file keyed by (provider, lat, lon, year) via
-# weather_cache.get_or_fetch_weather, exactly like any other building's fetch
-# -- there is no bundled/shipped weather data file anymore, only this
-# locally-generated cache of a real fetch. Requires BUEM_WEATHER_DATA_DIR (or
-# weather's own WEATHER_DATA_DIR) to point at processed provider archives.
-df_weather = get_or_fetch_weather(
-    DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_YEAR, DEFAULT_WEATHER_PROVIDER
-)
+# Module-level default weather: read by ATTRIBUTE_SPECS["weather"].default and
+# by importers that bypass AttributeBuilder's per-building fetch (`buem run`,
+# cfg_building.WeatherConfig(None)).
+#
+# BUEM_WEATHER_FALLBACK=false means a caller always supplies weather per
+# request and buem never resolves its own (attribute_builder.
+# generate_weather_profile, enerplanet/buem#10). That default is then never
+# read, so skip the fetch: only the occupancy profiles below need an index,
+# and a plain hourly range serves. With fallback on (standalone installs),
+# fetch as before, via WEATHER_API_URL or a local archive
+# (BUEM_WEATHER_DATA_DIR / weather's WEATHER_DATA_DIR);
+# BUEM_DEFAULT_WEATHER_PROVIDER overrides the provider for this one fetch.
+_weather_fallback = os.environ.get(
+    "BUEM_WEATHER_FALLBACK", "true"
+).strip().lower() not in ("false", "0", "")
 
-main_index = df_weather.index
+if _weather_fallback:
+    _default_provider = os.environ.get(
+        "BUEM_DEFAULT_WEATHER_PROVIDER", DEFAULT_WEATHER_PROVIDER
+    )
+    df_weather = get_or_fetch_weather(
+        DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_YEAR, _default_provider
+    )
+    main_index = df_weather.index
+    temp_profile = df_weather["T"]
+    ghi_profile = df_weather["GHI"]
+    dni_profile = df_weather["DNI"]
+    dhi_profile = df_weather["DHI"]
+else:
+    main_index = pd.date_range(f"{DEFAULT_YEAR}-01-01", periods=8760, freq="h")
+    temp_profile = ghi_profile = dni_profile = dhi_profile = None
+
 n_hours = len(main_index)
-temp_profile = df_weather["T"]
-ghi_profile = df_weather["GHI"]
-dni_profile = df_weather["DNI"]
-dhi_profile = df_weather["DHI"]
 
 # Generate Q_ig/elecLoad/occ_nothome/occ_sleeping via occupancy's real
 # HouseholdProfile + ElectricityConsumptionProfile + to_buem_profiles()
@@ -107,13 +121,15 @@ ATTRIBUTE_SPECS: dict[str, AttributeSpec] = {
         name="weather",
         category=AttributeCategory.WEATHER,
         type=AttrType.DATAFRAME,
-        default=pd.DataFrame({
+        default=None if temp_profile is None else pd.DataFrame({
             "T": temp_profile,
             "GHI": ghi_profile,
             "DNI": dni_profile,
             "DHI": dhi_profile,
         }, index=main_index),
-        doc="Weather DataFrame with columns T, GHI, DNI, DHI indexed by datetimes."
+        doc="Weather DataFrame with columns T, GHI, DNI, DHI indexed by "
+            "datetimes. None when BUEM_WEATHER_FALLBACK=false (the caller "
+            "always supplies weather per request)."
     ),
     "bldg_tabula_id": AttributeSpec(
         "bldg_tabula_id",

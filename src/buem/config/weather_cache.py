@@ -62,6 +62,10 @@ def _fetch_remote(latitude: float, longitude: float, year: int, provider: str) -
     api_key = os.environ.get("WEATHER_API_KEY", "")
     params: dict[str, str | int | float] = {
         "provider": provider, "lat": latitude, "lon": longitude, "year": year,
+        # weather >= 2.0.0's /v1/weather/point rejects a request that names
+        # neither variables nor use_case. buem needs air temperature plus the
+        # three solar components.
+        "variables": "T,GHI,DHI,DNI",
     }
     resp = requests.get(
         f"{api_url}/v1/weather/point",
