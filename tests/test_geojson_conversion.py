@@ -1,13 +1,16 @@
 """
-Tests for the v3->v4 live-contract promotion (2026-08-14): building_type
-enum validation, buem.weather.provider/year forwarding, building.equipment
-forwarding, file-based buem.inputs.electricity_load_profile /
-buem.weather.profile loading, and explicit rejection of the still-unwired
-weather.use_percentile / solver.compute_cooling fields.
+Tests for geojson_validator.py's request -> internal-format conversion,
+and the domain checks that survive validation against the pinned
+contract schema (json_schema/request_schema.json): the solver.compute_cooling
+guard (a contract-defined field this model doesn't implement yet) and
+file-based buem.inputs.electricity_load_profile / buem.weather.profile
+loading.
 
-See CLAUDE.md's "v2 vs v3/v4 request formats" and
-src/buem/integration/json_schema/versions/v4/DRAFT.md for the contract
-this exercises.
+building_type and weather.year/provider are NOT enum/range-checked here
+any more -- the pinned contract leaves building_type free text and treats
+weather.year/provider as informational metadata, so buem no longer
+duplicates constraints the contract doesn't have. See
+json_schema/README.md.
 """
 import json
 from pathlib import Path
@@ -24,7 +27,9 @@ project_root = Path(__file__).resolve().parent.parent
 DUMMY_DIR = project_root / "src" / "buem" / "data" / "buildings" / "dummy"
 
 
-def _load_v3_payload(fixture_name: str = "building_01_small_residential.json") -> dict:
+def _load_payload(fixture_name: str = "building_01_small_residential.json") -> dict:
+    """Load a dummy fixture -- already schema-valid, including a full-year
+    inline weather block."""
     return json.loads((DUMMY_DIR / fixture_name).read_text(encoding="utf-8"))
 
 
@@ -34,70 +39,88 @@ def _building_attrs(payload: dict) -> dict:
     return result.validated_data["features"][0]["properties"]["buem"]["building_attributes"]
 
 
-# ── building_type validation ─────────────────────────────────────────────
+# ── building_type: free text, not enum-checked ───────────────────────────
 
 
 def test_valid_residential_building_type_passes():
-    payload = _load_v3_payload()
+    payload = _load_payload()
     assert payload["features"][0]["properties"]["buem"]["building"]["building_type"] == "SFH"
     attrs = _building_attrs(payload)
     assert attrs["building_type"] == "SFH"
 
 
 def test_valid_service_building_type_passes():
-    payload = _load_v3_payload("building_02_medium_office.json")
+    payload = _load_payload("building_02_medium_office.json")
     assert payload["features"][0]["properties"]["buem"]["building"]["building_type"] == "office"
     attrs = _building_attrs(payload)
     assert attrs["building_type"] == "office"
 
 
-def test_unknown_building_type_rejected():
-    payload = _load_v3_payload()
+def test_unrecognised_building_type_passes_validation_fails_later():
+    """The pinned contract leaves building_type free text -- an
+    unrecognised value passes request validation (nothing here to reject
+    it) and only fails once AttributeBuilder tries to resolve an
+    occupancy profile from it."""
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["building"]["building_type"] = "not_a_real_type"
-    result = validate_geojson_request(payload)
-    assert not result.is_valid
-    assert any("Unknown building_type" in str(e.message) for e in result.get_errors())
+    attrs = _building_attrs(payload)
+    assert attrs["building_type"] == "not_a_real_type"
+
+    # generate_electricity_profile() wraps the underlying ValueError in a
+    # RuntimeError (see attribute_builder.py) -- the message still names
+    # the offending value.
+    with pytest.raises(RuntimeError, match="not_a_real_type"):
+        AttributeBuilder(payload_attrs=attrs).build()
 
 
 def test_missing_building_type_still_passes():
-    """building_type stays optional -- absence is not an error, matching
-    v2's existing optional behavior; AttributeBuilder's own default applies."""
-    payload = _load_v3_payload()
+    """building_type stays optional -- absence is not an error;
+    AttributeBuilder's own default applies."""
+    payload = _load_payload()
     del payload["features"][0]["properties"]["buem"]["building"]["building_type"]
     attrs = _building_attrs(payload)
     assert "building_type" not in attrs
 
 
-# ── buem.weather.provider/year forwarding ────────────────────────────────
+# ── buem.weather: index/variables required, provider/year forwarded as metadata ──
 
 
-def test_weather_provider_forwarded():
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {"provider": "cosmo-rea6"}
+def test_weather_provider_and_year_forwarded_as_metadata():
+    payload = _load_payload()
+    payload["features"][0]["properties"]["buem"]["weather"]["provider"] = "cosmo-rea6"
+    payload["features"][0]["properties"]["buem"]["weather"]["year"] = 2018
     attrs = _building_attrs(payload)
     assert attrs["weather_provider"] == "cosmo-rea6"
-    assert "year" not in attrs  # not supplied -> not forwarded
-
-
-def test_weather_year_forwarded_only_when_explicit():
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {"year": 2018}
-    attrs = _building_attrs(payload)
     assert attrs["year"] == 2018
+    # metadata alongside the real thing -- the inline timeseries is what's used
+    assert attrs["use_provided_weather"] is True
+    assert isinstance(attrs["weather"], pd.DataFrame)
 
 
-def test_weather_block_absent_forwards_nothing():
-    payload = _load_v3_payload()
+def test_weather_without_provider_or_year_forwards_nothing():
+    payload = _load_payload()
     attrs = _building_attrs(payload)
     assert "weather_provider" not in attrs
     assert "year" not in attrs
+    assert attrs["use_provided_weather"] is True
+
+
+def test_weather_missing_is_rejected():
+    """weather.index/variables are required by the pinned contract on
+    every request -- omitting weather entirely fails validation, not a
+    later self-fetch."""
+    payload = _load_payload()
+    del payload["features"][0]["properties"]["buem"]["weather"]
+    result = validate_geojson_request(payload)
+    assert not result.is_valid
+    assert any("weather" in str(e.message) for e in result.get_errors())
 
 
 # ── building.equipment forwarding ────────────────────────────────────────
 
 
 def test_equipment_forwarded():
-    payload = _load_v3_payload()
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["building"]["equipment"] = {
         "oven": True, "dish_washer": False,
     }
@@ -105,19 +128,18 @@ def test_equipment_forwarded():
     assert attrs["equipment"] == {"oven": True, "dish_washer": False}
 
 
-# ── deliberately-unwired fields are rejected, not silently ignored ──────
+# ── solver.compute_cooling: contract-defined, not implemented here ──────
 
 
-def test_use_percentile_rejected():
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {"use_percentile": True}
-    result = validate_geojson_request(payload)
-    assert not result.is_valid
-    assert any("use_percentile" in str(e.message) for e in result.get_errors())
-
-
-def test_compute_cooling_rejected():
-    payload = _load_v3_payload()
+def test_compute_cooling_true_rejected():
+    """The pinned contract defines real conditional-cooling semantics for
+    this flag; ModelBUEM doesn't implement them (main.py::run_model
+    accepts the argument but nothing reads cfg["compute_cooling"], and
+    geojson_processor.py never passes it through -- heating and cooling
+    are always computed and returned regardless). Rejecting a true value
+    keeps that gap loud instead of silently returning a response that
+    doesn't match what was requested."""
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["solver"] = {"compute_cooling": True}
     result = validate_geojson_request(payload)
     assert not result.is_valid
@@ -126,7 +148,7 @@ def test_compute_cooling_rejected():
 
 def test_compute_cooling_false_is_not_rejected():
     """Explicit false matches today's always-on behavior -- nothing to reject."""
-    payload = _load_v3_payload()
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["solver"] = {"compute_cooling": False}
     attrs = _building_attrs(payload)
     assert attrs["building_type"] == "SFH"  # got through conversion fine
@@ -140,7 +162,7 @@ def test_electricity_load_profile_json_file_loaded(tmp_path):
     profile_path = tmp_path / "elec.json"
     profile_path.write_text(json.dumps(values), encoding="utf-8")
 
-    payload = _load_v3_payload()
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["inputs"] = {
         "electricity_load_profile": {"path": str(profile_path), "unit": "kWh"}
     }
@@ -155,7 +177,7 @@ def test_electricity_load_profile_wh_unit_converted(tmp_path):
     profile_path = tmp_path / "elec.json"
     profile_path.write_text(json.dumps([1000.0] * 8760), encoding="utf-8")
 
-    payload = _load_v3_payload()
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["inputs"] = {
         "electricity_load_profile": {"path": str(profile_path), "unit": "Wh"}
     }
@@ -164,7 +186,7 @@ def test_electricity_load_profile_wh_unit_converted(tmp_path):
 
 
 def test_electricity_load_profile_missing_file_reported_as_error(tmp_path):
-    payload = _load_v3_payload()
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["inputs"] = {
         "electricity_load_profile": {"path": str(tmp_path / "does_not_exist.json")}
     }
@@ -173,7 +195,8 @@ def test_electricity_load_profile_missing_file_reported_as_error(tmp_path):
     assert any("Could not read" in str(e.message) for e in result.get_errors())
 
 
-# ── file-based buem.weather.profile ──────────────────────────────────────
+# ── file-based buem.weather.profile (buem-side extension, alongside the
+#    contract-required inline index/variables -- profile takes over when present) ──
 
 
 def test_weather_profile_csv_file_loaded(tmp_path):
@@ -182,9 +205,9 @@ def test_weather_profile_csv_file_loaded(tmp_path):
     profile_path = tmp_path / "weather.csv"
     df.to_csv(profile_path)
 
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "profile": {"path": str(profile_path), "format": "csv"}
+    payload = _load_payload()
+    payload["features"][0]["properties"]["buem"]["weather"]["profile"] = {
+        "path": str(profile_path), "format": "csv",
     }
     attrs = _building_attrs(payload)
     assert attrs["use_provided_weather"] is True
@@ -199,9 +222,9 @@ def test_weather_profile_missing_column_reported_as_error(tmp_path):
     profile_path = tmp_path / "weather_bad.csv"
     df.to_csv(profile_path)
 
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "profile": {"path": str(profile_path), "format": "csv"}
+    payload = _load_payload()
+    payload["features"][0]["properties"]["buem"]["weather"]["profile"] = {
+        "path": str(profile_path), "format": "csv",
     }
     result = validate_geojson_request(payload)
     assert not result.is_valid
@@ -218,9 +241,9 @@ def test_weather_profile_json_file_loaded_default_format(tmp_path):
     profile_path = tmp_path / "weather.json"
     profile_path.write_text(json.dumps(records), encoding="utf-8")
 
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "profile": {"path": str(profile_path)}  # format omitted -> json default
+    payload = _load_payload()
+    payload["features"][0]["properties"]["buem"]["weather"]["profile"] = {
+        "path": str(profile_path)  # format omitted -> json default
     }
     attrs = _building_attrs(payload)
     assert attrs["use_provided_weather"] is True
@@ -234,80 +257,28 @@ def test_weather_profile_json_missing_time_key_reported_as_error(tmp_path):
     profile_path = tmp_path / "weather_bad.json"
     profile_path.write_text(json.dumps(records), encoding="utf-8")
 
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "profile": {"path": str(profile_path), "format": "json"}
+    payload = _load_payload()
+    payload["features"][0]["properties"]["buem"]["weather"]["profile"] = {
+        "path": str(profile_path), "format": "json",
     }
     result = validate_geojson_request(payload)
     assert not result.is_valid
     assert any("'time' key" in str(e.message) for e in result.get_errors())
 
 
-# ── per-provider weather year-range validation ───────────────────────────
-
-
-def test_cosmo_rea6_year_within_range_passes():
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "provider": "cosmo-rea6", "year": 2010,
-    }
-    attrs = _building_attrs(payload)
-    assert attrs["weather_provider"] == "cosmo-rea6"
-    assert attrs["year"] == 2010
-
-
-def test_cosmo_rea6_year_out_of_range_rejected():
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "provider": "cosmo-rea6", "year": 2020,  # cosmo-rea6 only covers 1995-2018
-    }
-    result = validate_geojson_request(payload)
-    assert not result.is_valid
-    assert any("outside cosmo-rea6's available range" in str(e.message) for e in result.get_errors())
-
-
-def test_era5_land_year_out_of_range_rejected():
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "provider": "era5-land", "year": 1975,  # era5-land only covers 1980-2025
-    }
-    result = validate_geojson_request(payload)
-    assert not result.is_valid
-    assert any("outside era5-land's available range" in str(e.message) for e in result.get_errors())
-
-
-def test_default_provider_year_range_applies_when_provider_omitted():
-    """year alone (no provider) is validated against the default provider
-    (merra-2, 1950-2025)."""
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {"year": 1900}
-    result = validate_geojson_request(payload)
-    assert not result.is_valid
-    assert any("outside merra-2's available range" in str(e.message) for e in result.get_errors())
-
-
-def test_merra2_full_range_accepted():
-    payload = _load_v3_payload()
-    payload["features"][0]["properties"]["buem"]["weather"] = {
-        "provider": "merra-2", "year": 1960,
-    }
-    attrs = _building_attrs(payload)
-    assert attrs["year"] == 1960
-
-
-# ── full end-to-end: real v3 request -> AttributeBuilder -> ModelBUEM ────
+# ── full end-to-end: real request -> AttributeBuilder -> ModelBUEM ───────
 
 
 def test_electricity_load_profile_end_to_end(tmp_path):
-    """A real v3-format request with a file-based electricity_load_profile
-    must run all the way through the model, not just survive conversion --
+    """A real request with a file-based electricity_load_profile must run
+    all the way through the model, not just survive conversion --
     exercises the index-alignment path between the file's raw (unindexed)
     array and buem's actual (half-hour-offset) weather index."""
     values = [2.5] * 8760
     profile_path = tmp_path / "elec.json"
     profile_path.write_text(json.dumps(values), encoding="utf-8")
 
-    payload = _load_v3_payload()
+    payload = _load_payload()
     payload["features"][0]["properties"]["buem"]["inputs"] = {
         "electricity_load_profile": {"path": str(profile_path), "unit": "kWh"}
     }

@@ -31,10 +31,10 @@ Quick Start:
     validator = BuemSchemaValidator()
     result = validator.validate_file("request.json")
     
-    # Check available schema versions
+    # Check the pinned contract version
     from buem.integration import get_latest_schema_version, list_schema_versions
-    latest = get_latest_schema_version()  # e.g., 'v2'
-    all_versions = list_schema_versions()  # e.g., ['v1', 'v2']
+    latest = get_latest_schema_version()  # e.g., 'v5'
+    all_versions = list_schema_versions()  # e.g., ['v5'] -- one pinned contract, not a version tree
 
 Infrastructure Setup (for advanced features):
     Advanced features like GeoJsonProcessor require the full BUEM thermal model
@@ -42,9 +42,9 @@ Infrastructure Setup (for advanced features):
     you'll get clear error messages with setup guidance.
 
 Note:
-    This module is designed to work with external JSON schemas provided by API
-    collaborators. Schemas are organized by version (v1, v2, etc.) in the 
-    json_schema/versions/ directory.
+    This module validates against a single pinned copy of the BUEM-EnerPlanET
+    contract (owned by enerplanet/buem-gateway), not a locally-maintained
+    version tree -- see json_schema/README.md.
 """
 
 # Always available - core validation modules (no full BUEM infrastructure required)

@@ -1,105 +1,27 @@
-# buem-contract
+# BUEM-EnerPlanET contract
 
-Contract definition and JSON schemas for the integration between\
-**EnerPlanET backend** and the **BUEM time-series microservice**.
+The BUEM-EnerPlanET request/response contract is owned by
+`enerplanet/buem-gateway` (`schemas/v5/`, `docs/versioning.md`). The files
+in this folder are a pinned copy of **API contract v5** (`contract.txt`
+names the exact tag) — do not edit them here. Re-sync from buem-gateway to
+update:
 
-This repository defines the authoritative request and response formats
-used when EnerPlanET communicates with the BUEM container.
-
-The BUEM microservice runs internally within the EnerPlanET Docker stack
-and is not exposed externally.
-
-------------------------------------------------------------------------
-
-## Scope
-
-This repository defines:
-
-- The JSON structure of request payloads sent to BUEM
-- The JSON structure of response payloads returned by BUEM
-- Versioning rules for schema evolution
-- Example payloads
-- Change documentation
-
-This repository does **not** contain implementation code.
-
-------------------------------------------------------------------------
-
-## Microservice Contract
-
-The BUEM container must:
-
-- Expose `POST /timeseries`
-- Accept request payloads matching `request_schema.json`
-- Return response payloads matching `response_schema.json`
-- Preserve all input fields
-- Add computed `thermal_load_profile`
-- Expose `GET /health`
-- Bind to `0.0.0.0` inside the container
-
-------------------------------------------------------------------------
-
-## Schema Versioning
-
-Schemas are versioned using version folders:
-
-    schemas/
-      v1/
-      v2/
-      v3/
-
-Each version folder is immutable once released.
-
-Breaking changes require a new version folder.
-
-EnerPlanET validates both request and response payloads against the
-corresponding schema version.
-
-Clients should always use the latest agreed version unless explicitly
-required otherwise.
-
-For detailed rules see `VERSIONING.md`.
-
-------------------------------------------------------------------------
-
-## Version Folder Content
-
-Each version folder contains:
-
-- `request_schema.json`
-- `response_schema.json`
-- `example_request.json`
-- `example_response.json`
-
-Optional: - Version-specific notes in `CHANGELOG.md`
-
-------------------------------------------------------------------------
-
-## Schema Validation
-
-Schemas and example payloads can be validated using JSON Schema tools.
-
-Example using Python:
-
-```python
-import json
-from jsonschema import validate
-
-with open("schemas/v2/request_schema.json") as f:
-    schema = json.load(f)
-
-with open("schemas/v2/example_request.json") as f:
-    payload = json.load(f)
-
-validate(instance=payload, schema=schema)
-print("Valid.")
+```bash
+git -C ../buem-gateway show v6.0.0:schemas/v5/request_schema.json  > request_schema.json
+git -C ../buem-gateway show v6.0.0:schemas/v5/response_schema.json > response_schema.json
 ```
 
-Validation must pass before schema versions are released.
+then update `contract.txt` and re-add each pinned file's leading
+`"$comment"` field naming the new tag.
 
-## Schema Visualization
+`schema_manager.py` loads `request_schema.json` / `response_schema.json`
+from this folder directly (no version subdirectories — there is exactly
+one live contract). `geojson_validator.py` validates incoming requests
+against `request_schema.json` with `jsonschema`; it does not re-define the
+contract's structure.
 
-Helpful for understanding complex nested structures and relationships between fields it's recommended to use [jsoncrack](https://jsoncrack.com) to visualize the schema structure.
+CI fails if this folder drifts from `contract.txt`'s pinned tag (see
+`.github/workflows/ci.yml`'s "Contract drift" step).
 
-> [!TIP]
-> If you are using VS Code, the [JSON Schema extension](https://marketplace.visualstudio.com/items?itemName=AykutSarac.jsoncrack-vscode) can provide inline validation and visualization.
+To propose a contract change, open a PR against buem-gateway's
+`schemas/v6-draft/`, not against these files.

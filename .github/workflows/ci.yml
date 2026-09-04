@@ -44,6 +44,21 @@ jobs:
           git clone --depth 1 --filter=blob:none --sparse https://github.com/UU-BUEM/weather.git /tmp/weather-ci-fixture
           git -C /tmp/weather-ci-fixture sparse-checkout set fixtures/ci
 
+      - name: Contract drift check
+        run: |
+          set -e
+          SCHEMA_DIR=src/buem/integration/json_schema
+          eval "$(sed -n 's/^\([a-z_]*\)=\(.*\)$/CONTRACT_\1="\2"/p' "$SCHEMA_DIR/contract.txt")"
+          base="https://raw.githubusercontent.com/${CONTRACT_repo}/${CONTRACT_tag}/${CONTRACT_path}"
+          for f in request_schema.json response_schema.json; do
+            curl -fsSL "$base/$f" -o "/tmp/upstream_$f"
+            # pinned copies carry an extra leading "$comment" field (their own
+            # provenance note) that upstream's file doesn't -- ignored below.
+            python3 -c "import json,sys; u=json.load(open(sys.argv[1])); p=json.load(open(sys.argv[2])); p.pop('\$comment',None); sys.exit(0 if u==p else 1)" \
+              "/tmp/upstream_$f" "$SCHEMA_DIR/$f" \
+              || { echo "::error::$f has drifted from ${CONTRACT_repo}@${CONTRACT_tag}/${CONTRACT_path}/$f -- re-sync (see $SCHEMA_DIR/README.md)"; exit 1; }
+          done
+
       - name: Lint
         shell: bash -l {0}
         run: ruff check src/ tests/

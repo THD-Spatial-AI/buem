@@ -52,13 +52,13 @@ line — useful during development and integration testing.
 Schema CLI
 ----------
 
-``schema_cli.py`` is a helper tool for versioning and validating BuEM
-request/response JSON Schemas (backed by ``schema_manager.py``'s
-``SchemaVersionManager``, which auto-discovers versions under
-``json_schema/versions/``).  Supports ``list-versions``,
-``validate <file>``, ``test-all``, and ``import-version``. Note:
-``geojson_validator.py``'s actual runtime request validation does not
-consult this manager — it's independent, hand-maintained marshmallow
-schemas kept in sync with the current agreed version manually. See
-``json_schema/VERSIONING.md`` and the repo root ``CLAUDE.md``
-"Guardrails" for how contract changes are governed.
+``schema_cli.py`` is a helper tool for validating BuEM request/response
+payloads against the pinned contract schema (backed by
+``schema_manager.py``'s ``SchemaVersionManager``, which loads
+``json_schema/request_schema.json`` and ``response_schema.json`` — a
+single pinned copy, not a version tree). Supports ``list-versions``,
+``info``, ``validate <file>``, ``test-all``, and ``debug``.
+``geojson_validator.py``'s actual runtime request validation uses this
+same schema, via ``jsonschema``. See ``json_schema/README.md`` and the
+repo root ``CLAUDE.md`` "Guardrails" for how contract changes are
+governed.

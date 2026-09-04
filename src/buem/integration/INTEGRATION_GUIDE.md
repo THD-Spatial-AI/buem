@@ -45,17 +45,17 @@ src/buem/integration/
 
 ## 🚀 Quick Start
 
-### 1. **Import New Schema Version from Nextcloud**
+### 1. **Re-sync the pinned contract schema**
 
-When your colleague creates a new version (e.g., v3):
+The contract is a single pinned copy from `enerplanet/buem-gateway`
+(`json_schema/README.md`), not something imported from Nextcloud. When
+buem-gateway cuts a new schema tag, follow that README's procedure (fetch
+the two files at the new tag, bump `json_schema/contract.txt`), then:
 
 ```bash
-# Copy from Nextcloud to your project
-python src/buem/integration/schema_cli.py import-version v3 /path/to/nextcloud/v3/
-
-# Verify import
+# Verify the re-sync
 python src/buem/integration/schema_cli.py list-versions
-python src/buem/integration/schema_cli.py info --version v3
+python src/buem/integration/schema_cli.py info
 ```
 
 ### 2. **Validate GeoJSON Files**
@@ -174,16 +174,13 @@ if not is_valid:
 
 ### For Development (You)
 
-1. **When colleague creates new schema version:**
+1. **When buem-gateway cuts a new contract tag:**
    ```bash
-   # Import from Nextcloud
-   python schema_cli.py import-version v4 /path/to/nextcloud/v4/
-   
-   # Test new version
-   python schema_cli.py test-all --version v4
-   
-   # Validate your existing files against new version
-   python schema_cli.py validate mytest.json --version v4
+   # Re-sync (see json_schema/README.md), then:
+   python schema_cli.py test-all
+
+   # Validate your existing files against the re-synced contract
+   python schema_cli.py validate mytest.json
    ```
 
 2. **For regular validation during development:**
@@ -308,7 +305,7 @@ try:
     print(f"Found versions: {versions}")
 except Exception as e:
     print(f"Schema directory issue: {e}")
-    print("Make sure json_schema/versions/ directory exists with v1/, v2/, etc.")
+    print("Make sure json_schema/ contains request_schema.json, response_schema.json, and contract.txt")
 ```
 
 ### Validation Failures

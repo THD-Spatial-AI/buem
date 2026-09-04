@@ -1,0 +1,4 @@
+repo=enerplanet/buem-gateway
+tag=v6.0.0
+path=schemas/v5
+contract_version=v5

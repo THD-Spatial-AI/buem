@@ -1,11 +1,11 @@
 Response Format
 ===============
 
-BuEM returns a GeoJSON FeatureCollection, echoing the full v3 request
+BuEM returns a GeoJSON FeatureCollection, echoing the full request
 structure and appending ``thermal_load_profile``/``model_metadata`` to
 each feature's ``properties.buem`` node — per
-``src/buem/integration/json_schema/versions/v3/response_schema.json``
-(see :doc:`request_format` for the shared measurement-quantity/versioning
+``src/buem/integration/json_schema/response_schema.json`` (see
+:doc:`request_format` for the shared measurement-quantity/contract
 conventions).
 
 Top-Level Response
@@ -91,5 +91,5 @@ description instead of ``thermal_load_profile`` — see
 Complete example
 -------------------
 
-See ``src/buem/integration/json_schema/versions/v3/example_response.json``
-in the repository for a full worked response.
+See ``src/buem/integration/json_schema/example_response.json`` in the
+repository for a full worked response.

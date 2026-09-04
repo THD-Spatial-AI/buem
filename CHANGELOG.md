@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The BUEM-EnerPlanET API contract is now a pinned copy of
+  `enerplanet/buem-gateway`'s `schemas/v5/` (tag `v6.0.0`), not a
+  locally-maintained version tree.** buem previously kept its own copy of
+  the contract (`json_schema/versions/v1`..`v4`) in step with
+  buem-gateway's by hand; the two drifted (disagreeing on the version
+  number, and on whether `weather` was required at all). buem-gateway is
+  now the single source of truth. See `json_schema/README.md` for the
+  pinning/re-sync procedure and CI's new "Contract drift check" step.
+- `geojson_validator.py`'s request validation is now `jsonschema`
+  structural validation against the pinned schema, replacing the
+  hand-written `marshmallow` schema classes that duplicated (and
+  sometimes silently diverged from) the contract's own shape. Its request
+  -> internal-format conversion logic is unchanged.
+- Consequences of validating against the real contract instead of buem's
+  own copy:
+  - `building_type` is no longer enum-checked at request validation (the
+    pinned contract leaves it free text). An unrecognised value now
+    surfaces later, as a clear error from `AttributeBuilder` when it
+    tries to resolve an occupancy profile from it, instead of failing at
+    the request boundary.
+  - `weather.year`'s per-provider range check is removed -- the pinned
+    contract treats `year`/`provider` as informational metadata on an
+    inline timeseries, not a selector to validate against archive
+    coverage.
+  - `weather.index`/`weather.variables` (a pre-resolved, caller-supplied
+    hourly timeseries) are now **required** on every request, enforced by
+    the schema itself. A request with no inline weather now fails
+    validation immediately with a clear message, instead of reaching
+    `AttributeBuilder.generate_weather_profile()` and failing there (or,
+    with `BUEM_WEATHER_FALLBACK` unset, silently triggering buem's own
+    per-location fetch). `weather.provider`/`weather.year` alone, with no
+    inline data, is no longer accepted -- matches buem-gateway's own
+    contract, which "calls no weather service and does not accept a
+    provider/year selector in place of the data".
+  - The legacy v2 request shape (`buem.building_attributes` /
+    `buem.child_components`) is no longer reachable: the pinned schema
+    requires `buem.building`, so a v2-shaped request fails validation
+    before ever reaching the (now-removed) v2 conversion path.
+
+### Removed
+
+- `src/buem/integration/json_schema/versions/` (`v1`..`v4`),
+  `VERSIONING.md`, `SCHEMA_OVERVIEW.md` -- superseded by the pinned copy
+  above.
+- `schema_cli.py import-version` -- there is no version tree to import
+  into any more; re-sync the pinned copy per `json_schema/README.md`
+  instead.
+
+### Found, not fixed here
+
+- **`solver.compute_cooling` is defined by the pinned contract but not
+  implemented by this deployment.** The contract gives it real semantics
+  (cooling constraint omitted by default; enforced, and returned, only
+  when `true`). `main.py::run_model` accepts a `compute_cooling` argument
+  but `ModelBUEM` never reads `cfg["compute_cooling"]`, and
+  `geojson_processor.py` never passes the request's value through --
+  heating and cooling are always computed and returned regardless.
+  `geojson_validator.py` still rejects `compute_cooling: true` rather
+  than silently returning a response that doesn't match what was
+  requested, but the rejection message now says why: a real
+  contract-implementation gap, not an unwired draft field. Implementing
+  the real toggle is model work, out of scope for this contract-plumbing
+  change.
+
 ### Fixed
 
 - Caller-supplied inline `buem.weather` ({index, variables}) is parsed and

@@ -86,10 +86,18 @@ def test_inline_weather_reaches_building_attributes():
 
 
 def test_missing_weather_raises_when_fallback_disabled(monkeypatch):
-    """BUEM_WEATHER_FALLBACK=false: a request with no caller-supplied
-    weather must fail loudly, not silently trigger buem's own fetch."""
+    """BUEM_WEATHER_FALLBACK=false: AttributeBuilder itself must fail
+    loudly when given no weather, not silently trigger its own fetch.
+
+    A request missing buem.weather never reaches AttributeBuilder at all
+    any more -- the pinned contract schema requires it, so
+    validate_geojson_request() rejects it first. This exercises
+    AttributeBuilder's own gate directly (payload_attrs built by hand,
+    bypassing the validator), the way a caller that constructs cfg
+    without going through the GeoJSON layer would."""
     monkeypatch.setenv("BUEM_WEATHER_FALLBACK", "false")
-    attrs = _building_attributes(_payload_with_weather(None))
+    attrs = _building_attributes(_payload_with_weather(_WEATHER_JSON))
+    attrs = {k: v for k, v in attrs.items() if k not in ("weather", "use_provided_weather")}
     with pytest.raises(RuntimeError, match="BUEM_WEATHER_FALLBACK"):
         AttributeBuilder(payload_attrs=attrs).build()
 

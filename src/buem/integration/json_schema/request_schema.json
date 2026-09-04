@@ -1,0 +1,848 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buem.energy/schemas/contract/v5/request",
+  "title": "BUEM GeoJSON Request Schema (API contract v5)",
+  "description": "Request schema for the BUEM building energy model. Each feature represents one building. The buem object carries building (complete physical description \u2014 classification, geometry, and thermal performance), solver (execution settings), inputs (optional timeseries overrides), and weather (a pre-resolved hourly timeseries \u2014 buem-gateway resolves it from no external service). All measurable quantities carry an explicit unit field. SI units are assumed when unit is omitted. Dimensionless ratios use unit: '-'.",
+  "type": "object",
+  "required": [
+    "type",
+    "features"
+  ],
+  "properties": {
+    "type": {
+      "const": "FeatureCollection",
+      "description": "GeoJSON type identifier"
+    },
+    "timeStamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Request timestamp"
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/feature"
+      },
+      "description": "One entry per building to simulate"
+    }
+  },
+  "$defs": {
+    "feature": {
+      "type": "object",
+      "required": [
+        "type",
+        "id",
+        "geometry",
+        "properties"
+      ],
+      "properties": {
+        "type": {
+          "const": "Feature"
+        },
+        "id": {
+          "type": "string",
+          "description": "Unique building identifier"
+        },
+        "geometry": {
+          "$ref": "#/$defs/geometry"
+        },
+        "properties": {
+          "$ref": "#/$defs/properties"
+        }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "required": [
+        "type",
+        "coordinates"
+      ],
+      "properties": {
+        "type": {
+          "const": "Point"
+        },
+        "coordinates": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 3,
+          "description": "[longitude, latitude, elevation?] \u2014 authoritative building location, used for weather station lookup"
+        }
+      }
+    },
+    "properties": {
+      "type": "object",
+      "required": [
+        "start_time",
+        "end_time",
+        "buem"
+      ],
+      "properties": {
+        "start_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Simulation start time"
+        },
+        "end_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Simulation end time"
+        },
+        "resolution": {
+          "type": "string",
+          "default": "60",
+          "description": "Time resolution value"
+        },
+        "resolution_unit": {
+          "type": "string",
+          "default": "minutes",
+          "description": "Time resolution unit"
+        },
+        "buem": {
+          "$ref": "#/$defs/buem"
+        }
+      }
+    },
+    "buem": {
+      "type": "object",
+      "required": [
+        "building",
+        "weather"
+      ],
+      "description": "BUEM model input. building is the complete physical description. solver is execution settings. inputs is optional user-provided timeseries that override model-generated values. weather is the pre-resolved hourly timeseries for the building's location \u2014 required, because buem-gateway resolves weather from no external service (see enerplanet/buem#10).",
+      "properties": {
+        "building": {
+          "$ref": "#/$defs/building"
+        },
+        "solver": {
+          "$ref": "#/$defs/solver"
+        },
+        "inputs": {
+          "$ref": "#/$defs/inputs"
+        },
+        "weather": {
+          "$ref": "#/$defs/weather"
+        }
+      }
+    },
+    "weather": {
+      "type": "object",
+      "required": [
+        "index",
+        "variables"
+      ],
+      "description": "A pre-resolved hourly weather timeseries for the building's location, in the shape weather serve's GET /v1/weather/point?format=json returns. The caller (normally the Orchestrator) resolves it and embeds it here; buem-gateway calls no weather service and does not accept a provider/year selector in place of the data. provider and year are optional metadata recording which archive the timeseries came from.",
+      "properties": {
+        "index": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Hourly timestamps, ISO 8601. Length must match every array under variables."
+        },
+        "variables": {
+          "type": "object",
+          "description": "Per-variable hourly value arrays, each the same length as index. null marks a gap. BuEM reads T (air temperature, degC) and the solar components GHI/DHI/DNI (W/m2); at least one must be present.",
+          "properties": {
+            "T": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "GHI": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "DHI": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "DNI": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "T"
+              ]
+            },
+            {
+              "required": [
+                "GHI"
+              ]
+            },
+            {
+              "required": [
+                "DHI"
+              ]
+            },
+            {
+              "required": [
+                "DNI"
+              ]
+            }
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "description": "Metadata only: which processed archive the timeseries was resolved from (e.g. era5-land, cosmo-rea6, merra-2)."
+        },
+        "year": {
+          "type": "integer",
+          "description": "Metadata only: the calendar year the archive data covers."
+        }
+      }
+    },
+    "building": {
+      "type": "object",
+      "required": [
+        "envelope"
+      ],
+      "description": "Complete physical description of the building. Classification fields (type, country, etc.) sit at this level. Geometry and per-element thermal properties are in envelope, which is required \u2014 neither BuEM nor buem-gateway derives it from classification fields alone.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable building label (e.g. '3434 \u00b7 Single-family House'). Display only \u2014 no effect on simulation."
+        },
+        "A_ref": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/area_qty"
+            }
+          ],
+          "description": "Reference floor area. Derived from floor element areas if omitted.",
+          "default": {
+            "value": 0,
+            "unit": "m2"
+          }
+        },
+        "h_room": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/length_qty"
+            }
+          ],
+          "description": "Average room height",
+          "default": {
+            "value": 2.5,
+            "unit": "m"
+          }
+        },
+        "n_storeys": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of storeys"
+        },
+        "building_type": {
+          "type": "string",
+          "description": "Building type code (e.g. SFH single-family, MFH multi-family, AB apartment block, TH terraced house)"
+        },
+        "construction_period": {
+          "type": "string",
+          "description": "TABULA construction-year class code for the building's country (e.g. \"01\", \"02\"), not a literal year range. Class boundaries are defined per country by each national TABULA dataset and are not consistent across countries. Classification metadata only \u2014 has no effect on the simulation, which reads geometry and U-values from envelope directly."
+        },
+        "country": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 country code (e.g. NL, DE)"
+        },
+        "attic_condition": {
+          "type": "string",
+          "enum": [
+            "-",
+            "N",
+            "P",
+            "C",
+            "NI",
+            "PI"
+          ],
+          "description": "Attic conditioning status: - not applicable, N not conditioned, P partially conditioned, C conditioned, NI not insulated, PI partially insulated"
+        },
+        "cellar_condition": {
+          "type": "string",
+          "enum": [
+            "-",
+            "N",
+            "P",
+            "C",
+            "NI",
+            "PI"
+          ],
+          "description": "Cellar conditioning status \u2014 same codes as attic_condition"
+        },
+        "neighbour_status": {
+          "type": "string",
+          "enum": [
+            "B_Alone",
+            "B_N1",
+            "B_N2"
+          ],
+          "description": "Attached neighbours: B_Alone detached, B_N1 one shared wall, B_N2 two shared walls"
+        },
+        "envelope": {
+          "$ref": "#/$defs/envelope"
+        },
+        "thermal": {
+          "$ref": "#/$defs/thermal"
+        }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "required": [
+        "elements"
+      ],
+      "description": "All building surfaces. Each element carries both its geometry (area, orientation, tilt) and its thermal properties (U-value, solar gain coefficient, etc.) in a single entry. No separate thermal properties list is needed.",
+      "properties": {
+        "elements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/envelope_element"
+          },
+          "description": "List of all building surfaces. The id must be unique within the feature."
+        }
+      }
+    },
+    "envelope_element": {
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
+      "description": "A single building surface. Geometry and thermal properties are defined together. For ventilation elements, no surface geometry is needed \u2014 only air_changes.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "User-defined unique identifier for this surface element"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable label for this surface (e.g. 'South Facade', 'Main Roof'). Display only \u2014 no effect on simulation."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "wall",
+            "roof",
+            "floor",
+            "window",
+            "door",
+            "ventilation"
+          ],
+          "description": "Surface type"
+        },
+        "area": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/area_qty"
+            }
+          ],
+          "description": "Surface area"
+        },
+        "azimuth": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/angle_qty"
+            }
+          ],
+          "description": "Orientation measured clockwise from North (0=N, 90=E, 180=S, 270=W)"
+        },
+        "tilt": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/angle_qty"
+            },
+            {
+              "properties": {
+                "value": {
+                  "minimum": 0,
+                  "maximum": 90
+                }
+              }
+            }
+          ],
+          "description": "Tilt from horizontal (0=horizontal roof, 90=vertical wall)"
+        },
+        "parent_id": {
+          "type": "string",
+          "description": "Id of the envelope element this surface is embedded in. Required for windows and doors. A window is embedded in a wall (or roof for a skylight); a door is embedded in a wall."
+        },
+        "U": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/u_value_qty"
+            }
+          ],
+          "description": "Thermal transmittance (U-value). Applies to wall, roof, floor, window, and door elements."
+        },
+        "b_transmission": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/dimensionless_qty"
+            },
+            {
+              "properties": {
+                "value": {
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          ],
+          "description": "Transmission correction factor for elements adjacent to unheated spaces (e.g. cellar, attic). 1.0 = fully exposed to outdoor conditions. TABULA: b_Transmission_*",
+          "default": {
+            "value": 1.0,
+            "unit": "-"
+          }
+        },
+        "g_gl": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/dimensionless_qty"
+            },
+            {
+              "properties": {
+                "value": {
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          ],
+          "description": "Solar heat gain coefficient \u2014 window elements only. Fraction of incident solar radiation that enters the building. TABULA: g_gl_n_Window",
+          "default": {
+            "value": 0.5,
+            "unit": "-"
+          }
+        },
+        "air_changes": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/air_change_qty"
+            }
+          ],
+          "description": "Air changes per hour \u2014 ventilation elements only"
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "not": {
+              "const": "ventilation"
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "area",
+          "azimuth",
+          "tilt"
+        ]
+      }
+    },
+    "thermal": {
+      "type": "object",
+      "description": "Building-wide thermal performance parameters aligned with IEE TABULA definitions. All fields are optional \u2014 model defaults (SI units) apply when omitted. Per-element thermal properties (U-value, g_gl, etc.) are defined directly on each envelope element.",
+      "properties": {
+        "n_air_infiltration": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/air_change_qty"
+            }
+          ],
+          "description": "Uncontrolled air infiltration rate through gaps and cracks in the building fabric \u2014 TABULA: n_air_infiltration",
+          "default": {
+            "value": 0.5,
+            "unit": "1/h"
+          }
+        },
+        "n_air_use": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/air_change_qty"
+            }
+          ],
+          "description": "Ventilation air change rate during building occupancy \u2014 TABULA: n_air_use",
+          "default": {
+            "value": 0.5,
+            "unit": "1/h"
+          }
+        },
+        "c_m": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/heat_capacity_qty"
+            }
+          ],
+          "description": "Internal thermal capacity per m\u00b2 of floor area \u2014 how much heat the building structure can store. TABULA: c_m",
+          "default": {
+            "value": 165.0,
+            "unit": "kJ/(m2K)"
+          }
+        },
+        "thermal_class": {
+          "type": "string",
+          "enum": [
+            "light",
+            "medium",
+            "heavy"
+          ],
+          "description": "ISO 13790 thermal mass class \u2014 used to derive c_m when c_m is not provided explicitly",
+          "default": "medium"
+        },
+        "comfortT_lb": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/temperature_qty"
+            }
+          ],
+          "description": "Heating setpoint \u2014 minimum acceptable indoor temperature",
+          "default": {
+            "value": 21.0,
+            "unit": "degC"
+          }
+        },
+        "comfortT_ub": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/temperature_qty"
+            }
+          ],
+          "description": "Cooling setpoint \u2014 maximum acceptable indoor temperature",
+          "default": {
+            "value": 24.0,
+            "unit": "degC"
+          }
+        },
+        "design_T_min": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/temperature_qty"
+            }
+          ],
+          "description": "Outdoor design temperature used for peak heating load calculation \u2014 TABULA: Theta_e",
+          "default": {
+            "value": -12.0,
+            "unit": "degC"
+          }
+        },
+        "F_sh_hor": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/dimensionless_qty"
+            }
+          ],
+          "description": "Shading reduction factor for horizontal surfaces (e.g. roof) \u2014 TABULA: F_sh_hor",
+          "default": {
+            "value": 0.8,
+            "unit": "-"
+          }
+        },
+        "F_sh_vert": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/dimensionless_qty"
+            }
+          ],
+          "description": "Shading reduction factor for vertical surfaces (e.g. walls, windows) \u2014 TABULA: F_sh_vert",
+          "default": {
+            "value": 0.75,
+            "unit": "-"
+          }
+        },
+        "F_f": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/dimensionless_qty"
+            }
+          ],
+          "description": "Window frame area fraction \u2014 proportion of the window opening that is frame rather than glass. TABULA: F_f",
+          "default": {
+            "value": 0.2,
+            "unit": "-"
+          }
+        },
+        "F_w": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/dimensionless_qty"
+            }
+          ],
+          "description": "Window non-perpendicularity correction factor \u2014 TABULA: F_w",
+          "default": {
+            "value": 1.0,
+            "unit": "-"
+          }
+        },
+        "phi_int": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/measurement"
+            }
+          ],
+          "description": "Internal heat gains from occupants, appliances, and lighting per unit floor area. Used in the ISO 13790 energy balance as a heat source that reduces heating demand and increases cooling demand. TABULA: phi_int. Typical residential: 3\u20135 W/m\u00b2.",
+          "default": {
+            "value": 3.0,
+            "unit": "W/m2"
+          }
+        },
+        "q_w_nd": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/measurement"
+            }
+          ],
+          "description": "Net energy need for domestic hot water per unit floor area per year. Added to the heating energy need in the final energy balance. TABULA: q_w_nd. Typical residential: ~12.5 kWh/(m\u00b2\u00b7a).",
+          "default": {
+            "value": 12.5,
+            "unit": "kWh/(m2.a)"
+          }
+        }
+      }
+    },
+    "solver": {
+      "type": "object",
+      "description": "Execution settings for the BUEM thermal solver. These control how the model runs and what it simulates.",
+      "properties": {
+        "use_milp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Mixed Integer Linear Programming solver (CVXPY + CBC) instead of the default scipy sparse solver. Slower but handles inequality constraints exactly."
+        },
+        "compute_cooling": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enforce the upper comfort temperature bound in the LP solver. When false (default), the cooling constraint is omitted \u2014 appropriate for buildings without active cooling, common in northern European residential buildings. When true, building.thermal.comfortT_ub is required and a cooling load profile is returned in the response."
+        },
+        "parallel_thermal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run heating and cooling simulations in parallel within a single building"
+        },
+        "use_chunked_processing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Process the 8760-hour timeseries in chunks to limit memory usage"
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Optional user-provided timeseries inputs. When a field is present, it overrides the model-generated equivalent. When absent, the model generates the value from occupancy simulation.",
+      "properties": {
+        "electricity_load_profile": {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "description": "Hourly electricity consumption profile for the building, referenced by file path. The file must be accessible inside the model container \u2014 use the shared Docker volume (BUEM_DATA_DIR) to make client files available. When provided, the profile is used directly as the internal heat gain input instead of the model-generated occupancy-based profile. Electricity consumption heats the building interior and therefore affects heating and cooling demand. Supported formats: CSV (single column of values), JSON array, or gzipped JSON (.gz).",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute path to the profile file inside the container (e.g. /data/profiles/5.3453464_52.4353446_electricity_2018.csv)"
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "kWh",
+                "Wh",
+                "kW"
+              ],
+              "default": "kWh",
+              "description": "Unit of the values in the file. Defaults to kWh when omitted."
+            }
+          }
+        }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "description": "Base type for all measurable quantities. The unit field defaults to the SI unit for the quantity type when omitted.",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        }
+      }
+    },
+    "area_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "value": {
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "m2",
+            "ft2"
+          ],
+          "default": "m2"
+        }
+      }
+    },
+    "length_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "value": {
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "m",
+            "ft"
+          ],
+          "default": "m"
+        }
+      }
+    },
+    "angle_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "value": {
+          "minimum": 0,
+          "maximum": 360
+        },
+        "unit": {
+          "enum": [
+            "deg",
+            "rad"
+          ],
+          "default": "deg"
+        }
+      }
+    },
+    "u_value_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "value": {
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "W/(m2K)",
+            "BTU/(h.ft2.F)"
+          ],
+          "default": "W/(m2K)"
+        }
+      }
+    },
+    "air_change_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "value": {
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "1/h"
+          ],
+          "default": "1/h"
+        }
+      }
+    },
+    "heat_capacity_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "value": {
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "kJ/(m2K)",
+            "BTU/(ft2.F)"
+          ],
+          "default": "kJ/(m2K)"
+        }
+      }
+    },
+    "temperature_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "unit": {
+          "enum": [
+            "degC",
+            "degF"
+          ],
+          "default": "degC"
+        }
+      }
+    },
+    "dimensionless_qty": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/measurement"
+        }
+      ],
+      "properties": {
+        "unit": {
+          "const": "-"
+        }
+      },
+      "default": {
+        "unit": "-"
+      }
+    }
+  },
+  "$comment": "Pinned copy of enerplanet/buem-gateway@v6.0.0 schemas/v5/request_schema.json. Do not edit here -- re-sync via contract.txt to update."
+}

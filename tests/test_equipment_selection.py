@@ -151,36 +151,20 @@ def test_equipment_selection_ignored_for_service_building(caplog):
 
 
 def test_equipment_registry_matches_occupancy():
-    """Drift guard: HOUSEHOLD_EQUIPMENT_TYPES and the v4 schema's
-    building.equipment property list are both hand-copied from occupancy's
-    households/data/equipment.json -- occupancy has no top-level export for
-    this registry yet (see .claude/occupancy_module_activities.md item 1).
-    Fails loudly the moment any of the three fall out of sync, mirroring
-    test_building_types.py::test_v4_building_type_enum_matches_occupancy."""
+    """Drift guard: HOUSEHOLD_EQUIPMENT_TYPES is hand-copied from
+    occupancy's households/data/equipment.json -- occupancy has no
+    top-level export for this registry yet (see
+    .claude/occupancy_module_activities.md item 1). Fails loudly the
+    moment the two fall out of sync. (The pinned contract schema has no
+    building.equipment property to drift-check against -- it was never
+    part of EnerPlanET's real contract, so there is nothing left to
+    compare it to.)"""
     from occupancy.households.electricity import default_equipment_table
 
     real_ids = set(default_equipment_table().keys())
     assert HOUSEHOLD_EQUIPMENT_TYPES == real_ids, (
         "buem.config.cfg_attribute.HOUSEHOLD_EQUIPMENT_TYPES has drifted "
         "from occupancy's real equipment registry -- update it to match."
-    )
-
-    schema_path = (
-        project_root
-        / "src"
-        / "buem"
-        / "integration"
-        / "json_schema"
-        / "versions"
-        / "v4"
-        / "request_schema.json"
-    )
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    schema_ids = set(schema["$defs"]["building"]["properties"]["equipment"]["properties"])
-    assert schema_ids == real_ids, (
-        "versions/v4/request_schema.json's building.equipment property list "
-        "has drifted from occupancy's real equipment registry -- update it "
-        "(and note the change in DRAFT.md)."
     )
 
 

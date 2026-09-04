@@ -1,19 +1,18 @@
 Request Data Format
 ===================
 
-BuEM accepts building data in GeoJSON format, per the versioned
-**EnerPlanET API contract**
-(``src/buem/integration/json_schema/versions/v3/request_schema.json``,
-current version — see :doc:`index` for how this schema is governed).
-This section describes the current (v3) request shape.
+BuEM accepts building data in GeoJSON format, per the **EnerPlanET API
+contract** (``src/buem/integration/json_schema/request_schema.json``, a
+pinned copy of ``enerplanet/buem-gateway``'s ``schemas/v5/`` — see
+:doc:`index` for how this schema is governed). This section describes
+the current (contract v5) request shape.
 
 .. note::
-   This is a mutually-agreed contract with EnerPlanET, not a schema buem
-   changes unilaterally — see
-   ``src/buem/integration/json_schema/VERSIONING.md`` for the versioning
-   policy, and the repo root ``CLAUDE.md``'s "Guardrails" section for how
-   draft (not-yet-agreed) changes are staged before becoming a new
-   version.
+   This is a contract owned by ``enerplanet/buem-gateway``, not a schema
+   buem defines or changes unilaterally — see
+   ``src/buem/integration/json_schema/README.md`` for the pinning/re-sync
+   procedure, and the repo root ``CLAUDE.md``'s "Guardrails" section for
+   how contract changes are proposed.
 
 GeoJSON Structure
 ------------------
@@ -145,8 +144,8 @@ Execution settings, not physics: ``use_milp`` (default ``false``),
 Complete example
 -------------------
 
-See ``src/buem/integration/json_schema/versions/v3/example_request.json``
-in the repository for a full worked single-building request.
+See ``src/buem/integration/json_schema/example_request.json`` in the
+repository for a full worked single-building request.
 
 Next Steps
 ----------

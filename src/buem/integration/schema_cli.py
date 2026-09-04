@@ -5,28 +5,29 @@ BUEM Schema Management CLI Tool
 Convenient command-line interface for managing versioned schemas,
 validation, and integration workflow tasks.
 
+There is a single pinned contract schema (see
+src/buem/integration/json_schema/README.md), not a version tree to import
+into -- re-sync it by following that README's procedure, not with this
+tool.
+
 Usage Examples:
-    # List available schema versions
+    # Show the pinned contract version
     python schema_cli.py list-versions
-    
+
     # Validate a request file
     python schema_cli.py validate request.json
-    
-    # Validate with specific version
-    python schema_cli.py validate request.json --version v2
-    
+
     # Show schema information
-    python schema_cli.py info --version v2
-    
+    python schema_cli.py info
+
     # Run comprehensive tests
     python schema_cli.py test-all
-    
-    # Copy new version from external source
-    python schema_cli.py import-version v3 /path/to/v3/folder
+
+    # Comprehensive debugging
+    python schema_cli.py debug request.json
 """
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
@@ -174,68 +175,6 @@ class SchemaCLI:
             print(f"❌ Testing error: {e}")
             return 1
     
-    def import_version(self, version: str, source_path: Path) -> int:
-        """Import a new schema version from external source."""
-        try:
-            if not source_path.exists():
-                print(f"❌ Source directory not found: {source_path}")
-                return 1
-            
-            if not source_path.is_dir():
-                print(f"❌ Source path must be a directory: {source_path}")
-                return 1
-            
-            # Validate version format
-            if not version.startswith('v'):
-                print(f"❌ Version must start with 'v' (e.g., v3): {version}")
-                return 1
-            
-            target_dir = self.schema_manager.base_dir / version
-            
-            if target_dir.exists():
-                response = input(f"Version {version} already exists. Overwrite? (y/N): ")
-                if response.lower() != 'y':
-                    print("Import cancelled.")
-                    return 0
-                shutil.rmtree(target_dir)
-            
-            # Copy the directory
-            shutil.copytree(source_path, target_dir)
-            
-            print(f"✅ Successfully imported version {version}")
-            print(f"   Source: {source_path}")
-            print(f"   Target: {target_dir}")
-            
-            # Validate the imported files
-            print("\n🔍 Validating imported files...")
-            try:
-                info = self.schema_manager.get_version_info(version)
-                missing_files = [name for name, file_info in info['files'].items() 
-                               if not file_info['exists']]
-                
-                if missing_files:
-                    print(f"⚠️ Warning: Missing files: {missing_files}")
-                    print("   Please ensure all required files are present:")
-                    print("   - request_schema.json")
-                    print("   - response_schema.json")  
-                    print("   - example_request.json")
-                    print("   - example_response.json")
-                else:
-                    print("✅ All required files present")
-                
-                # Clear version cache to recognize new version
-                self.schema_manager._version_cache = None
-                
-                return 0
-                
-            except (OSError, ValueError, KeyError, ValidationError) as validate_error:
-                print(f"⚠️ Warning: Could not validate imported files: {validate_error}")
-                return 0
-            
-        except (OSError, ValueError, KeyError, ValidationError) as e:
-            print(f"❌ Import error: {e}")
-            return 1
-    
     def debug_file(self, file_path: Path) -> int:
         """Run comprehensive debugging on a file."""
         try:
@@ -280,42 +219,35 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s list-versions                    # List available versions
-  %(prog)s info --version v2               # Show version v2 info
-  %(prog)s validate request.json           # Validate file with latest schema
-  %(prog)s validate request.json --version v1  # Validate with specific version
-  %(prog)s test-all                        # Test all examples
-  %(prog)s import-version v3 /path/to/v3   # Import new version
-  %(prog)s debug request.json              # Comprehensive debugging
+  %(prog)s list-versions                    # Show the pinned contract version
+  %(prog)s info                             # Show pinned schema file info
+  %(prog)s validate request.json            # Validate file against the pinned schema
+  %(prog)s test-all                         # Test all examples
+  %(prog)s debug request.json               # Comprehensive debugging
         """
     )
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
+
     # list-versions command
-    subparsers.add_parser('list-versions', help='List available schema versions')
-    
+    subparsers.add_parser('list-versions', help='Show the pinned contract version')
+
     # info command
     info_parser = subparsers.add_parser('info', help='Show schema version information')
-    info_parser.add_argument('--version', help='Schema version (default: latest)')
-    
+    info_parser.add_argument('--version', help='Must match the pinned contract version, if given')
+
     # validate command
     validate_parser = subparsers.add_parser('validate', help='Validate a file')
     validate_parser.add_argument('file', type=Path, help='File to validate')
-    validate_parser.add_argument('--version', help='Schema version (default: latest)')
+    validate_parser.add_argument('--version', help='Must match the pinned contract version, if given')
     validate_parser.add_argument('--json-only', action='store_true', help='Only JSON schema validation')
     validate_parser.add_argument('--buem-only', action='store_true', help='Only BUEM domain validation')
     validate_parser.add_argument('--quiet', '-q', action='store_true', help='Minimal output')
-    
+
     # test-all command
     test_parser = subparsers.add_parser('test-all', help='Test all example files')
-    test_parser.add_argument('--version', help='Schema version (default: latest)')
-    
-    # import-version command
-    import_parser = subparsers.add_parser('import-version', help='Import new schema version')
-    import_parser.add_argument('version', help='Version name (e.g., v3)')
-    import_parser.add_argument('source', type=Path, help='Source directory path')
-    
+    test_parser.add_argument('--version', help='Must match the pinned contract version, if given')
+
     # debug command
     debug_parser = subparsers.add_parser('debug', help='Debug a file comprehensively')
     debug_parser.add_argument('file', type=Path, help='File to debug')
@@ -336,8 +268,6 @@ Examples:
         return cli.validate_file(args.file, args.version, args.json_only, args.buem_only, args.quiet)
     elif args.command == 'test-all':
         return cli.test_all_examples(args.version)
-    elif args.command == 'import-version':
-        return cli.import_version(args.version, args.source)
     elif args.command == 'debug':
         return cli.debug_file(args.file)
     else:

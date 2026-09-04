@@ -6,12 +6,12 @@ returns thermal-load results.  This section explains the endpoints, payload
 formats, and Docker setup needed to integrate BuEM with other models.
 
 .. note::
-   The request/response schema (currently v3) is a **versioned, mutually
-   agreed contract with EnerPlanET**, not something BuEM changes
-   unilaterally — see ``src/buem/integration/json_schema/VERSIONING.md``
-   for the semver/release policy and the repository root ``CLAUDE.md``
-   "Guardrails" section for how proposed (not-yet-agreed) changes are
-   staged as a draft version before becoming official.
+   The request/response schema (currently contract v5) is owned by
+   ``enerplanet/buem-gateway`` — BuEM keeps a pinned, verbatim copy in
+   ``src/buem/integration/json_schema/`` (see that folder's
+   ``README.md``), not something this repo changes unilaterally. See the
+   repository root ``CLAUDE.md`` "Guardrails" section for how contract
+   changes are proposed and how the pinned copy is re-synced.
 
 .. toctree::
    :maxdepth: 2
